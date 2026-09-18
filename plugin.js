@@ -856,8 +856,8 @@ function TriageBlockedWorkButton({ boardSlug, projectId, onComplete }) {
     setPending(true)
     try {
       const [diagnostics, blocked] = await Promise.all([
-        cliExec(['kanban', 'diagnostics', '--board', boardSlug, '--json']),
-        cliExec(['kanban', 'list', '--board', boardSlug, '--status', 'blocked', '--json']),
+        cliExec(['kanban', '--board', boardSlug, 'diagnostics', '--json']),
+        cliExec(['kanban', '--board', boardSlug, 'list', '--status', 'blocked', '--json']),
       ])
       const result = await cliExec([
         'decision', 'triage-blocked', '--project-id', projectId, '--board', boardSlug,
