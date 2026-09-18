@@ -134,6 +134,7 @@ def setup(p) -> None:
     v.add_argument("--board", required=True)
     v.add_argument("--diagnostics", required=True, help="JSON from kanban diagnostics")
     v.add_argument("--blocked", required=True, help="JSON from kanban list --status blocked")
+    v.add_argument("--graph", default="{}", help="JSON map of task id to graph details")
     v.set_defaults(func=_cmd_triage_blocked)
 
     v = verbs.add_parser("push-batch", help="Push a Rule-1 batch_approval decision")
@@ -378,17 +379,18 @@ def _task_id(row):
     return str(row.get("id") or row.get("task_id") or "").strip()
 
 
-def _root_id(row):
-    for key in ("root_task_id", "blocking_task_id", "blocked_by", "parent_id"):
-        value = row.get(key)
-        if isinstance(value, list):
-            value = value[0] if value else None
-        if value and not isinstance(value, dict):
-            return str(value)
-    deps = row.get("dependencies") or row.get("depends_on")
-    if isinstance(deps, list) and len(deps) == 1 and not isinstance(deps[0], dict):
-        return str(deps[0])
-    return _task_id(row)
+def _root_id(task_id, graph, blocked_ids):
+    """Follow blocked-task parents to one root, with cycle protection."""
+    seen = set()
+    current = task_id
+    while current not in seen:
+        seen.add(current)
+        parents = graph.get(current, {}).get("parents", [])
+        parents = [str(parent) for parent in parents if str(parent) in blocked_ids]
+        if not parents:
+            return current
+        current = parents[0]
+    return current
 
 
 def _diag_kind(row):
@@ -399,8 +401,12 @@ def _cmd_triage_blocked(args) -> None:
     try:
         diagnostics = _rows(_triage_json(args.diagnostics, "diagnostics"), ("diagnostics", "items", "rows"))
         blocked = _rows(_triage_json(args.blocked, "blocked"), ("tasks", "blocked", "items", "rows"))
+        graph = _triage_json(args.graph, "graph")
+        if not isinstance(graph, dict):
+            raise ValueError("--graph must be a JSON object")
         if not args.board.strip():
             raise ValueError("--board is required")
+        blocked_ids = {_task_id(task) for task in blocked if isinstance(task, dict)}
         by_task = {}
         for row in diagnostics:
             if isinstance(row, dict):
@@ -414,11 +420,18 @@ def _cmd_triage_blocked(args) -> None:
             tid = _task_id(task)
             if not tid:
                 continue
+            parents = graph.get(tid, {}).get("parents", [])
+            has_blocked_parent = any(str(parent) in blocked_ids for parent in parents)
             actionable = [d for d in by_task.get(tid, []) if isinstance(d, dict) and _diag_kind(d) not in dependency_kinds]
-            if not actionable:
+            # A blocked task with no blocked parent is a root blocker even when
+            # the diagnostics engine has no typed signal for it yet. Those are
+            # exactly the cases the auxiliary triage pass must inspect.
+            if not actionable and has_blocked_parent:
                 dependency_only += 1
                 continue
-            root = _root_id(task)
+            if not actionable:
+                actionable = [{"kind": "unclassified_blocked", "detail": "blocked root requires triage"}]
+            root = _root_id(tid, graph, blocked_ids)
             group = groups.setdefault(root, {"task_ids": [], "titles": [], "evidence": []})
             group["task_ids"].append(tid)
             if task.get("title"):

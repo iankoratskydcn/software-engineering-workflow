@@ -859,9 +859,16 @@ function TriageBlockedWorkButton({ boardSlug, projectId, onComplete }) {
         cliExec(['kanban', '--board', boardSlug, 'diagnostics', '--json']),
         cliExec(['kanban', '--board', boardSlug, 'list', '--status', 'blocked', '--json']),
       ])
+      const graphRows = await Promise.all(
+        (Array.isArray(blocked) ? blocked : []).map(async (task) => [
+          task.id,
+          await cliExec(['kanban', '--board', boardSlug, 'show', task.id, '--json']),
+        ])
+      )
+      const graph = Object.fromEntries(graphRows.map(([id, detail]) => [id, { parents: detail.parents || [] }]))
       const result = await cliExec([
         'decision', 'triage-blocked', '--project-id', projectId, '--board', boardSlug,
-        '--diagnostics', JSON.stringify(diagnostics), '--blocked', JSON.stringify(blocked),
+        '--diagnostics', JSON.stringify(diagnostics), '--blocked', JSON.stringify(blocked), '--graph', JSON.stringify(graph),
       ])
       await onComplete()
       const summary = result.summary || {}
