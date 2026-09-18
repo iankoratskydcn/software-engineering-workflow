@@ -129,6 +129,13 @@ def setup(p) -> None:
     v.add_argument("id")
     v.set_defaults(func=_cmd_triage)
 
+    v = verbs.add_parser("triage-blocked", help="Group blocked Kanban work into idempotent Decision HUD cards")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--board", required=True)
+    v.add_argument("--diagnostics", required=True, help="JSON from kanban diagnostics")
+    v.add_argument("--blocked", required=True, help="JSON from kanban list --status blocked")
+    v.set_defaults(func=_cmd_triage_blocked)
+
     v = verbs.add_parser("push-batch", help="Push a Rule-1 batch_approval decision")
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--batch-id", required=True, dest="batch_id")
@@ -347,6 +354,123 @@ def _cmd_triage(args) -> None:
     outcome = _run_triage(args.id)
     _print(outcome)
     if not outcome.get("ok"):
+        sys.exit(1)
+
+
+def _triage_json(raw: str, name: str):
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"--{name} is not valid JSON: {exc}") from exc
+
+
+def _rows(value, keys):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        for key in keys:
+            if isinstance(value.get(key), list):
+                return value[key]
+    return []
+
+
+def _task_id(row):
+    return str(row.get("id") or row.get("task_id") or "").strip()
+
+
+def _root_id(row):
+    for key in ("root_task_id", "blocking_task_id", "blocked_by", "parent_id"):
+        value = row.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if value and not isinstance(value, dict):
+            return str(value)
+    deps = row.get("dependencies") or row.get("depends_on")
+    if isinstance(deps, list) and len(deps) == 1 and not isinstance(deps[0], dict):
+        return str(deps[0])
+    return _task_id(row)
+
+
+def _diag_kind(row):
+    return str(row.get("kind") or row.get("code") or row.get("type") or "").lower()
+
+
+def _cmd_triage_blocked(args) -> None:
+    try:
+        diagnostics = _rows(_triage_json(args.diagnostics, "diagnostics"), ("diagnostics", "items", "rows"))
+        blocked = _rows(_triage_json(args.blocked, "blocked"), ("tasks", "blocked", "items", "rows"))
+        if not args.board.strip():
+            raise ValueError("--board is required")
+        by_task = {}
+        for row in diagnostics:
+            if isinstance(row, dict):
+                by_task.setdefault(_task_id(row), []).extend(row.get("diagnostics") or [row])
+        groups = {}
+        dependency_only = 0
+        dependency_kinds = {"dependency", "dependency_wait", "dependency-only", "waiting_on_dependency"}
+        for task in blocked:
+            if not isinstance(task, dict):
+                continue
+            tid = _task_id(task)
+            if not tid:
+                continue
+            actionable = [d for d in by_task.get(tid, []) if isinstance(d, dict) and _diag_kind(d) not in dependency_kinds]
+            if not actionable:
+                dependency_only += 1
+                continue
+            root = _root_id(task)
+            group = groups.setdefault(root, {"task_ids": [], "titles": [], "evidence": []})
+            group["task_ids"].append(tid)
+            if task.get("title"):
+                group["titles"].append(str(task["title"]))
+            group["evidence"].extend({"task_id": tid, "kind": _diag_kind(d), "message": str(d.get("message") or d.get("detail") or d.get("reason") or "")[:300]} for d in actionable)
+
+        conn = db.connect()
+        created = []
+        try:
+            pending = db.list_pending(conn, project_id=args.project_id, limit=10000)
+            for root, group in groups.items():
+                payload = {"_kanban_task_ids": sorted(set(group["task_ids"])), "_kanban_board": args.board, "_kanban_root_task_id": root, "_triage_kind": "kanban_blocked", "evidence": group["evidence"][:20]}
+                existing = next((d for d in pending if d.get("card_payload") == payload), None)
+                if existing:
+                    created.append(existing)
+                    continue
+                question = f"Investigate unresolved blocker for Kanban task group {root} ({', '.join(group['titles'][:3]) or 'untitled'})"
+                decision = None
+                # Reuse the existing auxiliary triage path when installed. Its
+                # output is still constrained to the same two explicit choices;
+                # if the auxiliary client is unavailable, stay deterministic.
+                try:
+                    from agent.auxiliary_client import call_llm  # noqa: F401
+                    report = db.push_problem_report(
+                        conn, project_id=args.project_id,
+                        problem=question,
+                        context=json.dumps(payload, sort_keys=True),
+                        reporter="decision-hud-kanban-triage",
+                    )
+                    outcome = _run_triage(report["id"])
+                    if outcome.get("ok") and outcome.get("decision"):
+                        decision = outcome["decision"]
+                        conn.execute(
+                            "UPDATE decisions SET question = ?, choices_json = ?, recommended = ?, card_payload_json = ? WHERE id = ?",
+                            (question, json.dumps(["Investigate/resolve manually", "Leave blocked for now"]), "Investigate/resolve manually", json.dumps(payload), decision["id"]),
+                        )
+                        conn.commit()
+                        decision.update({"question": question, "choices": ["Investigate/resolve manually", "Leave blocked for now"], "recommended": "Investigate/resolve manually", "card_payload": payload})
+                except Exception:
+                    decision = None
+                if decision is None:
+                    decision = db.push_decision(
+                        conn, project_id=args.project_id, question=question,
+                        choices=["Investigate/resolve manually", "Leave blocked for now"],
+                        recommended="Investigate/resolve manually", urgency="normal", card_payload=payload,
+                    )
+                created.append(decision)
+        finally:
+            conn.close()
+        _print({"ok": True, "decisions": created, "summary": {"created": len(created), "actionable_groups": len(groups), "dependency_only": dependency_only}})
+    except ValueError as exc:
+        _print({"ok": False, "error": str(exc)})
         sys.exit(1)
 
 

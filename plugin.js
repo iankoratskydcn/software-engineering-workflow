@@ -848,6 +848,41 @@ function useDecisionQueue(projectId) {
   return { ...state, refresh }
 }
 
+function TriageBlockedWorkButton({ boardSlug, projectId, onComplete }) {
+  const [pending, setPending] = React.useState(false)
+  const handleClick = async () => {
+    if (!boardSlug || !projectId || pending) return
+    haptic('tap')
+    setPending(true)
+    try {
+      const [diagnostics, blocked] = await Promise.all([
+        cliExec(['kanban', 'diagnostics', '--board', boardSlug, '--json']),
+        cliExec(['kanban', 'list', '--board', boardSlug, '--status', 'blocked', '--json']),
+      ])
+      const result = await cliExec([
+        'decision', 'triage-blocked', '--project-id', projectId, '--board', boardSlug,
+        '--diagnostics', JSON.stringify(diagnostics), '--blocked', JSON.stringify(blocked),
+      ])
+      await onComplete()
+      const summary = result.summary || {}
+      host.notify({ kind: 'success', message: `Blocked work triaged: ${summary.created || 0} card(s), ${summary.dependency_only || 0} dependency wait(s) grouped` })
+    } catch (e) {
+      host.notify({ kind: 'error', message: String(e.message || e) })
+    } finally {
+      setPending(false)
+    }
+  }
+  return jsx('button', {
+    type: 'button',
+    'aria-label': 'Triage blocked work',
+    title: 'Group blocked Kanban work into bounded Decision HUD cards',
+    onClick: handleClick,
+    disabled: pending,
+    className: 'h-6 rounded border border-(--ui-stroke-secondary) px-2 text-[0.7rem] text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) disabled:opacity-50',
+    children: pending ? 'Triaging…' : 'Triage blocked work',
+  })
+}
+
 const URGENCY_COLOR = {
   high: 'var(--ui-danger, #e5484d)',
   normal: 'var(--ui-text-secondary)',
@@ -5097,6 +5132,7 @@ function DecisionHudPane({ rest }) {
               jsx('div', { className: 'shrink-0 font-medium', children: 'Decision HUD' }),
               jsx(BoardSettingsPanel, { boardSlug: boardForControls }),
               jsx(BoardSelector, { boards, active: boardForControls, onSelect: setSelectedBoard }),
+              jsx(TriageBlockedWorkButton, { boardSlug: boardForControls, projectId: selectedBoardProjectId, onComplete: refresh }),
             ],
           }),
           jsx('div', {
