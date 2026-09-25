@@ -6113,7 +6113,7 @@ function HierarchyMapPane() {
       ? (boardsError || state.error)
       : !state.tree
         ? 'No map yet'
-        : jsx(HierarchyTreeNode, { node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })
+        : jsx(HierarchyTreeNode, { key: treeRevision, node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })
   return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
     jsx('div', { className: 'font-medium', children: 'Map' }),
     content,

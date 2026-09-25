@@ -29,5 +29,7 @@ assert.match(source, /decision', 'node', 'update', node\.id, '--kanban-task', ''
 assert.match(source, /kanban', '--board', boardSlug, 'show', taskId, '--json/)
 assert.match(source, /Link to Kanban card|linked Kanban task/)
 assert.match(source, /node\.kanban_task_id[\s\S]*?task\.title[\s\S]*?task\.status/)
+// Linking/unlinking must remount tree so lazy-loaded Task children cannot retain stale node data.
+assert.match(source, /jsx\(HierarchyTreeNode, \{ key: treeRevision, node: state\.tree/)
 
 console.log('mindmap pane contract RED test passed')
