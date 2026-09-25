@@ -5835,7 +5835,36 @@ function HierarchyStatusDot({ node }) {
   })
 }
 
-function HierarchyTreeNode({ node, depth = 0 }) {
+function hierarchyDecisionMatchesNode(decision, nodeId) {
+  if (!decision || !nodeId) return false
+  const payload = decision.card_payload
+  const parsed = typeof payload === 'string' ? (() => { try { return JSON.parse(payload) } catch { return null } })() : payload
+  return !!parsed && parsed._hierarchy_node_id === nodeId
+}
+
+function useHierarchyDecisions(projectId) {
+  const [state, setState] = React.useState({ decisions: [], loading: true, error: null })
+  const refresh = React.useCallback(async () => {
+    if (!projectId) {
+      setState({ decisions: [], loading: false, error: null })
+      return
+    }
+    try {
+      const result = await cliExec(['decision', 'list', '--limit', String(DASHBOARD_MAX_ROWS), '--project-id', projectId])
+      setState({ decisions: Array.isArray(result?.decisions) ? result.decisions : [], loading: false, error: null })
+    } catch (error) {
+      setState((current) => ({ ...current, loading: false, error: String(error.message || error) }))
+    }
+  }, [projectId])
+  React.useEffect(() => {
+    refresh()
+    const id = setInterval(refresh, POLL_MS)
+    return () => clearInterval(id)
+  }, [refresh])
+  return { ...state, refresh }
+}
+
+function HierarchyTreeNode({ node, depth = 0, onSelect }) {
   const [expanded, setExpanded] = React.useState(depth < 2)
   const children = Array.isArray(node?.children) ? node.children : []
   const hasChildren = children.length > 0 || node?.level === 4
@@ -5844,14 +5873,15 @@ function HierarchyTreeNode({ node, depth = 0 }) {
     style: { marginLeft: `${depth * 16}px` },
     children: [
       jsxs('div', {
-        className: 'flex items-center gap-2 rounded px-2 py-1',
+        className: 'flex items-center gap-2 rounded px-2 py-1 hover:bg-(--chrome-action-hover)',
+        onClick: () => onSelect(node),
         children: [
           hasChildren
             ? jsx('button', {
                 type: 'button',
                 className: 'w-4 text-(--ui-text-secondary)',
                 'aria-label': expanded ? `Collapse ${node.title}` : `Expand ${node.title}`,
-                onClick: () => setExpanded((value) => !value),
+                onClick: (event) => { event.stopPropagation(); setExpanded((value) => !value) },
                 children: expanded ? '▾' : '▸',
               })
             : jsx('span', { className: 'w-4' }),
@@ -5864,12 +5894,83 @@ function HierarchyTreeNode({ node, depth = 0 }) {
       }),
       expanded
         ? children.length > 0
-          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1 }))
+          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, onSelect }))
           : node?.level === 4
             ? jsx('div', { className: 'pl-8 text-xs text-(--ui-text-tertiary)', children: 'Tasks load when available.' })
             : null
         : null,
     ],
+  })
+}
+
+function HierarchyDecisionComposer({ projectId, selectedNode, onPushed }) {
+  const [question, setQuestion] = React.useState('')
+  const [choices, setChoices] = React.useState(['', ''])
+  const [pending, setPending] = React.useState(false)
+  const push = async () => {
+    const cleanQuestion = question.trim()
+    const cleanChoices = choices.map((choice) => choice.trim()).filter(Boolean)
+    if (!projectId || !selectedNode || !cleanQuestion || cleanChoices.length < 2 || pending) return
+    setPending(true)
+    try {
+      await cliExec([
+        'decision', 'push', '--project-id', projectId, '--question', cleanQuestion,
+        ...cleanChoices.flatMap((choice) => ['--choice', choice]),
+        '--card-payload', JSON.stringify({ _hierarchy_node_id: selectedNode.id }),
+      ])
+      setQuestion('')
+      setChoices(['', ''])
+      await onPushed()
+      host.notify({ kind: 'success', message: 'Decision attached' })
+    } catch (error) {
+      host.notify({ kind: 'error', message: String(error.message || error) })
+    } finally {
+      setPending(false)
+    }
+  }
+  return jsxs('div', { className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+    jsx('div', { className: 'font-medium', children: `Attach decision to ${selectedNode.title}` }),
+    jsx('input', { value: question, placeholder: 'Question', onChange: (event) => setQuestion(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+    ...choices.map((choice, index) => jsx('input', { key: index, value: choice, placeholder: `Choice ${index + 1}`, onChange: (event) => setChoices((current) => current.map((item, i) => i === index ? event.target.value : item)), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' })),
+    jsx('button', { type: 'button', disabled: pending, onClick: push, className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: pending ? 'Attaching…' : 'Attach decision' }),
+  ] })
+}
+
+function HierarchyAttachedDecision({ decision, onChanged }) {
+  const [resolving, setResolving] = React.useState(false)
+  const resolve = async (id, choice, payload) => {
+    setResolving(true)
+    try {
+      const actorToken = await getActorToken()
+      const argv = ['decision', 'resolve', id, choice, '--actor-token', actorToken]
+      if (payload) argv.push('--payload', JSON.stringify(payload))
+      await cliExec(argv)
+      await onChanged()
+    } catch (error) {
+      host.notify({ kind: 'error', message: String(error.message || error) })
+    } finally {
+      setResolving(false)
+    }
+  }
+  const defer = async (id) => {
+    setResolving(true)
+    try {
+      await cliExec(['decision', 'defer', id])
+      await onChanged()
+    } catch (error) {
+      host.notify({ kind: 'error', message: String(error.message || error) })
+    } finally {
+      setResolving(false)
+    }
+  }
+  const dismiss = async (id) => resolve(id, DISMISS_SENTINEL_CHOICE)
+  return jsx(DecisionCard, {
+    decision,
+    onResolve: resolve,
+    onDefer: defer,
+    onDiscuss: () => {},
+    onDismiss: dismiss,
+    resolving,
   })
 }
 
@@ -5882,6 +5983,8 @@ function HierarchyMapPane() {
     return board ? board.project_id || null : null
   }, [boards, effectiveBoardSlug])
   const [state, setState] = React.useState({ loading: true, tree: null, error: null })
+  const [selectedNode, setSelectedNode] = React.useState(null)
+  const { decisions, loading: decisionsLoading, error: decisionsError, refresh: refreshDecisions } = useHierarchyDecisions(projectId)
 
   React.useEffect(() => {
     let active = true
@@ -5907,16 +6010,24 @@ function HierarchyMapPane() {
     return () => { active = false }
   }, [projectId])
 
+  const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []
   const content = boardsLoading || state.loading
     ? 'Loading map…'
     : boardsError || state.error
       ? (boardsError || state.error)
       : !state.tree
         ? 'No map yet'
-        : jsx(HierarchyTreeNode, { node: state.tree })
+        : jsx(HierarchyTreeNode, { node: state.tree, onSelect: setSelectedNode })
   return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
     jsx('div', { className: 'font-medium', children: 'Map' }),
     content,
+    selectedNode ? jsxs('section', { className: 'flex flex-col gap-2 border-t border-(--ui-stroke-secondary) pt-3', children: [
+      jsx('div', { className: 'font-medium', children: `Decisions for ${selectedNode.title}` }),
+      decisionsLoading ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Loading decisions…' }) : null,
+      decisionsError ? jsx('div', { className: 'text-(--ui-danger,#e5484d)', children: decisionsError }) : null,
+      ...attachedDecisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: refreshDecisions })),
+      jsx(HierarchyDecisionComposer, { projectId, selectedNode, onPushed: refreshDecisions }),
+    ] }) : null,
   ] })
 }
 
