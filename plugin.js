@@ -5864,10 +5864,102 @@ function useHierarchyDecisions(projectId) {
   return { ...state, refresh }
 }
 
-function HierarchyTreeNode({ node, depth = 0, onSelect }) {
+function HierarchyKanbanLink({ node, boardSlug, onChanged }) {
+  const [taskIdInput, setTaskIdInput] = React.useState('')
+  const [task, setTask] = React.useState(null)
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState(null)
+
+  React.useEffect(() => {
+    let active = true
+    if (!node.kanban_task_id || !boardSlug) {
+      setTask(null)
+      return () => { active = false }
+    }
+    cliExec(['kanban', '--board', boardSlug, 'show', node.kanban_task_id, '--json'])
+      .then((value) => active && setTask(value && value.task ? value.task : value))
+      .catch((e) => active && setError(String(e.message || e)))
+    return () => { active = false }
+  }, [boardSlug, node.kanban_task_id])
+
+  const link = async () => {
+    const taskId = taskIdInput.trim()
+    if (!taskId || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const value = await cliExec(['kanban', '--board', boardSlug, 'show', taskId, '--json'])
+      if (!value || value.ok === false) throw new Error((value && value.error) || 'Kanban card not found')
+      await cliExec(['decision', 'node', 'link-kanban', node.id, taskId])
+      setTaskIdInput('')
+      onChanged()
+    } catch (e) {
+      setError(String(e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unlink = async () => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await cliExec(['decision', 'node', 'update', node.id, '--kanban-task', ''])
+      onChanged()
+    } catch (e) {
+      setError(String(e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (node.kanban_task_id) {
+    return jsxs('div', {
+      className: 'ml-6 flex flex-wrap items-center gap-2 text-xs text-(--ui-text-secondary)',
+      children: [
+        jsx('span', { children: task ? `${task.title || node.kanban_task_id} (${task.status || 'unknown'})` : node.kanban_task_id }),
+        jsx('button', { type: 'button', disabled: busy, onClick: unlink, className: 'underline disabled:opacity-50', children: 'Unlink' }),
+        error ? jsx('span', { className: 'text-(--ui-danger,#e5484d)', children: error }) : null,
+      ],
+    })
+  }
+
+  return jsxs('div', {
+    className: 'ml-6 flex flex-wrap items-center gap-2',
+    children: [
+      jsx('input', {
+        value: taskIdInput,
+        onChange: (event) => setTaskIdInput(event.target.value),
+        onKeyDown: (event) => { if (event.key === 'Enter') link() },
+        placeholder: 'Kanban task ID',
+        'aria-label': `Link ${node.title} to Kanban card`,
+        className: 'h-6 w-36 rounded border border-(--ui-stroke-secondary) bg-transparent px-1.5 text-xs',
+        disabled: busy || !boardSlug,
+      }),
+      jsx('button', { type: 'button', disabled: busy || !taskIdInput.trim() || !boardSlug, onClick: link, className: 'h-6 rounded border border-(--ui-stroke-secondary) px-2 text-xs disabled:opacity-50', children: busy ? 'Linking…' : 'Link to Kanban card' }),
+      error ? jsx('span', { className: 'text-xs text-(--ui-danger,#e5484d)', children: error }) : null,
+    ],
+  })
+}
+
+function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, onSelect }) {
   const [expanded, setExpanded] = React.useState(depth < 2)
-  const children = Array.isArray(node?.children) ? node.children : []
+  const [loadedChildren, setLoadedChildren] = React.useState(Array.isArray(node?.children) ? node.children : [])
+  const children = loadedChildren
   const hasChildren = children.length > 0 || node?.level === 4
+  const toggleExpanded = async (event) => {
+    event.stopPropagation()
+    if (!expanded && node?.level === 4 && children.length === 0 && projectId) {
+      try {
+        const result = await cliExec(['decision', 'node', 'list', '--project', projectId, '--parent', node.id])
+        setLoadedChildren(Array.isArray(result?.nodes) ? result.nodes : [])
+      } catch (error) {
+        host.notify({ kind: 'error', message: String(error.message || error) })
+      }
+    }
+    setExpanded((value) => !value)
+  }
   return jsxs('div', {
     className: 'flex flex-col gap-1',
     style: { marginLeft: `${depth * 16}px` },
@@ -5881,7 +5973,7 @@ function HierarchyTreeNode({ node, depth = 0, onSelect }) {
                 type: 'button',
                 className: 'w-4 text-(--ui-text-secondary)',
                 'aria-label': expanded ? `Collapse ${node.title}` : `Expand ${node.title}`,
-                onClick: (event) => { event.stopPropagation(); setExpanded((value) => !value) },
+                onClick: toggleExpanded,
                 children: expanded ? '▾' : '▸',
               })
             : jsx('span', { className: 'w-4' }),
@@ -5892,9 +5984,12 @@ function HierarchyTreeNode({ node, depth = 0, onSelect }) {
             : null,
         ],
       }),
+      node?.level >= 4 && node?.level <= 5
+        ? jsx(HierarchyKanbanLink, { node, boardSlug, onChanged })
+        : null,
       expanded
         ? children.length > 0
-          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, onSelect }))
+          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, boardSlug, projectId, onChanged, onSelect }))
           : node?.level === 4
             ? jsx('div', { className: 'pl-8 text-xs text-(--ui-text-tertiary)', children: 'Tasks load when available.' })
             : null
@@ -5983,6 +6078,7 @@ function HierarchyMapPane() {
     return board ? board.project_id || null : null
   }, [boards, effectiveBoardSlug])
   const [state, setState] = React.useState({ loading: true, tree: null, error: null })
+  const [treeRevision, setTreeRevision] = React.useState(0)
   const [selectedNode, setSelectedNode] = React.useState(null)
   const { decisions, loading: decisionsLoading, error: decisionsError, refresh: refreshDecisions } = useHierarchyDecisions(projectId)
 
@@ -6008,7 +6104,7 @@ function HierarchyMapPane() {
       })
       .catch((error) => active && setState({ loading: false, tree: null, error: String(error.message || error) }))
     return () => { active = false }
-  }, [projectId])
+  }, [projectId, treeRevision])
 
   const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []
   const content = boardsLoading || state.loading
@@ -6017,7 +6113,7 @@ function HierarchyMapPane() {
       ? (boardsError || state.error)
       : !state.tree
         ? 'No map yet'
-        : jsx(HierarchyTreeNode, { node: state.tree, onSelect: setSelectedNode })
+        : jsx(HierarchyTreeNode, { node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })
   return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
     jsx('div', { className: 'font-medium', children: 'Map' }),
     content,

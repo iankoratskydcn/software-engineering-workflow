@@ -37,6 +37,7 @@ def test_node_list_tree_link_and_archive_cli_contracts(monkeypatch, capsys):
         (["node", "list", "--project", "p_1", "--parent", "n_0"], "list_nodes", {"nodes": []}, {"project_id": "p_1", "parent_id": "n_0"}, {"ok": True, "nodes": {"nodes": []}}),
         (["node", "tree", "--project", "p_1"], "get_subtree", {"id": "n_0", "done_count": 1, "total_count": 2}, {"project_id": "p_1"}, {"ok": True, "tree": {"id": "n_0", "done_count": 1, "total_count": 2}}),
         (["node", "link-kanban", "n_1", "t_1"], "link_node_to_kanban", {"id": "n_1"}, {"node_id": "n_1", "kanban_task_id": "t_1"}, {"ok": True, "node": {"id": "n_1"}}),
+        (["node", "update", "n_1", "--kanban-task", ""], "update_node", {"id": "n_1"}, {"node_id": "n_1", "kanban_task_id": None}, {"ok": True, "node": {"id": "n_1"}}),
         (["node", "archive", "n_1"], "archive_node", {"id": "n_1"}, {"node_id": "n_1"}, {"ok": True, "node": {"id": "n_1"}}),
     ]
     for argv, func, result, expected_kwargs, expected_output in cases:

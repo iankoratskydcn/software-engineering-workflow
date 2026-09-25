@@ -203,6 +203,13 @@ def setup(p) -> None:
     v.add_argument("task_id")
     v.set_defaults(func=_cmd_node_link_kanban)
 
+    v = node_verbs.add_parser("update", help="Update a hierarchy node")
+    v.add_argument("node_id")
+    v.add_argument("--title")
+    v.add_argument("--sort-order", type=int, dest="sort_order")
+    v.add_argument("--kanban-task", default=None, dest="kanban_task_id")
+    v.set_defaults(func=_cmd_node_update)
+
     v = node_verbs.add_parser("archive", help="Archive a hierarchy node and descendants")
     v.add_argument("node_id")
     v.set_defaults(func=_cmd_node_archive)
@@ -245,6 +252,17 @@ def _cmd_node_link_kanban(args) -> None:
         db.link_node_to_kanban, "node", node_id=args.node_id,
         kanban_task_id=args.task_id,
     )
+
+
+def _cmd_node_update(args) -> None:
+    fields = {}
+    if args.title is not None:
+        fields["title"] = args.title
+    if args.sort_order is not None:
+        fields["sort_order"] = args.sort_order
+    if args.kanban_task_id is not None:
+        fields["kanban_task_id"] = args.kanban_task_id or None
+    _run_node_command(db.update_node, "node", node_id=args.node_id, **fields)
 
 
 def _cmd_node_archive(args) -> None:
