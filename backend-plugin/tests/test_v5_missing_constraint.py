@@ -203,21 +203,21 @@ def test_user_version_advances_and_init_db_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
     conn = _conn(tmp_path)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 6
+    assert version == 7
 
     # Running init_db a second time on the same connection/file must not
     # error and must not double-apply (columns already present, version
-    # already 6 — every _migrate_vN_columns call is a no-op the 2nd time).
+    # already 7 — every _migrate_vN_columns call is a no-op the 2nd time).
     db.init_db(conn)
     version_again = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version_again == 6
+    assert version_again == 7
 
     # And a brand-new connection against the SAME on-disk file (simulating
     # process restart hitting an already-migrated db) is equally idempotent.
     conn2 = sqlite3.connect(str(Path(conn.execute("PRAGMA database_list").fetchone()[2])))
     conn2.row_factory = sqlite3.Row
     db.init_db(conn2)
-    assert conn2.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert conn2.execute("PRAGMA user_version").fetchone()[0] == 7
     conn2.close()
 
     # No duplicate/extra columns were introduced by the no-op v5 migration
