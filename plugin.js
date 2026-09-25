@@ -5804,6 +5804,122 @@ function MetricsSidebar({ agentHealth, side, widthPx, availableMetrics, projectI
 }
 
 
+const VALID_HIERARCHY_STATUS_COLORS = {
+  pending: 'grey',
+  in_progress: 'blue',
+  blocked: 'red',
+  done: 'green',
+}
+
+function parseHierarchyTreeResponse(res) {
+  if (!res || typeof res.output !== 'string') throw new Error('hierarchy tree output unavailable')
+  const payload = parseTrailingJson(res.output)
+  return payload && payload.tree ? payload.tree : payload
+}
+
+function hierarchyNodeStatus(node) {
+  if (node && VALID_HIERARCHY_STATUS_COLORS[node.status]) return node.status
+  if (!node || !node.total_count) return 'pending'
+  if (node.done_count === node.total_count) return 'done'
+  if (node.done_count > 0) return 'in_progress'
+  return 'blocked'
+}
+
+function HierarchyStatusDot({ node }) {
+  const status = hierarchyNodeStatus(node)
+  return jsx('span', {
+    className: 'inline-block h-2 w-2 shrink-0 rounded-full',
+    style: { backgroundColor: VALID_HIERARCHY_STATUS_COLORS[status] },
+    title: status,
+    'aria-label': `${status} status`,
+  })
+}
+
+function HierarchyTreeNode({ node, depth = 0 }) {
+  const [expanded, setExpanded] = React.useState(depth < 2)
+  const children = Array.isArray(node?.children) ? node.children : []
+  const hasChildren = children.length > 0 || node?.level === 4
+  return jsxs('div', {
+    className: 'flex flex-col gap-1',
+    style: { marginLeft: `${depth * 16}px` },
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2 rounded px-2 py-1',
+        children: [
+          hasChildren
+            ? jsx('button', {
+                type: 'button',
+                className: 'w-4 text-(--ui-text-secondary)',
+                'aria-label': expanded ? `Collapse ${node.title}` : `Expand ${node.title}`,
+                onClick: () => setExpanded((value) => !value),
+                children: expanded ? '▾' : '▸',
+              })
+            : jsx('span', { className: 'w-4' }),
+          jsx(HierarchyStatusDot, { node }),
+          jsx('span', { className: 'min-w-0 flex-1 truncate', children: node.title }),
+          node.total_count > 0
+            ? jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: `${node.done_count}/${node.total_count} done` })
+            : null,
+        ],
+      }),
+      expanded
+        ? children.length > 0
+          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1 }))
+          : node?.level === 4
+            ? jsx('div', { className: 'pl-8 text-xs text-(--ui-text-tertiary)', children: 'Tasks load when available.' })
+            : null
+        : null,
+    ],
+  })
+}
+
+function HierarchyMapPane() {
+  const [boardSlug] = React.useState(loadSelectedBoardSlug)
+  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
+  const effectiveBoardSlug = boardSlug || pickDefaultBoardSlug(boards)
+  const projectId = React.useMemo(() => {
+    const board = boards.find((item) => item && item.slug === effectiveBoardSlug)
+    return board ? board.project_id || null : null
+  }, [boards, effectiveBoardSlug])
+  const [state, setState] = React.useState({ loading: true, tree: null, error: null })
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, tree: null, error: null })
+      return () => { active = false }
+    }
+    setState({ loading: true, tree: null, error: null })
+    host.request('cli.exec', { argv: ['decision', 'node', 'tree', '--project', projectId], timeout: 30 })
+      .then((res) => {
+        if (!active) return
+        if (res && res.code !== 0 && /no hierarchy root/i.test(res.output || '')) {
+          setState({ loading: false, tree: null, error: null })
+          return
+        }
+        try {
+          setState({ loading: false, tree: parseHierarchyTreeResponse(res), error: null })
+        } catch (error) {
+          setState({ loading: false, tree: null, error: String(error.message || error) })
+        }
+      })
+      .catch((error) => active && setState({ loading: false, tree: null, error: String(error.message || error) }))
+    return () => { active = false }
+  }, [projectId])
+
+  const content = boardsLoading || state.loading
+    ? 'Loading map…'
+    : boardsError || state.error
+      ? (boardsError || state.error)
+      : !state.tree
+        ? 'No map yet'
+        : jsx(HierarchyTreeNode, { node: state.tree })
+  return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Map' }),
+    content,
+  ] })
+}
+
 function DecisionHudPane({ rest }) {
   // The selected board is the sole project scope: boards and projects are
   // intentionally one-to-one.
@@ -6200,6 +6316,18 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 40,
         data: { codicon: 'checklist', label: 'Decision HUD', path: '/decision-hud' },
+      },
+      {
+        id: 'decision-hud-map-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/map' },
+        render: () => jsx(HierarchyMapPane, {}),
+      },
+      {
+        id: 'decision-hud-map-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 42,
+        data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },
       },
       {
         id: 'agent-dashboard-route',
