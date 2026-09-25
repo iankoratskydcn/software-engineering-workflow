@@ -177,7 +177,78 @@ def setup(p) -> None:
     v = verbs.add_parser("agent-metrics-snapshot", help="Emit the agent_metrics_snapshot.py JSON (heatmap/scatter/treemap/radar/sankey widgets)")
     v.set_defaults(func=_cmd_agent_metrics_snapshot)
 
+    node = verbs.add_parser("node", help="Manage mindmap hierarchy nodes")
+    node_verbs = node.add_subparsers(dest="node_verb", required=True)
+
+    v = node_verbs.add_parser("create", help="Create a hierarchy node")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--parent", required=True, dest="parent_id",
+                   help="Parent node id, or 'none' for a root")
+    v.add_argument("--level", required=True, type=int)
+    v.add_argument("--title", required=True)
+    v.add_argument("--kanban-task", default=None, dest="kanban_task_id")
+    v.set_defaults(func=_cmd_node_create)
+
+    v = node_verbs.add_parser("list", help="List active child nodes")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--parent", default=None, dest="parent_id")
+    v.set_defaults(func=_cmd_node_list)
+
+    v = node_verbs.add_parser("tree", help="Print the project hierarchy tree")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_node_tree)
+
+    v = node_verbs.add_parser("link-kanban", help="Link a hierarchy node to a Kanban task")
+    v.add_argument("node_id")
+    v.add_argument("task_id")
+    v.set_defaults(func=_cmd_node_link_kanban)
+
+    v = node_verbs.add_parser("archive", help="Archive a hierarchy node and descendants")
+    v.add_argument("node_id")
+    v.set_defaults(func=_cmd_node_archive)
+
     p.set_defaults(func=lambda args: p.print_help())
+
+
+def _run_node_command(operation, output_key: str, **kwargs) -> None:
+    conn = db.connect()
+    try:
+        result = operation(conn, **kwargs)
+        _print({"ok": True, output_key: result})
+    except ValueError as exc:
+        _print({"ok": False, "error": str(exc)})
+        sys.exit(1)
+    finally:
+        conn.close()
+
+
+def _cmd_node_create(args) -> None:
+    _run_node_command(
+        db.create_node, "node", project_id=args.project_id,
+        parent_id=None if args.parent_id.lower() == "none" else args.parent_id,
+        level=args.level, title=args.title, kanban_task_id=args.kanban_task_id,
+    )
+
+
+def _cmd_node_list(args) -> None:
+    _run_node_command(
+        db.list_nodes, "nodes", project_id=args.project_id, parent_id=args.parent_id,
+    )
+
+
+def _cmd_node_tree(args) -> None:
+    _run_node_command(db.get_subtree, "tree", project_id=args.project_id)
+
+
+def _cmd_node_link_kanban(args) -> None:
+    _run_node_command(
+        db.link_node_to_kanban, "node", node_id=args.node_id,
+        kanban_task_id=args.task_id,
+    )
+
+
+def _cmd_node_archive(args) -> None:
+    _run_node_command(db.archive_node, "node", node_id=args.node_id)
 
 
 def _cmd_list(args) -> None:
