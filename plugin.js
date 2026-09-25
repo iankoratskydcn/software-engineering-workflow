@@ -6501,7 +6501,10 @@ function startNewDecisionToastWatcher() {
   }
 
   tick()
-  setInterval(tick, POLL_MS)
+  const interval = setInterval(tick, POLL_MS)
+  // Tests and short-lived host sessions must not stay alive solely for a
+  // background toast poll; browsers do not expose unref, so guard it.
+  if (typeof interval?.unref === 'function') interval.unref()
 }
 
 export default {
