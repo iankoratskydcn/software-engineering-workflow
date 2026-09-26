@@ -904,54 +904,84 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
     if version >= 12 and not required.issubset(columns):
         raise BoundaryError("constraint", "partial v12 mindmap migration is unsupported")
     if version < 12:
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            for column, definition in (
-                ("level", "INTEGER NOT NULL DEFAULT 0"),
-                ("description", "TEXT"),
-                ("rationale", "TEXT"),
-                ("metadata_json", "TEXT NOT NULL DEFAULT '{}'"),
-            ):
-                if column not in columns:
-                    conn.execute(f"ALTER TABLE spec_nodes ADD COLUMN {column} {definition}")
-
-            legacy = conn.execute(
+        # Preflight before any DDL: invalid legacy data must leave schema,
+        # rows, and version untouched.
+        legacy = conn.execute(
                 "SELECT id, project_id, parent_id, level, title, sort_order, kanban_task_id, "
                 "created_at, updated_at, archived FROM hierarchy_nodes ORDER BY project_id, level, sort_order, created_at, id"
-            ).fetchall()
-            by_id = {row["id"]: row for row in legacy}
+        ).fetchall()
+        by_id = {row["id"]: row for row in legacy}
+        seen_ids = set()
+        for row in legacy:
+            if row["id"] in seen_ids:
+                raise BoundaryError("constraint", f"duplicate hierarchy node {row['id']!r}")
+            seen_ids.add(row["id"])
+            parent_id = row["parent_id"]
+            if parent_id is not None:
+                parent = by_id.get(parent_id)
+                if parent is None:
+                    raise BoundaryError("constraint", f"orphan hierarchy node {row['id']!r}")
+                if parent["project_id"] != row["project_id"]:
+                    raise BoundaryError("constraint", f"cross-project hierarchy parent {row['id']!r}")
+                if int(row["level"]) != int(parent["level"]) + 1:
+                    raise BoundaryError("constraint", f"invalid hierarchy level for {row['id']!r}")
+            elif int(row["level"]) != 0:
+                raise BoundaryError("constraint", f"non-root hierarchy node {row['id']!r}")
+            chain = set()
+            current = row["id"]
+            while current is not None:
+                if current in chain:
+                    raise BoundaryError("constraint", f"cycle in hierarchy node {row['id']!r}")
+                chain.add(current)
+                current = by_id[current]["parent_id"] if current in by_id else None
+            existing = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (row["id"],)).fetchone()
+            if existing is not None:
+                if existing["project_id"] != row["project_id"]:
+                    raise BoundaryError("constraint", f"spec node collision for {row['id']!r}")
+                if existing["parent_id"] != parent_id or existing["title"] != row["title"] or int(existing["level"] or 0) != int(row["level"]):
+                    raise BoundaryError("constraint", f"spec node collision for {row['id']!r}")
+                if existing["decision_id"] is not None:
+                    raise BoundaryError("constraint", f"decision mismatch for {row['id']!r}")
+
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("ALTER TABLE spec_nodes RENAME TO spec_nodes_v11")
+            conn.execute("""CREATE TABLE spec_nodes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),
+                parent_id TEXT, level INTEGER NOT NULL DEFAULT 0,
+                title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+                note TEXT, description TEXT, rationale TEXT, criteria_json TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}', decision_id TEXT,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id),
+                FOREIGN KEY(project_id, parent_id) REFERENCES spec_nodes(project_id, id),
+                FOREIGN KEY(project_id, decision_id) REFERENCES decisions(project_id, id)
+            )""")
+            old = {r["name"] for r in conn.execute("PRAGMA table_info(spec_nodes_v11)")}
+            def col(name, default):
+                return name if name in old else default
+            conn.execute(f"""INSERT INTO spec_nodes
+                (id, project_id, kind, parent_id, level, title, status, note,
+                 description, rationale, criteria_json, metadata_json, decision_id,
+                 created_at, updated_at)
+                SELECT id, project_id, kind, parent_id, {col('level','0')}, title,
+                 status, {col('note','NULL')}, {col('description','NULL')},
+                 {col('rationale','NULL')}, {col('criteria_json','NULL')},
+                 COALESCE({col('metadata_json',"'{}'" )}, '{{}}'), {col('decision_id','NULL')},
+                 created_at, updated_at FROM spec_nodes_v11""")
+            conn.execute("DROP TABLE spec_nodes_v11")
             for row in legacy:
                 parent_id = row["parent_id"]
-                if parent_id is not None:
-                    parent = by_id.get(parent_id)
-                    if parent is None:
-                        raise BoundaryError("constraint", f"orphan hierarchy node {row['id']!r}")
-                    if parent["project_id"] != row["project_id"]:
-                        raise BoundaryError("constraint", f"cross-project hierarchy parent {row['id']!r}")
-                seen = set()
-                current = row["id"]
-                while current is not None:
-                    if current in seen:
-                        raise BoundaryError("constraint", f"cycle in hierarchy node {row['id']!r}")
-                    seen.add(current)
-                    current = by_id[current]["parent_id"] if current in by_id else None
                 kind = ("theme", "epic", "feature", "story")[min(max(int(row["level"]), 0), 3)]
-                existing = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (row["id"],)).fetchone()
-                if existing is not None:
-                    if existing["project_id"] != row["project_id"]:
-                        raise BoundaryError("constraint", f"spec node collision for {row['id']!r}")
-                    if existing["parent_id"] != parent_id or existing["title"] != row["title"] or existing["level"] != row["level"]:
-                        raise BoundaryError("constraint", f"spec node collision for {row['id']!r}")
-                    if existing["decision_id"] is not None:
-                        raise BoundaryError("constraint", f"decision mismatch for {row['id']!r}")
-                    continue
-                conn.execute(
+                if conn.execute("SELECT 1 FROM spec_nodes WHERE id = ?", (row["id"],)).fetchone() is None:
+                    conn.execute(
                     "INSERT INTO spec_nodes "
                     "(id, project_id, kind, parent_id, level, title, status, description, rationale, "
                     "metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)",
                     (row["id"], row["project_id"], kind, parent_id, row["level"], row["title"],
                      "draft", None, None, row["created_at"], row["updated_at"]),
-                )
+                    )
 
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_project_id_unique ON spec_nodes(project_id, id)")
             conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_one_root_per_project ON spec_nodes(project_id) WHERE level = 0 AND parent_id IS NULL")
@@ -1037,7 +1067,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             project_id TEXT NOT NULL,
             kind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),
-            parent_id TEXT REFERENCES spec_nodes(id),
+            parent_id TEXT,
             level INTEGER NOT NULL DEFAULT 0,
             title TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'draft',
@@ -1046,12 +1076,16 @@ def init_db(conn: sqlite3.Connection) -> None:
             rationale TEXT,
             criteria_json TEXT,
             metadata_json TEXT NOT NULL DEFAULT '{}',
-            decision_id TEXT REFERENCES decisions(id),
+            decision_id TEXT,
             created_at REAL NOT NULL,
-            updated_at REAL NOT NULL
+            updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id, parent_id) REFERENCES spec_nodes(project_id, id),
+            FOREIGN KEY(project_id, decision_id) REFERENCES decisions(project_id, id)
         )
         """
     )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_id_unique ON decisions(project_id, id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)")
@@ -2166,6 +2200,8 @@ def create_spec_node(
         level = _SPEC_KINDS.index(kind)
     if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 5:
         raise BoundaryError("invalid_input", "level must be an integer from 0 through 5")
+    if level != _SPEC_KINDS.index(kind):
+        raise BoundaryError("invalid_input", "kind and level must match")
     if level == 0 and parent_id is not None:
         raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
     if level > 0 and parent_id is None:
@@ -2203,7 +2239,7 @@ def create_spec_node(
 
 
 def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, **fields: Any) -> dict[str, Any]:
-    allowed = {"title", "status", "note", "description", "rationale", "criteria_json", "metadata_json", "parent_id", "level", "kind"}
+    allowed = {"title", "status", "note", "description", "rationale", "criteria_json", "metadata_json", "parent_id", "level", "kind", "decision_id"}
     unknown = set(fields) - allowed
     if unknown:
         raise BoundaryError("invalid_input", f"immutable or unsupported node fields: {sorted(unknown)}")
@@ -2230,6 +2266,17 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
             validate_json_text(fields["criteria_json"], field="criteria_json")
         if "level" in fields and (isinstance(fields["level"], bool) or not isinstance(fields["level"], int) or not 0 <= fields["level"] <= 5):
             raise BoundaryError("invalid_input", "level must be an integer from 0 through 5")
+        if "decision_id" in fields:
+            _spec_validate_decision(conn, row["project_id"], fields["decision_id"])
+        effective_kind = fields.get("kind", row["kind"])
+        effective_level = fields.get("level", row["level"])
+        if effective_level != _SPEC_KINDS.index(effective_kind):
+            raise BoundaryError("invalid_input", "kind and level must match")
+        effective_parent = fields.get("parent_id", row["parent_id"])
+        if effective_level == 0 and effective_parent is not None:
+            raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
+        if effective_level > 0 and effective_parent is None:
+            raise BoundaryError("invalid_input", "non-root nodes require a parent")
         if "parent_id" in fields and fields["parent_id"] is not None:
             parent = conn.execute("SELECT project_id FROM spec_nodes WHERE id = ?", (fields["parent_id"],)).fetchone()
             if parent is None:
@@ -2297,6 +2344,7 @@ def create_node(
     conn: sqlite3.Connection, *, project_id: str, parent_id: Optional[str], level: int,
     title: str, sort_order: int = 0, kanban_task_id: Optional[str] = None,
 ) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
     """Create one hierarchy node, enforcing the fixed parent-depth tree."""
     proj = _hierarchy_project(project_id)
     if not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= 5:
@@ -2408,6 +2456,7 @@ def get_subtree(
 
 
 def update_node(conn: sqlite3.Connection, node_id: str, **fields: Any) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
     allowed = {"title", "sort_order", "kanban_task_id"}
     unknown = set(fields) - allowed
     if unknown:
@@ -2438,6 +2487,7 @@ def update_node(conn: sqlite3.Connection, node_id: str, **fields: Any) -> dict[s
 
 
 def archive_node(conn: sqlite3.Connection, node_id: str, *, cascade: bool = True) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
     row = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone()
     if row is None:
         raise ValueError(f"node {node_id!r} not found")
@@ -2461,6 +2511,7 @@ def archive_node(conn: sqlite3.Connection, node_id: str, *, cascade: bool = True
 
 
 def link_node_to_kanban(conn: sqlite3.Connection, node_id: str, kanban_task_id: str) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
     if not kanban_task_id or not kanban_task_id.strip():
         raise ValueError("kanban_task_id is required")
     row = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone()
