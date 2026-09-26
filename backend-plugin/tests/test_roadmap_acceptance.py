@@ -42,6 +42,21 @@ def _lane(conn, project_id="p_1"):
     return db.create_roadmap_lane(conn, project_id=project_id, title="Now")
 
 
+def _snapshot_db(conn):
+    schema = tuple(
+        tuple(row)
+        for row in conn.execute(
+            "SELECT type, name, sql FROM sqlite_master "
+            "WHERE sql IS NOT NULL ORDER BY type, name"
+        )
+    )
+    return (
+        schema,
+        "\n".join(conn.iterdump()),
+        conn.execute("PRAGMA user_version").fetchone()[0],
+    )
+
+
 def test_roadmap_schema_is_created_and_project_scoped(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     try:
@@ -173,5 +188,80 @@ def test_roadmap_payloads_are_canonical_json_arrays(tmp_path, monkeypatch):
         ).fetchone()
         assert json.loads(row["depends_on_json"]) == ["item_a"]
         assert json.loads(row["links_json"]) == ["spec:abc"]
+    finally:
+        conn.close()
+
+
+def test_v11_migration_failure_rolls_back_every_schema_and_version_change(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        conn.execute("DROP TABLE roadmap_items")
+        conn.execute("DROP TABLE roadmap_lanes")
+        conn.execute("PRAGMA user_version = 10")
+        conn.execute("CREATE TABLE roadmap_items (id TEXT PRIMARY KEY)")
+        conn.commit()
+        before = _snapshot_db(conn)
+
+        with pytest.raises(sqlite3.OperationalError):
+            db.init_db(conn)
+
+        assert _snapshot_db(conn) == before
+    finally:
+        conn.close()
+
+
+def test_v11_migration_rejects_malformed_complete_table_set_without_mutation(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        conn.execute("DROP TABLE roadmap_items")
+        conn.execute("DROP TABLE roadmap_lanes")
+        conn.execute(
+            "CREATE TABLE roadmap_lanes ("
+            "id TEXT PRIMARY KEY, project_id TEXT, sort_order INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE roadmap_items ("
+            "id TEXT PRIMARY KEY, project_id TEXT, lane_id TEXT, sort_order INTEGER)"
+        )
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+        before = _snapshot_db(conn)
+
+        with pytest.raises((db.BoundaryError, ValueError)):
+            db.init_db(conn)
+
+        assert _snapshot_db(conn) == before
+    finally:
+        conn.close()
+
+
+def test_roadmap_rejects_missing_dependency_targets_before_insert_and_update(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        lane = _lane(conn)
+        before = _snapshot_db(conn)
+        with pytest.raises((TypeError, ValueError, sqlite3.IntegrityError)):
+            db.create_roadmap_item(
+                conn,
+                project_id="p_1",
+                lane_id=lane["id"],
+                title="Missing dependency",
+                depends_on=["rmi_missing"],
+            )
+        assert _snapshot_db(conn) == before
+
+        item = db.create_roadmap_item(
+            conn, project_id="p_1", lane_id=lane["id"], title="Keep"
+        )
+        before = _snapshot_db(conn)
+        with pytest.raises((TypeError, ValueError, sqlite3.IntegrityError)):
+            db.update_roadmap_item(
+                conn,
+                project_id="p_1",
+                item_id=item["id"],
+                depends_on=["rmi_missing"],
+                expected_updated_at=item["updated_at"],
+            )
+        assert _snapshot_db(conn) == before
     finally:
         conn.close()
