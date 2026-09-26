@@ -32,9 +32,9 @@
       "coordinates": "finite and within shared coordinate bounds"
     },
     "scrum": {
-      "statuses": ["backlog", "ready", "in_progress", "blocked", "done"],
-      "estimate": "integer 0..100000",
-      "sprint": "null or non-empty string <= 128 chars",
+      "statuses": ["backlog", "ready", "in_progress", "done", "cancelled"],
+      "estimate": "integer in {1,2,3,5,8,13}",
+      "sprint": "integer 1..100000",
       "linked_spec_delete": "restrict"
     },
     "mindmap_root": "at-most-one per project for level=0 and parent_id IS NULL",

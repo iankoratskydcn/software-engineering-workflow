@@ -239,7 +239,7 @@
     },
     "links": "same-project IDs; destructive deletes restricted",
     "mindmap": "at-most-one root via partial unique index",
-    "scrum": "status backlog|ready|in_progress|blocked|done; estimate 0..100000; sprint null/non-empty <=128; same-project composite FK; linked deletes restricted"
+    "scrum": "status backlog|ready|in_progress|done|cancelled; estimate in {1,2,3,5,8,13}; sprint integer 1..100000; same-project composite FK; linked deletes restricted"
   },
   "report_type": "stage2_schema_contract_inventory",
   "repository": "/home/ian-koratsky/GitHub/decision-hud-stage2",
