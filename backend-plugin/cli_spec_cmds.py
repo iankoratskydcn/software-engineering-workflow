@@ -19,9 +19,24 @@ def _print(obj):
     print(json.dumps(obj, default=str))
 
 
+def _error(exc):
+    db = _db()
+    if isinstance(exc, db.BoundaryError):
+        code = exc.code
+    elif isinstance(exc, sqlite3.IntegrityError):
+        code = "constraint"
+    elif isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower():
+        code = "busy"
+    elif isinstance(exc, ValueError):
+        code = "invalid_input"
+    else:
+        code = "internal_error"
+    return {"ok": False, "error": {"code": code, "message": str(exc)[:256]}}
+
+
 def _row(conn, node_id):
     return conn.execute(
-        "SELECT id, project_id, kind, parent_id, title, status, note, criteria_json, decision_id, created_at, updated_at FROM spec_nodes WHERE id = ?",
+        "SELECT id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, created_at, updated_at FROM spec_nodes WHERE id = ?",
         (node_id,),
     ).fetchone()
 
@@ -30,27 +45,26 @@ def _cmd_spec_add_node(args) -> None:
     db = _db()
     conn = db.connect()
     try:
-        project = db._resolve_project(args.project_id)
-        parent_id = args.parent_id
-        if parent_id:
-            parent = conn.execute("SELECT project_id FROM spec_nodes WHERE id = ?", (parent_id,)).fetchone()
-            if parent is None:
-                raise ValueError(f"parent_id {parent_id!r} not found")
-            if parent["project_id"] != project["id"]:
-                raise ValueError(f"parent_id {parent_id!r} belongs to project {parent['project_id']!r}, not {project['id']!r}")
-            if _has_cycle_in_ancestors(conn, parent_id):
-                raise ValueError(f"adding parent_id {parent_id!r} would create a cycle")
-        node_id = uuid.uuid4().hex[:12]
-        now = time.time()
-        conn.execute(
-            "INSERT INTO spec_nodes (id, project_id, kind, parent_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (node_id, project["id"], args.kind, parent_id, args.title, "draft", now, now),
+        node = db.create_spec_node(
+            conn, project_id=args.project_id, kind=args.kind,
+            title=args.title, parent_id=args.parent_id,
         )
-        conn.commit()
-        _print({"ok": True, "node": dict(_row(conn, node_id))})
-    except (ValueError, sqlite3.IntegrityError) as exc:
+        _print({"ok": True, "node": node})
+    except Exception as exc:
         conn.rollback()
-        _print({"ok": False, "error": str(exc)})
+        _print(_error(exc))
+        sys.exit(1)
+    finally:
+        conn.close()
+
+
+def _cmd_spec_tree(args) -> None:
+    db = _db()
+    conn = db.connect()
+    try:
+        _print({"ok": True, "tree": db.get_spec_tree(conn, project_id=args.project_id)})
+    except Exception as exc:
+        _print(_error(exc))
         sys.exit(1)
     finally:
         conn.close()
