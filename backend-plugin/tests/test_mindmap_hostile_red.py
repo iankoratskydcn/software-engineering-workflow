@@ -407,7 +407,7 @@ def test_real_v11_to_v12_migration_imports_legacy_rows_and_normalizes_levels(tmp
 
     db.init_db(conn)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(spec_nodes)")}
     assert {"level", "description", "rationale", "metadata_json"} <= columns
     migrated = conn.execute(

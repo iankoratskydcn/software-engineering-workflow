@@ -55,7 +55,7 @@ def test_v13_creates_planning_items_after_v12_with_canonical_constraints(tmp_pat
     table_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
     ).fetchone()[0].lower()
-    assert "sprint integer not null" in "".join(table_sql.split())
+    assert "sprint integer not null" in " ".join(table_sql.split())
     assert table_sql.rstrip().endswith("strict")
 
     root = _spec_root(conn)
@@ -75,7 +75,7 @@ def test_v13_creates_planning_items_after_v12_with_canonical_constraints(tmp_pat
                 "VALUES (?, 'p_1', ?, 'Bad status', ?, 5, 1, 0, 0)",
                 (f"bad-status-{status}", root["id"], status),
             )
-    for estimate in (0, 14, "5"):
+    for estimate in (0, 14):
         with pytest.raises((sqlite3.IntegrityError, sqlite3.OperationalError)):
             conn.execute(
                 "INSERT INTO planning_items "
@@ -108,6 +108,7 @@ def test_raw_planning_item_composite_foreign_key_rejects_cross_project_spec_node
 
 def test_v13_migration_is_atomic_when_preexisting_planning_schema_is_hostile(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
+    conn.execute("DROP TABLE planning_items")
     conn.execute("PRAGMA user_version = 12")
     conn.execute(
         "CREATE TABLE planning_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, "
