@@ -310,6 +310,25 @@ def setup(p) -> None:
     v.add_argument("--steps", required=True)
     v.set_defaults(func=_cmd_flow_set_steps)
 
+    arch = verbs.add_parser("arch", help="Manage project architecture diagrams")
+    arch_verbs = arch.add_subparsers(dest="arch_verb", required=True)
+    v = arch_verbs.add_parser("add-diagram")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--title", required=True)
+    v.add_argument("--nodes", required=True)
+    v.add_argument("--edges", required=True)
+    v.set_defaults(func=_cmd_arch_add_diagram)
+    v = arch_verbs.add_parser("list-diagrams")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_arch_list_diagrams)
+    v = arch_verbs.add_parser("set-diagram")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("diagram_id")
+    v.add_argument("--title")
+    v.add_argument("--nodes")
+    v.add_argument("--edges")
+    v.set_defaults(func=_cmd_arch_set_diagram)
+
     risk = verbs.add_parser("risk", help="Manage project risks")
     risk_verbs = risk.add_subparsers(dest="risk_verb", required=True)
     v = risk_verbs.add_parser("add")
@@ -351,6 +370,38 @@ def setup(p) -> None:
     v.set_defaults(func=_cmd_tradeoff_set_side)
 
     p.set_defaults(func=lambda args: p.print_help())
+
+
+def _cmd_arch_add_diagram(args) -> None:
+    try:
+        if any(len(value.encode("utf-8")) > db.JSON_LIMIT for value in (args.nodes, args.edges)):
+            raise ValueError("architecture JSON exceeds its size limit")
+        nodes, edges = json.loads(args.nodes), json.loads(args.edges)
+    except (TypeError, json.JSONDecodeError, ValueError) as exc:
+        envelope, exit_code = boundary_error(ValueError(f"architecture JSON must be valid JSON: {exc}"))
+        _print(envelope)
+        raise SystemExit(exit_code)
+    _run_node_command(db.add_diagram, "diagram", project_id=args.project_id, title=args.title, nodes=nodes, edges=edges)
+
+
+def _cmd_arch_list_diagrams(args) -> None:
+    _run_node_command(db.list_diagrams, "diagrams", project_id=args.project_id)
+
+
+def _cmd_arch_set_diagram(args) -> None:
+    parsed = {}
+    try:
+        for name in ("nodes", "edges"):
+            raw = getattr(args, name)
+            if raw is not None:
+                if len(raw.encode("utf-8")) > db.JSON_LIMIT:
+                    raise ValueError("architecture JSON exceeds its size limit")
+                parsed[name] = json.loads(raw)
+    except (TypeError, json.JSONDecodeError, ValueError) as exc:
+        envelope, exit_code = boundary_error(ValueError(f"architecture JSON must be valid JSON: {exc}"))
+        _print(envelope)
+        raise SystemExit(exit_code)
+    _run_node_command(db.set_diagram, "diagram", project_id=args.project_id, diagram_id=args.diagram_id, title=args.title, **parsed)
 
 
 def _run_node_command(operation, output_key: str, **kwargs) -> None:

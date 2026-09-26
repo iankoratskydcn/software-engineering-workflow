@@ -428,10 +428,159 @@ def _migrate_v9_flowcharts(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA user_version = 9")
 
 
+def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
+    """Create the architecture surface as one atomic, idempotent migration."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    table = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+    ).fetchone()
+    if version == 10 and table is None:
+        raise BoundaryError("constraint", "partial v10 architecture migration is unsupported")
+    if version > 10:
+        return
+
+    if table is not None:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(architecture_diagrams)")}
+        required = {"id", "project_id", "title", "nodes_json", "edges_json", "created_at", "updated_at"}
+        if columns != required:
+            raise BoundaryError("constraint", "architecture migration requires canonical columns")
+        rows = conn.execute("SELECT * FROM architecture_diagrams").fetchall()
+        known = {(row["project_id"], row["id"]) for row in rows}
+        for row in rows:
+            try:
+                nodes = json.loads(row["nodes_json"])
+                edges = json.loads(row["edges_json"])
+            except (TypeError, json.JSONDecodeError) as exc:
+                raise BoundaryError("constraint", "architecture migration found invalid JSON") from exc
+            _validate_architecture_payload(
+                row["title"], nodes, edges,
+                drill_targets=known,
+                project_id=row["project_id"],
+            )
+
+    conn.commit()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS architecture_diagrams (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                nodes_json TEXT NOT NULL,
+                edges_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(project_id, id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_architecture_diagrams_project "
+            "ON architecture_diagrams(project_id, updated_at, id)"
+        )
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _validate_architecture_payload(title, nodes, edges, *, drill_targets, project_id):
+    title = validate_text(title, field="title", max_chars=TEXT_LIMIT)
+    if not isinstance(nodes, list) or len(nodes) > 512:
+        raise BoundaryError("invalid_input", "nodes must be an array of at most 512 items")
+    if not isinstance(edges, list) or len(edges) > 1024:
+        raise BoundaryError("invalid_input", "edges must be an array of at most 1024 items")
+    node_ids = set()
+    clean_nodes = []
+    for node in nodes:
+        if not isinstance(node, dict) or set(node) not in ({"id", "label", "x", "y"}, {"id", "label", "x", "y", "drill_to_diagram_id"}):
+            raise BoundaryError("invalid_input", "each node must have only id, label, x, y, and optional drill target")
+        node_id = validate_text(node["id"], field="node id", max_chars=ID_LIMIT)
+        if node_id in node_ids:
+            raise BoundaryError("invalid_input", "duplicate node id")
+        node_ids.add(node_id)
+        clean = {"id": node_id, "label": validate_text(node["label"], field="node label", max_chars=TEXT_LIMIT, allow_empty=True), "x": validate_coordinate(node["x"], field="node x"), "y": validate_coordinate(node["y"], field="node y")}
+        if "drill_to_diagram_id" in node:
+            target = validate_text(node["drill_to_diagram_id"], field="drill target", max_chars=ID_LIMIT)
+            if (project_id, target) not in drill_targets:
+                raise BoundaryError("not_found", "resource not found")
+            clean["drill_to_diagram_id"] = target
+        clean_nodes.append(clean)
+    clean_edges = []
+    for edge in edges:
+        if not isinstance(edge, dict) or set(edge) not in ({"source", "target"}, {"source", "target", "label"}):
+            raise BoundaryError("invalid_input", "each edge must have only source, target, and optional label")
+        source = validate_text(edge["source"], field="edge source", max_chars=ID_LIMIT)
+        target = validate_text(edge["target"], field="edge target", max_chars=ID_LIMIT)
+        if source not in node_ids or target not in node_ids:
+            raise BoundaryError("invalid_input", "edge references missing node")
+        clean = {"source": source, "target": target}
+        if "label" in edge:
+            clean["label"] = validate_text(edge["label"], field="edge label", max_chars=TEXT_LIMIT, allow_empty=True)
+        clean_edges.append(clean)
+    node_json = json.dumps(clean_nodes, separators=(",", ":"), ensure_ascii=False)
+    edge_json = json.dumps(clean_edges, separators=(",", ":"), ensure_ascii=False)
+    if len((node_json + edge_json).encode("utf-8")) > JSON_LIMIT:
+        raise BoundaryError("invalid_input", "architecture JSON exceeds its size limit")
+    return title, clean_nodes, clean_edges
+
+
+def _architecture_row(row):
+    return dict(row)
+
+
+def _architecture_for_project(conn, project_id, diagram_id):
+    project = _resolve_project(project_id)
+    row = conn.execute("SELECT * FROM architecture_diagrams WHERE id = ? AND project_id = ?", (diagram_id, project["id"])).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    return row
+
+
+def add_diagram(conn, project_id, title, nodes, edges):
+    project = _resolve_project(project_id)
+    known = {(row["project_id"], row["id"]) for row in conn.execute("SELECT project_id, id FROM architecture_diagrams")}
+    title, clean_nodes, clean_edges = _validate_architecture_payload(title, nodes, edges, drill_targets=known, project_id=project["id"])
+    diagram_id = "arch_" + secrets.token_hex(6)
+    now = time.time()
+    conn.execute("INSERT INTO architecture_diagrams (id, project_id, title, nodes_json, edges_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (diagram_id, project["id"], title, json.dumps(clean_nodes, separators=(",", ":"), ensure_ascii=False), json.dumps(clean_edges, separators=(",", ":"), ensure_ascii=False), now, now))
+    conn.commit()
+    return _architecture_row(_architecture_for_project(conn, project["id"], diagram_id))
+
+
+def list_diagrams(conn, project_id):
+    project = _resolve_project(project_id)
+    return [_architecture_row(row) for row in conn.execute("SELECT * FROM architecture_diagrams WHERE project_id = ? ORDER BY updated_at DESC, id", (project["id"],)).fetchall()]
+
+
+def get_diagram(conn, project_id, diagram_id):
+    return _architecture_row(_architecture_for_project(conn, project_id, diagram_id))
+
+
+def set_diagram(conn, project_id, diagram_id, title=None, nodes=None, edges=None):
+    row = _architecture_for_project(conn, project_id, diagram_id)
+    new_title = row["title"] if title is None else title
+    new_nodes = json.loads(row["nodes_json"]) if nodes is None else nodes
+    new_edges = json.loads(row["edges_json"]) if edges is None else edges
+    known = {(item["project_id"], item["id"]) for item in conn.execute("SELECT project_id, id FROM architecture_diagrams")}
+    new_title, clean_nodes, clean_edges = _validate_architecture_payload(new_title, new_nodes, new_edges, drill_targets=known, project_id=row["project_id"])
+    conn.execute("UPDATE architecture_diagrams SET title = ?, nodes_json = ?, edges_json = ?, updated_at = ? WHERE id = ? AND project_id = ?", (new_title, json.dumps(clean_nodes, separators=(",", ":"), ensure_ascii=False), json.dumps(clean_edges, separators=(",", ":"), ensure_ascii=False), time.time(), diagram_id, row["project_id"]))
+    conn.commit()
+    return _architecture_row(_architecture_for_project(conn, project_id, diagram_id))
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
         raise RuntimeError("SQLite foreign-key enforcement is required")
+    if conn.execute("PRAGMA user_version").fetchone()[0] == 10:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+        ).fetchone()
+        if exists is None:
+            raise BoundaryError("constraint", "partial v10 architecture migration is unsupported")
     _preflight_risk_tradeoff_legacy(conn)
     _migrate_v6_project_id(conn)  # must run BEFORE CREATE TABLE IF NOT EXISTS below:
     _migrate_v7_hierarchy(conn)
@@ -517,6 +666,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     )
     _migrate_v8_stage2_risk_tradeoffs(conn)
     _migrate_v9_flowcharts(conn)
+    _migrate_v10_architecture(conn)
     conn.commit()
 
 
