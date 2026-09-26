@@ -416,14 +416,16 @@ def _migrate_v9_flowcharts(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             project_id TEXT NOT NULL,
             name TEXT NOT NULL,
-            steps_json TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            updated_at REAL NOT NULL,
+            steps_json TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
             UNIQUE(project_id, id)
         );
         CREATE INDEX IF NOT EXISTS idx_flows_project ON flows(project_id, updated_at, id);
         """
     )
+    if conn.execute("PRAGMA user_version").fetchone()[0] < 9:
+        conn.execute("PRAGMA user_version = 9")
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -1780,7 +1782,7 @@ def create_flow(conn: sqlite3.Connection, *, project_id: str, name: str) -> dict
     project = _resolve_project(project_id)
     name = validate_text(name, field="name", max_chars=TEXT_LIMIT)
     flow_id = "flow_" + secrets.token_hex(4)
-    now = time.time()
+    now = int(time.time())
     conn.execute(
         "INSERT INTO flows (id, project_id, name, steps_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
         (flow_id, project["id"], name, "[]", now, now),
@@ -1803,7 +1805,7 @@ def get_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str) -> dict
 def update_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str, name: str) -> dict[str, Any]:
     _flow_for_project(conn, flow_id, project_id)
     name = validate_text(name, field="name", max_chars=TEXT_LIMIT)
-    conn.execute("UPDATE flows SET name = ?, updated_at = ? WHERE id = ?", (name, time.time(), flow_id))
+    conn.execute("UPDATE flows SET name = ?, updated_at = ? WHERE id = ?", (name, int(time.time()), flow_id))
     conn.commit()
     return _flow_row(_flow_for_project(conn, flow_id, project_id))
 
@@ -1850,7 +1852,7 @@ def set_flow_steps(conn: sqlite3.Connection, flow_id: str, *, project_id: str, s
     normalized = _validate_flow_steps(steps)
     conn.execute(
         "UPDATE flows SET steps_json = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(normalized, separators=(",", ":"), ensure_ascii=False), time.time(), flow_id),
+        (json.dumps(normalized, separators=(",", ":"), ensure_ascii=False), int(time.time()), flow_id),
     )
     conn.commit()
     return _flow_row(_flow_for_project(conn, flow_id, project_id))

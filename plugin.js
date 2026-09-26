@@ -6086,7 +6086,11 @@ function HierarchyAttachedDecision({ decision, onChanged }) {
 function parseFlowResponse(res) {
   if (!res || typeof res.output !== 'string') throw new Error('flow output unavailable')
   const payload = parseTrailingJson(res.output)
-  if (!payload || payload.ok !== true) throw new Error(payload?.error || 'flow request failed')
+  if (!payload || payload.ok !== true) {
+    const error = payload?.error
+    const message = error && typeof error === 'object' ? error.message : error
+    throw new Error(message || 'flow request failed')
+  }
   return payload
 }
 
@@ -6116,8 +6120,11 @@ function FlowchartsPane() {
   const [newName, setNewName] = React.useState(() => '')
   const [rename, setRename] = React.useState('')
   const [stepsText, setStepsText] = React.useState('[]')
+  const [mutationLoading, setMutationLoading] = React.useState(false)
 
   const runFlowCommand = async (argv) => {
+    if (mutationLoading) return false
+    setMutationLoading(true)
     try {
       const response = await host.request('cli.exec', { argv, timeout: 30 })
       parseFlowResponse(response)
@@ -6127,20 +6134,24 @@ function FlowchartsPane() {
     } catch (error) {
       setState((current) => ({ ...current, error: String(error.message || error) }))
       return false
+    } finally {
+      /* mutationLoading false after every mutation */
+      setMutationLoading(false)
     }
   }
 
   React.useEffect(() => {
     let active = true
-    if (!projectId) { setState({ loading: false, flows: [], error: null }); return () => { active = false } }
+    if (!projectId) { setState((current) => ({ ...current, loading: false, flows: [], error: null })); return () => { active = false } }
     setState((current) => ({ ...current, loading: true, error: null }))
     host.request('cli.exec', { argv: ['decision', 'flow', 'list', '--project', projectId], timeout: 30 })
-      .then((res) => { if (!active) return; try { setState({ loading: false, flows: parseFlowResponse(res).flows || [], error: null }) } catch (error) { setState({ loading: false, flows: [], error: String(error.message || error) }) } })
-      .catch((error) => active && setState({ loading: false, flows: [], error: String(error.message || error) }))
+      .then((res) => { if (!active) return; try { setState((current) => ({ ...current, loading: false, flows: parseFlowResponse(res).flows || [], error: null })) } catch (error) { setState((current) => ({ ...current, loading: false, error: String(error.message || error) })) } })
+      .catch((error) => active && setState((current) => ({ ...current, loading: false, error: String(error.message || error) })))
     return () => { active = false }
   }, [projectId, revision])
 
   const selected = state.flows.find((flow) => flow.id === selectedId) || state.flows[0]
+  // Preserve selected identity across refreshes: [selected?.id]
   React.useEffect(() => { setStepsText(selected?.steps_json || '[]'); setRename(selected?.name || '') }, [selected?.id, selected?.steps_json, selected?.name])
   let steps = []
   let malformed = false
@@ -6152,13 +6163,13 @@ function FlowchartsPane() {
     state.flows.length > 0 ? jsx('select', { value: selected?.id || '', onChange: (event) => setSelectedId(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent p-1', children: state.flows.map((flow) => jsx('option', { value: flow.id, children: flow.name }, flow.id)) }) : null,
     selected ? jsxs('div', { className: 'flex gap-2', children: [
       jsx('input', { value: rename, placeholder: 'Flow name', 'aria-label': 'Flow name', onChange: (event) => setRename(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
-      jsx('button', { type: 'button', disabled: !rename.trim(), onClick: () => runFlowCommand(['decision', 'flow', 'update', '--project', projectId, selected.id, '--name', rename]), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Rename flow' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !rename.trim(), onClick: () => runFlowCommand(['decision', 'flow', 'update', '--project', projectId, selected.id, '--name', rename]), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Rename flow' }),
     ] }) : null,
     selected ? jsx('textarea', { value: stepsText, onChange: (event) => setStepsText(event.target.value), 'aria-label': 'Flow steps JSON', className: 'min-h-24 rounded border border-(--ui-stroke-secondary) bg-transparent p-2 font-mono text-xs' }) : null,
-    selected ? jsx('button', { type: 'button', onClick: () => runFlowCommand(['decision', 'flow', 'set-steps', '--project', projectId, selected.id, '--steps', stepsText]), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Save steps' }) : null,
+    selected ? jsx('button', { type: 'button', disabled: mutationLoading, onClick: () => runFlowCommand(['decision', 'flow', 'set-steps', '--project', projectId, selected.id, '--steps', stepsText]), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Save steps' }) : null,
     projectId ? jsxs('div', { className: 'flex gap-2', children: [
       jsx('input', { value: newName, placeholder: 'New flow name', onChange: (event) => setNewName(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
-      jsx('button', { type: 'button', disabled: !newName.trim(), onClick: async () => { if (await runFlowCommand(['decision', 'flow', 'add', '--project', projectId, '--name', newName])) setNewName('') }, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Add' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !newName.trim(), onClick: async () => { if (await runFlowCommand(['decision', 'flow', 'add', '--project', projectId, '--name', newName])) setNewName('') }, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Add' }),
     ] }) : null,
     jsx('div', { className: 'flex flex-col gap-2', children: content }),
     selected && projectId ? jsx('button', { type: 'button', onClick: () => setRevision((value) => value + 1), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Refresh' }) : null,

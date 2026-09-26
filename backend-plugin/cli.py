@@ -458,14 +458,30 @@ def _cmd_flow_update(args) -> None:
     _run_node_command(db.update_flow, "flow", flow_id=args.flow_id, project_id=args.project_id, name=args.name)
 
 
+class _FlowInputExit(SystemExit):
+    def __init__(self, code: int, message: str):
+        super().__init__(code)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
 def _cmd_flow_set_steps(args) -> None:
     raw = args.steps
-    if not isinstance(raw, str) or len(raw.encode("utf-8")) > db.JSON_LIMIT:
-        raise ValueError("--steps exceeds its size limit")
     try:
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > db.JSON_LIMIT:
+            raise ValueError("--steps exceeds its size limit")
         steps = json.loads(raw)
     except (TypeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"--steps must be valid JSON: {exc}") from exc
+        error = ValueError(f"--steps must be valid JSON: {exc}")
+        envelope, exit_code = boundary_error(error)
+        _print(envelope)
+        raise _FlowInputExit(exit_code, str(exc)) from exc
+    except ValueError as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        raise _FlowInputExit(exit_code, str(exc)) from exc
     _run_node_command(db.set_flow_steps, "flow", flow_id=args.flow_id, project_id=args.project_id, steps=steps)
 
 
