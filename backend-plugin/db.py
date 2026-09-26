@@ -949,7 +949,7 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
         ).fetchone() is not None:
             # Rebuild child table after spec_nodes so ALTER TABLE does not
             # retarget its foreign key to spec_nodes_v11.
-            _preflight_planning(conn)
+            _preflight_planning(conn, require_sprint_check=conn.execute("PRAGMA user_version").fetchone()[0] >= 13)
             planning_rows = conn.execute(
                 "SELECT id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at "
                 "FROM planning_items"
@@ -1074,15 +1074,31 @@ def _preflight_planning(conn: sqlite3.Connection, *, require_sprint_check: bool 
     if actual != expected:
         raise _planning_constraint("planning_items has non-canonical columns")
     table_sql = "".join((row[0] or "").lower().split())
-    if not table_sql.endswith("strict"):
-        raise _planning_constraint("planning_items must be STRICT")
-    required_checks = (
-        "check(statusin('backlog','ready','in_progress','done','cancelled'))",
-        "check(estimatein(1,2,3,5,8,13))",
+    canonical_sqls = tuple(
+        "".join(
+            """
+            CREATE TABLE planning_items (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                spec_node_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+                estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+                {sprint_definition}
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(project_id, id),
+                FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                    ON DELETE RESTRICT ON UPDATE CASCADE
+            ) STRICT
+            """.format(sprint_definition=sprint_definition).lower().split()
+        )
+        for sprint_definition in (
+            "sprint INTEGER NOT NULL,",
+            "sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),",
+        )
     )
-    if require_sprint_check:
-        required_checks += ("check(sprintbetween1and100000)",)
-    if any(fragment not in table_sql for fragment in required_checks):
+    if table_sql not in canonical_sqls[1 if require_sprint_check else 0:]:
         raise _planning_constraint("planning_items constraints are non-canonical")
     foreign_keys = {
         (item[2], item[3], item[4], item[5], item[6], item[7])
@@ -1110,7 +1126,7 @@ def _preflight_planning(conn: sqlite3.Connection, *, require_sprint_check: bool 
 def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
     """Create or repair the strict, project-scoped Scrum Planning table."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    _preflight_planning(conn)
+    _preflight_planning(conn, require_sprint_check=version >= 13)
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
     ).fetchone()
@@ -1178,8 +1194,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
         raise RuntimeError("SQLite foreign-key enforcement is required")
-    _preflight_roadmap(conn, version=conn.execute("PRAGMA user_version").fetchone()[0])
-    if conn.execute("PRAGMA user_version").fetchone()[0] == 10:
+    initial_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    _preflight_roadmap(conn, version=initial_version)
+    _preflight_planning(conn, require_sprint_check=initial_version >= 13)
+    if initial_version == 10:
         exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
         ).fetchone()
