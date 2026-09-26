@@ -211,6 +211,7 @@ def db_path() -> Path:
 def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path()), timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     init_db(conn)
@@ -299,6 +300,26 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_pending ON problem_reports(status, created_at)")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS spec_nodes (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),
+            parent_id TEXT REFERENCES spec_nodes(id),
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            note TEXT,
+            criteria_json TEXT,
+            decision_id TEXT REFERENCES decisions(id),
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS hud_settings (

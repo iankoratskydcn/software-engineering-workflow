@@ -28,6 +28,20 @@ import { Badge, Button, cn, Codicon, haptic, host, PALETTE_AREA, ROUTES_AREA, SI
 import { jsx, jsxs } from 'react/jsx-runtime'
 import * as React from 'react'
 
+// Spec Digest read boundary: persisted criteria may be corrupt or wrong-shaped.
+function parseSpecCriteria(criteria_json) {
+  if (!criteria_json) return { items: [], error: null }
+  try {
+    const parsed = JSON.parse(criteria_json)
+    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {
+      return { items: [], error: 'malformed criteria' }
+    }
+    return { items: parsed, error: null }
+  } catch {
+    return { items: [], error: 'malformed criteria' }
+  }
+}
+
 const PLUGIN_ID = 'decision-hud'
 const POLL_MS = 4000
 
@@ -6507,6 +6521,41 @@ function startNewDecisionToastWatcher() {
   if (typeof interval?.unref === 'function') interval.unref()
 }
 
+function SpecDigest({ projectId }) {
+  const [nodes, setNodes] = React.useState([])
+  const [selectedNode, setSelectedNode] = React.useState(null)
+  React.useEffect(() => {
+    if (!projectId) return
+    host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
+      try {
+        const parsed = JSON.parse(output?.output || output?.stdout || '[]')
+        setNodes(Array.isArray(parsed) ? parsed : [])
+      } catch {
+        setNodes([])
+      }
+    }).catch(() => setNodes([]))
+  }, [projectId])
+  const criteria = parseSpecCriteria(selectedNode?.criteria_json)
+  return jsx('div', { className: 'flex flex-col gap-3 p-4', children: [
+    jsx('h2', { children: 'Spec Digest' }),
+    jsx('div', { className: 'flex flex-col gap-1', children: nodes.map((node) => jsx('button', {
+      key: node.id, type: 'button', onClick: () => setSelectedNode(node), className: 'text-left',
+      children: `${node.kind}: ${node.title}`,
+    })) }),
+    selectedNode && jsx('section', { children: [
+      jsx('h3', { children: selectedNode.title }),
+      criteria.error
+        ? jsx('p', { role: 'alert', children: 'malformed criteria' })
+        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { key: index, children: item })) }),
+    ] }),
+  ] })
+}
+
+function SpecDigestRoute() {
+  const { projectId } = useProjectDashboardScope()
+  return jsx(SpecDigest, { projectId })
+}
+
 export default {
   id: PLUGIN_ID,
   name: 'Decision HUD',
@@ -6526,6 +6575,18 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 40,
         data: { codicon: 'checklist', label: 'Decision HUD', path: '/decision-hud' },
+      },
+      {
+        id: 'spec-digest-route',
+        area: ROUTES_AREA,
+        data: { path: '/spec-digest' },
+        render: () => jsx(SpecDigestRoute, {}),
+      },
+      {
+        id: 'spec-digest-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 41,
+        data: { codicon: 'file-tree', label: 'Spec Digest', path: '/spec-digest' },
       },
       {
         id: 'decision-hud-map-route',

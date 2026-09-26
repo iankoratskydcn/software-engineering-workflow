@@ -18,6 +18,10 @@ from typing import Optional
 
 try:
     from . import db
+    from .cli_spec_cmds import (
+        _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
+        _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
+    )
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -27,6 +31,10 @@ except ImportError:
     if _plugin_dir not in _sys.path:
         _sys.path.insert(0, _plugin_dir)
     import db  # type: ignore[import-not-found]
+    from cli_spec_cmds import (  # type: ignore[import-not-found]
+        _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
+        _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
+    )
 
 _TRIAGE_SYSTEM_PROMPT = (
     "You triage raw problem reports into a bounded owner decision for a human "
@@ -176,6 +184,36 @@ def setup(p) -> None:
 
     v = verbs.add_parser("agent-metrics-snapshot", help="Emit the agent_metrics_snapshot.py JSON (heatmap/scatter/treemap/radar/sankey widgets)")
     v.set_defaults(func=_cmd_agent_metrics_snapshot)
+
+    spec = verbs.add_parser("spec", help="Spec Digest: manage specification tree nodes")
+    spec_verbs = spec.add_subparsers(dest="spec_verb", required=True)
+    v = spec_verbs.add_parser("add-node")
+    v.add_argument("--kind", required=True, choices=["theme", "epic", "feature", "story"])
+    v.add_argument("--title", required=True)
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--parent-id", default=None, dest="parent_id")
+    v.set_defaults(func=_cmd_spec_add_node)
+    v = spec_verbs.add_parser("list")
+    v.add_argument("--project-id", default=None, dest="project_id")
+    v.add_argument("--kind", default=None)
+    v.set_defaults(func=_cmd_spec_list)
+    v = spec_verbs.add_parser("update-node")
+    v.add_argument("--id", required=True)
+    v.add_argument("--title", default=None)
+    v.add_argument("--status", default=None, choices=["draft", "ready", "converted"])
+    v.add_argument("--note", default=None)
+    v.set_defaults(func=_cmd_spec_update_node)
+    v = spec_verbs.add_parser("set-criteria")
+    v.add_argument("--id", required=True)
+    v.add_argument("--criteria-json", required=True, dest="criteria_json")
+    v.set_defaults(func=_cmd_spec_set_criteria)
+    v = spec_verbs.add_parser("link-decision")
+    v.add_argument("--id", required=True)
+    v.add_argument("--decision-id", required=True, dest="decision_id")
+    v.set_defaults(func=_cmd_spec_link_decision)
+    v = spec_verbs.add_parser("delete-node")
+    v.add_argument("--id", required=True)
+    v.set_defaults(func=_cmd_spec_delete_node)
 
     node = verbs.add_parser("node", help="Manage mindmap hierarchy nodes")
     node_verbs = node.add_subparsers(dest="node_verb", required=True)
