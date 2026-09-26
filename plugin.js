@@ -1234,7 +1234,7 @@ function AgentDashboardCombinedPage({ rest }) {
         'data-dashboard-section': 'read-model',
         children: [
           jsx('div', { className: 'font-medium', children: 'Dashboard' }),
-          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }),
+          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics', children: jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }) }),
         ],
       }),
       jsx(Separator, {}),
@@ -1242,7 +1242,7 @@ function AgentDashboardCombinedPage({ rest }) {
         'data-dashboard-section': 'agent-matrix',
         children: [
           jsx('div', { className: 'font-medium', children: 'Agent Matrix' }),
-          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }),
+          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics Widgets', children: jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }) }),
         ],
       }),
       jsx(Separator, {}),
