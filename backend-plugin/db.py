@@ -132,6 +132,10 @@ from typing import Any, Optional
 
 _VALID_URGENCY = ("low", "normal", "high")
 
+_MAX_FLOW_STEPS = 512
+_MAX_FLOW_EDGES = 32
+_MAX_FLOW_GRAPH_BYTES = 256 * 1024
+
 TEXT_LIMIT = 4096
 ID_LIMIT = 128
 LIST_LIMIT = 256
@@ -404,6 +408,24 @@ def _migrate_v8_stage2_risk_tradeoffs(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA user_version = 8")
 
 
+def _migrate_v9_flowcharts(conn: sqlite3.Connection) -> None:
+    """Add canonical project-owned flowcharts after the v8 risk migration."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS flows (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            steps_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(project_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_flows_project ON flows(project_id, updated_at, id);
+        """
+    )
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -492,6 +514,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         """
     )
     _migrate_v8_stage2_risk_tradeoffs(conn)
+    _migrate_v9_flowcharts(conn)
     conn.commit()
 
 
@@ -1739,6 +1762,98 @@ def link_node_to_kanban(conn: sqlite3.Connection, node_id: str, kanban_task_id: 
     )
     conn.commit()
     return _hierarchy_row(conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def _flow_row(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+
+def _flow_for_project(conn: sqlite3.Connection, flow_id: str, project_id: str) -> sqlite3.Row:
+    project = _resolve_project(project_id)
+    row = conn.execute("SELECT * FROM flows WHERE id = ? AND project_id = ?", (flow_id, project["id"])).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "flow not found")
+    return row
+
+
+def create_flow(conn: sqlite3.Connection, *, project_id: str, name: str) -> dict[str, Any]:
+    project = _resolve_project(project_id)
+    name = validate_text(name, field="name", max_chars=TEXT_LIMIT)
+    flow_id = "flow_" + secrets.token_hex(4)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO flows (id, project_id, name, steps_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (flow_id, project["id"], name, "[]", now, now),
+    )
+    conn.commit()
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def list_flows(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _resolve_project(project_id)
+    return [_flow_row(row) for row in conn.execute(
+        "SELECT * FROM flows WHERE project_id = ? ORDER BY updated_at DESC, id", (project["id"],)
+    ).fetchall()]
+
+
+def get_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str) -> dict[str, Any]:
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def update_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str, name: str) -> dict[str, Any]:
+    _flow_for_project(conn, flow_id, project_id)
+    name = validate_text(name, field="name", max_chars=TEXT_LIMIT)
+    conn.execute("UPDATE flows SET name = ?, updated_at = ? WHERE id = ?", (name, time.time(), flow_id))
+    conn.commit()
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def _validate_flow_steps(steps: Any) -> list[dict[str, Any]]:
+    if not isinstance(steps, list):
+        raise BoundaryError("invalid_input", "steps must be an array")
+    if len(steps) > _MAX_FLOW_STEPS:
+        raise BoundaryError("invalid_input", "steps exceeds its size limit")
+    ids: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    edge_count = 0
+    for step in steps:
+        if not isinstance(step, dict) or set(step) != {"id", "label", "next"}:
+            raise BoundaryError("invalid_input", "each step must have only id, label, and next")
+        step_id = validate_text(step["id"], field="step id", max_chars=ID_LIMIT)
+        label = validate_text(step["label"], field="step label", max_chars=TEXT_LIMIT, allow_empty=True)
+        if step_id in ids:
+            raise BoundaryError("invalid_input", "duplicate step id")
+        ids.add(step_id)
+        targets = step["next"]
+        if not isinstance(targets, list):
+            raise BoundaryError("invalid_input", "step next must be an array")
+        if len(targets) > _MAX_FLOW_EDGES:
+            raise BoundaryError("invalid_input", "step has too many outgoing edges")
+        clean_targets = [validate_text(target, field="step target", max_chars=ID_LIMIT) for target in targets]
+        if len(set(clean_targets)) != len(clean_targets):
+            raise BoundaryError("invalid_input", "duplicate step edge")
+        edge_count += len(clean_targets)
+        if edge_count > _MAX_FLOW_EDGES:
+            raise BoundaryError("invalid_input", "graph has too many edges")
+        normalized.append({"id": step_id, "label": label, "next": clean_targets})
+    for step in normalized:
+        if any(target not in ids for target in step["next"]):
+            raise BoundaryError("invalid_input", "step references missing target")
+    encoded = json.dumps(normalized, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(encoded) > _MAX_FLOW_GRAPH_BYTES:
+        raise BoundaryError("invalid_input", "graph exceeds its size limit")
+    return normalized
+
+
+def set_flow_steps(conn: sqlite3.Connection, flow_id: str, *, project_id: str, steps: Any) -> dict[str, Any]:
+    _flow_for_project(conn, flow_id, project_id)
+    normalized = _validate_flow_steps(steps)
+    conn.execute(
+        "UPDATE flows SET steps_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(normalized, separators=(",", ":"), ensure_ascii=False), time.time(), flow_id),
+    )
+    conn.commit()
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
 
 
 def _risk_project(project_id: str) -> dict[str, str]:

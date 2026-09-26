@@ -6083,6 +6083,88 @@ function HierarchyAttachedDecision({ decision, onChanged }) {
   })
 }
 
+function parseFlowResponse(res) {
+  if (!res || typeof res.output !== 'string') throw new Error('flow output unavailable')
+  const payload = parseTrailingJson(res.output)
+  if (!payload || payload.ok !== true) throw new Error(payload?.error || 'flow request failed')
+  return payload
+}
+
+function deriveFlowLayout(steps) {
+  const rows = Array.isArray(steps) ? steps : []
+  const byId = new Map(rows.map((step) => [step.id, step]))
+  const depths = new Map()
+  const visit = (id, depth, path = new Set()) => {
+    if (path.has(id)) return
+    depths.set(id, Math.max(depths.get(id) || 0, depth))
+    const next = byId.get(id)?.next || []
+    next.forEach((child) => visit(child, depth + 1, new Set([...path, id])))
+  }
+  if (rows[0]) visit(rows[0].id, 0)
+  rows.forEach((step) => { if (!depths.has(step.id)) depths.set(step.id, 0) })
+  return rows.map((step, index) => ({ ...step, x: (depths.get(step.id) || 0) * 180, y: index * 72 }))
+}
+
+function FlowchartsPane() {
+  const [boardSlug] = React.useState(loadSelectedBoardSlug)
+  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
+  const effectiveBoardSlug = boardSlug || pickDefaultBoardSlug(boards)
+  const projectId = React.useMemo(() => boards.find((item) => item?.slug === effectiveBoardSlug)?.project_id || null, [boards, effectiveBoardSlug])
+  const [state, setState] = React.useState({ loading: true, flows: [], error: null })
+  const [selectedId, setSelectedId] = React.useState(null)
+  const [revision, setRevision] = React.useState(0)
+  const [newName, setNewName] = React.useState(() => '')
+  const [rename, setRename] = React.useState('')
+  const [stepsText, setStepsText] = React.useState('[]')
+
+  const runFlowCommand = async (argv) => {
+    try {
+      const response = await host.request('cli.exec', { argv, timeout: 30 })
+      parseFlowResponse(response)
+      setState((current) => ({ ...current, error: null }))
+      setRevision((value) => value + 1)
+      return true
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+      return false
+    }
+  }
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) { setState({ loading: false, flows: [], error: null }); return () => { active = false } }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    host.request('cli.exec', { argv: ['decision', 'flow', 'list', '--project', projectId], timeout: 30 })
+      .then((res) => { if (!active) return; try { setState({ loading: false, flows: parseFlowResponse(res).flows || [], error: null }) } catch (error) { setState({ loading: false, flows: [], error: String(error.message || error) }) } })
+      .catch((error) => active && setState({ loading: false, flows: [], error: String(error.message || error) }))
+    return () => { active = false }
+  }, [projectId, revision])
+
+  const selected = state.flows.find((flow) => flow.id === selectedId) || state.flows[0]
+  React.useEffect(() => { setStepsText(selected?.steps_json || '[]'); setRename(selected?.name || '') }, [selected?.id, selected?.steps_json, selected?.name])
+  let steps = []
+  let malformed = false
+  if (selected) { try { steps = JSON.parse(selected.steps_json); if (!Array.isArray(steps)) malformed = true } catch { malformed = true } }
+  const layout = malformed ? [] : deriveFlowLayout(steps)
+  const content = boardsLoading || state.loading ? 'Loading flowcharts…' : boardsError || state.error ? (boardsError || state.error) : !selected ? 'No flowcharts yet' : malformed ? 'Malformed graph' : steps.length === 0 ? 'No flow steps yet' : layout.map((step) => jsx('div', { key: step.id, className: 'rounded border border-(--ui-stroke-secondary) p-2', style: { marginLeft: `${step.x}px` }, children: `${step.label} (${(step.next || []).join(', ') || 'end'})` }))
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Flowcharts' }),
+    state.flows.length > 0 ? jsx('select', { value: selected?.id || '', onChange: (event) => setSelectedId(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent p-1', children: state.flows.map((flow) => jsx('option', { value: flow.id, children: flow.name }, flow.id)) }) : null,
+    selected ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: rename, placeholder: 'Flow name', 'aria-label': 'Flow name', onChange: (event) => setRename(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+      jsx('button', { type: 'button', disabled: !rename.trim(), onClick: () => runFlowCommand(['decision', 'flow', 'update', '--project', projectId, selected.id, '--name', rename]), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Rename flow' }),
+    ] }) : null,
+    selected ? jsx('textarea', { value: stepsText, onChange: (event) => setStepsText(event.target.value), 'aria-label': 'Flow steps JSON', className: 'min-h-24 rounded border border-(--ui-stroke-secondary) bg-transparent p-2 font-mono text-xs' }) : null,
+    selected ? jsx('button', { type: 'button', onClick: () => runFlowCommand(['decision', 'flow', 'set-steps', '--project', projectId, selected.id, '--steps', stepsText]), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Save steps' }) : null,
+    projectId ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: newName, placeholder: 'New flow name', onChange: (event) => setNewName(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+      jsx('button', { type: 'button', disabled: !newName.trim(), onClick: async () => { if (await runFlowCommand(['decision', 'flow', 'add', '--project', projectId, '--name', newName])) setNewName('') }, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Add' }),
+    ] }) : null,
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+    selected && projectId ? jsx('button', { type: 'button', onClick: () => setRevision((value) => value + 1), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Refresh' }) : null,
+  ] })
+}
+
 function HierarchyMapPane() {
   const [boardSlug] = React.useState(loadSelectedBoardSlug)
   const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
@@ -6606,6 +6688,18 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 42,
         data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },
+      },
+      {
+        id: 'decision-hud-flowcharts-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/flowcharts' },
+        render: () => jsx(FlowchartsPane, {}),
+      },
+      {
+        id: 'decision-hud-flowcharts-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 43,
+        data: { codicon: 'graph', label: 'Flowcharts', path: '/decision-hud/flowcharts' },
       },
       {
         id: 'agent-dashboard-route',

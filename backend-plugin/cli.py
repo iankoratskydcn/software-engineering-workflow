@@ -290,6 +290,26 @@ def setup(p) -> None:
     v.add_argument("node_id")
     v.set_defaults(func=_cmd_node_archive)
 
+    flow = verbs.add_parser("flow", help="Manage project flowcharts")
+    flow_verbs = flow.add_subparsers(dest="flow_verb", required=True)
+    v = flow_verbs.add_parser("add")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--name", required=True)
+    v.set_defaults(func=_cmd_flow_add)
+    v = flow_verbs.add_parser("list")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_flow_list)
+    v = flow_verbs.add_parser("update")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("flow_id")
+    v.add_argument("--name", required=True)
+    v.set_defaults(func=_cmd_flow_update)
+    v = flow_verbs.add_parser("set-steps")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("flow_id")
+    v.add_argument("--steps", required=True)
+    v.set_defaults(func=_cmd_flow_set_steps)
+
     risk = verbs.add_parser("risk", help="Manage project risks")
     risk_verbs = risk.add_subparsers(dest="risk_verb", required=True)
     v = risk_verbs.add_parser("add")
@@ -424,6 +444,29 @@ def _cmd_node_update(args) -> None:
 
 def _cmd_node_archive(args) -> None:
     _run_node_command(db.archive_node, "node", node_id=args.node_id)
+
+
+def _cmd_flow_add(args) -> None:
+    _run_node_command(db.create_flow, "flow", project_id=args.project_id, name=args.name)
+
+
+def _cmd_flow_list(args) -> None:
+    _run_node_command(db.list_flows, "flows", project_id=args.project_id)
+
+
+def _cmd_flow_update(args) -> None:
+    _run_node_command(db.update_flow, "flow", flow_id=args.flow_id, project_id=args.project_id, name=args.name)
+
+
+def _cmd_flow_set_steps(args) -> None:
+    raw = args.steps
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > db.JSON_LIMIT:
+        raise ValueError("--steps exceeds its size limit")
+    try:
+        steps = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"--steps must be valid JSON: {exc}") from exc
+    _run_node_command(db.set_flow_steps, "flow", flow_id=args.flow_id, project_id=args.project_id, steps=steps)
 
 
 def _cmd_list(args) -> None:
