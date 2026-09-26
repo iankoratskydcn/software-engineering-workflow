@@ -83,6 +83,14 @@ def test_v13_creates_planning_items_after_v12_with_canonical_constraints(tmp_pat
                 "VALUES (?, 'p_1', ?, 'Bad estimate', 'backlog', ?, 1, 0, 0)",
                 (f"bad-estimate-{estimate}", root["id"], estimate),
             )
+    for sprint in (0, -1, 100001):
+        with pytest.raises((sqlite3.IntegrityError, sqlite3.OperationalError)):
+            conn.execute(
+                "INSERT INTO planning_items "
+                "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+                "VALUES (?, 'p_1', ?, 'Bad sprint', 'backlog', 5, ?, 0, 0)",
+                (f"bad-sprint-{sprint}", root["id"], sprint),
+            )
 
 
 def test_raw_planning_item_composite_foreign_key_rejects_cross_project_spec_node(tmp_path, monkeypatch):
