@@ -224,6 +224,69 @@ def test_raw_sqlite_constraints_reject_invalid_status_kind_and_side(monkeypatch,
         conn.close()
 
 
+def test_preexisting_v7_unconstrained_risk_tradeoff_schema_is_rebuilt_or_refused_without_mutation(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        PRAGMA foreign_keys = ON;
+        PRAGMA user_version = 7;
+        CREATE TABLE decisions (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, question TEXT NOT NULL,
+            choices_json TEXT NOT NULL, urgency TEXT NOT NULL DEFAULT 'normal',
+            created_at REAL NOT NULL, resolved_choice TEXT, resolved_at REAL
+        );
+        CREATE TABLE risks (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+            title TEXT NOT NULL, description TEXT, breaks_when TEXT,
+            status TEXT NOT NULL DEFAULT 'open', created_at REAL NOT NULL, updated_at REAL NOT NULL
+        );
+        CREATE TABLE tradeoffs (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+            kind TEXT, title TEXT NOT NULL, choice TEXT NOT NULL, alt_label TEXT,
+            cost TEXT, gain TEXT, prioritized_side TEXT,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL
+        );
+        INSERT INTO risks VALUES ('r1', 'p1', NULL, 'Legacy risk', NULL, NULL, 'open', 1, 1);
+        INSERT INTO tradeoffs VALUES ('t1', 'p1', NULL, 'scale', 'Legacy tradeoff', 'A', NULL, NULL, NULL, NULL, 1, 1);
+        """
+    )
+    before_dump = "\\n".join(conn.iterdump())
+    try:
+        try:
+            db.init_db(conn)
+        except Exception as exc:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] < 8
+            assert "risk" in str(exc).lower() or "tradeoff" in str(exc).lower() or "constraint" in str(exc).lower()
+            assert "\\n".join(conn.iterdump()) == before_dump
+        else:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+            for table, check in (
+                ("risks", "status IN ('open','mitigated','accepted','closed')"),
+                ("tradeoffs", "kind IN ('scale','duel','anchor')"),
+            ):
+                sql = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone()[0]
+                assert check in sql
+                assert "FOREIGN KEY(project_id,decision_id)" in sql
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO risks (id, project_id, title, status, created_at, updated_at) "
+                    "VALUES ('bad-risk', 'p1', 'Bad', 'invalid', 2, 2)"
+                )
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO tradeoffs (id, project_id, kind, title, choice, created_at, updated_at) "
+                    "VALUES ('bad-tradeoff', 'p1', 'invalid', 'Bad', 'A', 2, 2)"
+                )
+            assert conn.execute("SELECT title FROM risks WHERE id='r1'").fetchone()[0] == "Legacy risk"
+            assert conn.execute("SELECT title FROM tradeoffs WHERE id='t1'").fetchone()[0] == "Legacy tradeoff"
+    finally:
+        conn.close()
+
+
 def test_invalid_legacy_tradeoff_kind_refuses_migration_without_mutation(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
     conn = sqlite3.connect(":memory:")

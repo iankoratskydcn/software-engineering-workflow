@@ -79,6 +79,25 @@ def test_cli_passes_canonical_fields_and_project_scope_to_db(monkeypatch, capsys
         assert calls == [expected]
 
 
+def test_risk_cli_connection_failure_uses_stable_nested_json_error_envelope(monkeypatch, capsys):
+    def fail_connect():
+        raise cli.db.BoundaryError("constraint", "migration refused")
+
+    monkeypatch.setattr(cli.db, "connect", fail_connect)
+    args = parser().parse_args(["risk", "list", "--project-id", "p1"])
+    with pytest.raises(SystemExit) as exc_info:
+        args.func(args)
+    assert exc_info.value.code == 6
+    captured = capsys.readouterr()
+    assert captured.out.splitlines() == [
+        json.dumps({
+            "ok": False,
+            "error": {"code": "constraint", "message": "request violates a data constraint"},
+        })
+    ]
+    assert captured.err == ""
+
+
 def test_cli_errors_are_one_stable_json_envelope(monkeypatch, capsys):
     monkeypatch.setattr(cli.db, "connect", lambda: Conn())
 
