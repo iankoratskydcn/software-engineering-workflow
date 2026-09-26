@@ -6357,6 +6357,74 @@ function HierarchyMapPane() {
   ] })
 }
 
+const SCRUM_PLANNING_STATUSES = ["backlog", "ready", "in_progress", "done", "cancelled"]
+const SCRUM_PLANNING_ESTIMATES = [1, 2, 3, 5, 8, 13]
+
+function ScrumPlanningPane() {
+  const { projectId, loading: scopeLoading, error: scopeError } = useProjectDashboardScope()
+  const [state, setState] = React.useState({ loading: true, items: [], error: null })
+  const [busy, setBusy] = React.useState(false)
+  const [revision, setRevision] = React.useState(0)
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, items: [], error: null })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    cliExec(['scrum', 'plan', 'list', '--project-id', projectId]).then((result) => {
+      if (active) setState({ loading: false, items: Array.isArray(result?.planning_items) ? result.planning_items : [], error: null })
+    }).catch((error) => {
+      if (active) setState({ loading: false, items: [], error: String(error.message || error) })
+    })
+    return () => { active = false }
+  }, [projectId, revision])
+
+  const mutate = async (argv) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cliExec(argv)
+      setRevision((value) => value + 1)
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const add = async () => {
+    const specNodeId = window.prompt('Spec node ID')
+    const title = window.prompt('Planning item title')
+    const sprint = window.prompt('Sprint number', '1')
+    if (!projectId || !specNodeId?.trim() || !title?.trim() || !sprint?.trim()) return
+    await mutate(['scrum', 'plan', 'add', '--project-id', projectId, '--spec-node-id', specNodeId.trim(), '--title', title.trim(), '--status', 'backlog', '--estimate', '1', '--sprint', sprint.trim()])
+  }
+
+  const content = scopeLoading ? 'Loading Scrum Planning…'
+    : scopeError || state.error ? (scopeError || state.error)
+      : !projectId ? 'Select a board in Decision HUD.'
+        : state.loading ? 'Loading Scrum Planning…'
+          : state.items.length === 0 ? 'No planning items yet.'
+            : state.items.map((item) => jsxs('div', { className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+              jsx('div', { className: 'font-medium', children: item.title }),
+              jsx('div', { className: 'text-(--ui-text-tertiary)', children: item.spec_node_id }),
+              jsxs('div', { className: 'flex gap-2', children: [
+                jsx('select', { value: item.status, disabled: busy, 'aria-label': `Status for ${item.id}`, onChange: (event) => mutate(['scrum', 'plan', 'update', '--project-id', projectId, '--item-id', item.id, '--status', event.target.value]) , children: SCRUM_PLANNING_STATUSES.map((status) => jsx('option', { value: status, children: status }, status)) }),
+                jsx('select', { value: String(item.estimate), disabled: busy, 'aria-label': `Estimate for ${item.id}`, onChange: (event) => mutate(['scrum', 'plan', 'update', '--project-id', projectId, '--item-id', item.id, '--estimate', event.target.value]), children: SCRUM_PLANNING_ESTIMATES.map((estimate) => jsx('option', { value: String(estimate), children: `${estimate} points` }, estimate)) }),
+                jsx('button', { type: 'button', disabled: busy, onClick: () => mutate(['scrum', 'plan', 'delete', '--project-id', projectId, '--item-id', item.id]), children: 'Delete' }),
+              ] }),
+            ] }, item.id))
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsxs('div', { className: 'flex items-center justify-between', children: [
+      jsx('div', { className: 'font-medium', children: 'Scrum Planning' }),
+      jsx('button', { type: 'button', disabled: busy || !projectId, onClick: add, children: 'Add planning item' }),
+    ] }),
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+  ] })
+}
+
 function DecisionHudPane({ rest }) {
   // The selected board is the sole project scope: boards and projects are
   // intentionally one-to-one.
@@ -6846,6 +6914,18 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 44,
         data: { codicon: 'milestone', label: 'Roadmap', path: '/decision-hud/roadmap' },
+      },
+      {
+        id: 'scrum-planning-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/planning' },
+        render: () => jsx(ScrumPlanningPane, {}),
+      },
+      {
+        id: 'scrum-planning-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 43,
+        data: { codicon: 'calendar', label: 'Scrum Planning', path: '/decision-hud/planning' }
       },
       {
         id: 'agent-dashboard-route',

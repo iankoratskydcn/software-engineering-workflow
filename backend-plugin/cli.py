@@ -395,6 +395,34 @@ def setup(p) -> None:
     v = item_verbs.add_parser("list"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", dest="lane_id"); v.set_defaults(func=_cmd_roadmap_item_list)
     v = item_verbs.add_parser("update"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--item-id", required=True, dest="item_id"); v.add_argument("--lane-id"); v.add_argument("--title"); v.add_argument("--description"); v.add_argument("--status"); v.add_argument("--sort-order", type=int); v.add_argument("--depends-on", action="append", default=None); v.add_argument("--link", action="append", dest="links", default=None); v.add_argument("--clear-depends-on", action="store_true"); v.add_argument("--clear-links", action="store_true"); v.add_argument("--expected-updated-at", type=float, dest="expected_updated_at"); v.set_defaults(func=_cmd_roadmap_item_update)
 
+    scrum = verbs.add_parser("scrum", help="Manage Scrum Planning")
+    scrum_verbs = scrum.add_subparsers(dest="scrum_verb", required=True)
+    plan = scrum_verbs.add_parser("plan", help="Manage project-scoped planning items")
+    plan_verbs = plan.add_subparsers(dest="plan_verb", required=True)
+    v = plan_verbs.add_parser("add")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--spec-node-id", required=True, dest="spec_node_id")
+    v.add_argument("--title", required=True)
+    v.add_argument("--status", default="backlog", choices=["backlog", "ready", "in_progress", "done", "cancelled"])
+    v.add_argument("--estimate", required=True, type=int)
+    v.add_argument("--sprint", required=True, type=int)
+    v.set_defaults(func=_cmd_planning_add)
+    v = plan_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_planning_list)
+    v = plan_verbs.add_parser("update")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--item-id", required=True, dest="item_id")
+    v.add_argument("--title")
+    v.add_argument("--status", choices=["backlog", "ready", "in_progress", "done", "cancelled"])
+    v.add_argument("--estimate", type=int)
+    v.add_argument("--sprint", type=int)
+    v.set_defaults(func=_cmd_planning_update)
+    v = plan_verbs.add_parser("delete")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--item-id", required=True, dest="item_id")
+    v.set_defaults(func=_cmd_planning_delete)
+
     p.set_defaults(func=lambda args: p.print_help())
 
 
@@ -424,6 +452,33 @@ def _cmd_roadmap_item_list(args):
 
 def _cmd_roadmap_item_update(args):
     _run_node_command(db.update_roadmap_item, "item", project_id=args.project_id, item_id=args.item_id, lane_id=args.lane_id, title=args.title, description=args.description, status=args.status, sort_order=args.sort_order, depends_on=args.depends_on, links=args.links, clear_depends_on=args.clear_depends_on, clear_links=args.clear_links, expected_updated_at=args.expected_updated_at)
+
+
+def _cmd_planning_add(args) -> None:
+    _run_node_command(
+        db.create_planning_item, "planning_item", project_id=args.project_id,
+        spec_node_id=args.spec_node_id, title=args.title, status=args.status,
+        estimate=args.estimate, sprint=args.sprint,
+    )
+
+
+def _cmd_planning_list(args) -> None:
+    _run_node_command(db.list_planning_items, "planning_items", project_id=args.project_id)
+
+
+def _cmd_planning_update(args) -> None:
+    _run_node_command(
+        db.update_planning_item, "planning_item", project_id=args.project_id,
+        item_id=args.item_id, title=args.title, status=args.status,
+        estimate=args.estimate, sprint=args.sprint,
+    )
+
+
+def _cmd_planning_delete(args) -> None:
+    _run_node_command(
+        db.delete_planning_item, "planning_item", project_id=args.project_id,
+        item_id=args.item_id,
+    )
 
 
 def _cmd_arch_add_diagram(args) -> None:

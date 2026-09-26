@@ -1000,6 +1000,110 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
             raise
 
 
+_PLANNING_STATUSES = ("backlog", "ready", "in_progress", "done", "cancelled")
+_PLANNING_ESTIMATES = (1, 2, 3, 5, 8, 13)
+
+
+def _planning_constraint(message: str) -> BoundaryError:
+    return BoundaryError("constraint", message)
+
+
+def _preflight_planning(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
+    ).fetchone()
+    if row is None:
+        return
+    columns = [tuple(item) for item in conn.execute("PRAGMA table_info(planning_items)")]
+    expected = [
+        ("id", "TEXT", 1, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("spec_node_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("status", "TEXT", 1, None, 0),
+        ("estimate", "INTEGER", 1, None, 0),
+        ("sprint", "INTEGER", 1, None, 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ]
+    actual = [(item[1], item[2].upper(), item[3], item[4], item[5]) for item in columns]
+    if actual != expected:
+        raise _planning_constraint("planning_items has non-canonical columns")
+    table_sql = "".join((row[0] or "").lower().split())
+    if not table_sql.endswith("strict"):
+        raise _planning_constraint("planning_items must be STRICT")
+    required_checks = (
+        "check(statusin('backlog','ready','in_progress','done','cancelled'))",
+        "check(estimatein(1,2,3,5,8,13))",
+    )
+    if any(fragment not in table_sql for fragment in required_checks):
+        raise _planning_constraint("planning_items constraints are non-canonical")
+    foreign_keys = {
+        (item[2], item[3], item[4], item[5], item[6], item[7])
+        for item in conn.execute("PRAGMA foreign_key_list(planning_items)")
+    }
+    expected_fk = {("spec_nodes", "project_id", "project_id", "CASCADE", "RESTRICT", "NONE"),
+                   ("spec_nodes", "spec_node_id", "id", "CASCADE", "RESTRICT", "NONE")}
+    if foreign_keys != expected_fk:
+        raise _planning_constraint("planning_items foreign key is non-canonical")
+    for item in conn.execute("SELECT * FROM planning_items"):
+        if item["status"] not in _PLANNING_STATUSES:
+            raise _planning_constraint("planning_items contains an invalid status")
+        if type(item["estimate"]) is not int or item["estimate"] not in _PLANNING_ESTIMATES:
+            raise _planning_constraint("planning_items contains an invalid estimate")
+        if type(item["sprint"]) is not int or item["sprint"] < 1:
+            raise _planning_constraint("planning_items contains an invalid sprint")
+        node = conn.execute(
+            "SELECT 1 FROM spec_nodes WHERE project_id = ? AND id = ?",
+            (item["project_id"], item["spec_node_id"]),
+        ).fetchone()
+        if node is None:
+            raise _planning_constraint("planning_items contains an orphan or cross-project spec node")
+
+
+def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
+    """Create the strict, project-scoped Scrum Planning table."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    _preflight_planning(conn)
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
+    ).fetchone()
+    if version >= 13 and exists is None:
+        raise _planning_constraint("partial v13 Scrum Planning migration is unsupported")
+    if version >= 13:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if exists is None:
+            conn.execute(
+                """
+                CREATE TABLE planning_items (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    spec_node_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+                    estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+                    sprint INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(project_id, id),
+                    FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                        ON DELETE RESTRICT ON UPDATE CASCADE
+                ) STRICT
+                """
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_planning_items_project "
+            "ON planning_items(project_id, sprint, status, created_at, id)"
+        )
+        conn.execute("PRAGMA user_version = 13")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -1108,6 +1212,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v10_architecture(conn)
     _migrate_v11_roadmap(conn)
     _migrate_v12_mindmap(conn)
+    _migrate_v13_scrum_planning(conn)
     conn.commit()
 
 
@@ -2158,6 +2263,104 @@ def mark_report_failed(conn: sqlite3.Connection, report_id: str, error: str) -> 
         (error, time.time(), report_id),
     )
     conn.commit()
+
+
+def _planning_project(conn: sqlite3.Connection, project_id: str) -> str:
+    del conn
+    return _resolve_project(validate_text(project_id, field="project_id", max_chars=ID_LIMIT))["id"]
+
+
+def _planning_values(*, title: str, status: str, estimate: int, sprint: int) -> tuple[str, str, int, int]:
+    title = validate_text(title, field="title", max_chars=TEXT_LIMIT)
+    if status not in _PLANNING_STATUSES:
+        raise BoundaryError("invalid_input", "invalid planning status")
+    if type(estimate) is not int or estimate not in _PLANNING_ESTIMATES:
+        raise BoundaryError("invalid_input", "estimate must be one of 1, 2, 3, 5, 8, or 13")
+    if type(sprint) is not int or isinstance(sprint, bool) or sprint < 1 or sprint > 100000:
+        raise BoundaryError("invalid_input", "sprint must be an integer from 1 through 100000")
+    return title, status, estimate, sprint
+
+
+def _planning_node(conn: sqlite3.Connection, project_id: str, spec_node_id: str) -> str:
+    spec_node_id = validate_text(spec_node_id, field="spec_node_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT project_id FROM spec_nodes WHERE id = ?", (spec_node_id,)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    if row["project_id"] != project_id:
+        raise BoundaryError("not_found", "resource not found")
+    return spec_node_id
+
+
+def create_planning_item(conn: sqlite3.Connection, *, project_id: str, spec_node_id: str,
+                         title: str, status: str = "backlog", estimate: int = 1,
+                         sprint: int = 1) -> dict[str, Any]:
+    project = _planning_project(conn, project_id)
+    spec_node = _planning_node(conn, project, spec_node_id)
+    title, status, estimate, sprint = _planning_values(
+        title=title, status=status, estimate=estimate, sprint=sprint
+    )
+    item_id = "pi_" + secrets.token_hex(6)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO planning_items "
+        "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (item_id, project, spec_node, title, status, estimate, sprint, now, now),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM planning_items WHERE id = ?", (item_id,)).fetchone())
+
+
+def list_planning_items(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _planning_project(conn, project_id)
+    rows = conn.execute(
+        "SELECT planning_items.* "
+        "FROM planning_items "
+        "WHERE planning_items.project_id = ? ORDER BY sprint, created_at, id",
+        (project,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_planning_item(conn: sqlite3.Connection, *, project_id: str, item_id: str,
+                         title: str | None = None, status: str | None = None,
+                         estimate: int | None = None, sprint: int | None = None) -> dict[str, Any]:
+    project = _planning_project(conn, project_id)
+    item_id = validate_text(item_id, field="item_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT * FROM planning_items WHERE id = ? AND project_id = ?", (item_id, project)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    next_title = row["title"] if title is None else title
+    next_status = row["status"] if status is None else status
+    next_estimate = row["estimate"] if estimate is None else estimate
+    next_sprint = row["sprint"] if sprint is None else sprint
+    next_title, next_status, next_estimate, next_sprint = _planning_values(
+        title=next_title, status=next_status, estimate=next_estimate, sprint=next_sprint
+    )
+    conn.execute(
+        "UPDATE planning_items SET title = ?, status = ?, estimate = ?, sprint = ?, updated_at = ? "
+        "WHERE id = ? AND project_id = ?",
+        (next_title, next_status, next_estimate, next_sprint, time.time(), item_id, project),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM planning_items WHERE id = ?", (item_id,)).fetchone())
+
+
+def delete_planning_item(conn: sqlite3.Connection, *, project_id: str, item_id: str) -> dict[str, Any]:
+    project = _planning_project(conn, project_id)
+    item_id = validate_text(item_id, field="item_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT * FROM planning_items WHERE id = ? AND project_id = ?", (item_id, project)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    conn.execute("DELETE FROM planning_items WHERE id = ? AND project_id = ?", (item_id, project))
+    conn.commit()
+    return dict(row)
 
 
 _SPEC_KINDS = ("theme", "epic", "feature", "story")

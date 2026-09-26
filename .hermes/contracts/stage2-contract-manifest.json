@@ -45,9 +45,9 @@
   "migration": {
     "owner": "backend-plugin/db.py:init_db",
     "from_version": 9,
-    "target_version": 12,
-    "fresh_path": "create canonical schema in one transaction, then PRAGMA user_version=12",
-    "upgrade_path": "v11 -> v12_stage2_mindmap in one transaction",
+    "target_version": 13,
+    "fresh_path": "create canonical schema in one transaction, then PRAGMA user_version=13",
+    "upgrade_path": "v12 -> v13_scrum_planning in one transaction",
     "partially_migrated_v12": "unsupported; refuse before mutation with machine-readable report",
     "invalid_existing_data": "preflight and fail with report; rollback all schema/data changes",
     "rollback": "restore validated SQLite backup; no downgrade migration promised",
@@ -94,8 +94,8 @@
       "writers": ["create_roadmap_item(project_id)", "update_roadmap_item(project_id,id)"]
     },
     "planning_items": {
-      "ddl": "CREATE TABLE planning_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, spec_node_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','blocked','done')), estimate INTEGER NOT NULL DEFAULT 0 CHECK(estimate BETWEEN 0 AND 100000), sprint TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,spec_node_id) REFERENCES spec_nodes(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT)",
-      "limits": ["title", "sprint"],
+      "ddl": "CREATE TABLE planning_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, spec_node_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')), estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)), sprint INTEGER NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,spec_node_id) REFERENCES spec_nodes(project_id,id) ON DELETE RESTRICT ON UPDATE CASCADE) STRICT",
+      "limits": ["title", "sprint 1..100000"],
       "writers": ["create_planning_item(project_id)", "update_planning_item(project_id,id)"]
     },
     "spec_nodes_mindmap": {
