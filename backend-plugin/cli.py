@@ -369,7 +369,51 @@ def setup(p) -> None:
     v.add_argument("--side", choices=["a", "b"], required=True)
     v.set_defaults(func=_cmd_tradeoff_set_side)
 
+    roadmap = verbs.add_parser("roadmap", help="Manage project roadmap")
+    roadmap_verbs = roadmap.add_subparsers(dest="roadmap_verb", required=True)
+    v = roadmap_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_roadmap_list)
+    lane = roadmap_verbs.add_parser("lane")
+    lane_verbs = lane.add_subparsers(dest="lane_verb", required=True)
+    v = lane_verbs.add_parser("add"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--title", required=True); v.add_argument("--sort-order", type=int, default=0); v.set_defaults(func=_cmd_roadmap_lane_add)
+    v = lane_verbs.add_parser("list"); v.add_argument("--project-id", required=True, dest="project_id"); v.set_defaults(func=_cmd_roadmap_lane_list)
+    v = lane_verbs.add_parser("update"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", required=True, dest="lane_id"); v.add_argument("--title"); v.add_argument("--sort-order", type=int); v.add_argument("--expected-updated-at", type=float, dest="expected_updated_at"); v.set_defaults(func=_cmd_roadmap_lane_update)
+    item = roadmap_verbs.add_parser("item")
+    item_verbs = item.add_subparsers(dest="item_verb", required=True)
+    v = item_verbs.add_parser("add"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", required=True, dest="lane_id"); v.add_argument("--title", required=True); v.add_argument("--description"); v.add_argument("--status", default="planned"); v.add_argument("--sort-order", type=int, default=0); v.add_argument("--depends-on", action="append", default=None); v.add_argument("--link", action="append", dest="links", default=None); v.set_defaults(func=_cmd_roadmap_item_add)
+    v = item_verbs.add_parser("list"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", dest="lane_id"); v.set_defaults(func=_cmd_roadmap_item_list)
+    v = item_verbs.add_parser("update"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--item-id", required=True, dest="item_id"); v.add_argument("--lane-id"); v.add_argument("--title"); v.add_argument("--description"); v.add_argument("--status"); v.add_argument("--sort-order", type=int); v.add_argument("--depends-on", action="append", default=None); v.add_argument("--link", action="append", dest="links", default=None); v.add_argument("--clear-depends-on", action="store_true"); v.add_argument("--clear-links", action="store_true"); v.add_argument("--expected-updated-at", type=float, dest="expected_updated_at"); v.set_defaults(func=_cmd_roadmap_item_update)
+
     p.set_defaults(func=lambda args: p.print_help())
+
+
+def _cmd_roadmap_list(args):
+    _run_node_command(lambda conn, **kw: {"lanes": db.list_roadmap_lanes(conn, **kw), "items": db.list_roadmap_items(conn, **kw)}, "roadmap", project_id=args.project_id)
+
+
+def _cmd_roadmap_lane_add(args):
+    _run_node_command(db.create_roadmap_lane, "lane", project_id=args.project_id, title=args.title, sort_order=args.sort_order)
+
+
+def _cmd_roadmap_lane_list(args):
+    _run_node_command(db.list_roadmap_lanes, "lanes", project_id=args.project_id)
+
+
+def _cmd_roadmap_lane_update(args):
+    _run_node_command(db.update_roadmap_lane, "lane", project_id=args.project_id, lane_id=args.lane_id, title=args.title, sort_order=args.sort_order, expected_updated_at=args.expected_updated_at)
+
+
+def _cmd_roadmap_item_add(args):
+    _run_node_command(db.create_roadmap_item, "item", project_id=args.project_id, lane_id=args.lane_id, title=args.title, description=args.description, status=args.status, sort_order=args.sort_order, depends_on=args.depends_on, links=args.links)
+
+
+def _cmd_roadmap_item_list(args):
+    _run_node_command(db.list_roadmap_items, "items", project_id=args.project_id, lane_id=args.lane_id)
+
+
+def _cmd_roadmap_item_update(args):
+    _run_node_command(db.update_roadmap_item, "item", project_id=args.project_id, item_id=args.item_id, lane_id=args.lane_id, title=args.title, description=args.description, status=args.status, sort_order=args.sort_order, depends_on=args.depends_on, links=args.links, clear_depends_on=args.clear_depends_on, clear_links=args.clear_links, expected_updated_at=args.expected_updated_at)
 
 
 def _cmd_arch_add_diagram(args) -> None:

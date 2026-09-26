@@ -468,6 +468,152 @@ def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
         raise
 
 
+_ROADMAP_STATUSES = ("planned", "todo", "in_progress", "blocked", "done", "cancelled")
+
+
+def _migrate_v11_roadmap(conn: sqlite3.Connection) -> None:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('roadmap_lanes','roadmap_items')")}
+    if version == 11 and tables != {"roadmap_lanes", "roadmap_items"}:
+        raise BoundaryError("constraint", "partial v11 roadmap migration is unsupported")
+    if version > 11:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS roadmap_lanes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_roadmap_lanes_project ON roadmap_lanes(project_id, sort_order, id);
+            CREATE TABLE IF NOT EXISTS roadmap_items (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lane_id TEXT NOT NULL, title TEXT NOT NULL,
+                description TEXT, status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','todo','in_progress','blocked','done','cancelled')),
+                sort_order INTEGER NOT NULL DEFAULT 0, depends_on_json TEXT NOT NULL DEFAULT '[]',
+                links_json TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id), FOREIGN KEY(project_id, lane_id) REFERENCES roadmap_lanes(project_id, id)
+                    ON DELETE RESTRICT ON UPDATE RESTRICT
+            );
+            CREATE INDEX IF NOT EXISTS idx_roadmap_items_project ON roadmap_items(project_id, lane_id, sort_order, id);
+        """)
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _roadmap_project(project_id):
+    return _resolve_project(validate_text(project_id, field="project_id", max_chars=ID_LIMIT))["id"]
+
+
+def _roadmap_id(value, field):
+    return validate_text(value, field=field, max_chars=ID_LIMIT)
+
+
+def _roadmap_lists(value, field):
+    values = [] if value is None else validate_list(value, field=field, max_value_chars=LIST_VALUE_LIMIT - 1)
+    encoded = json.dumps(values, separators=(",", ":"), ensure_ascii=False)
+    if len(encoded.encode("utf-8")) > JSON_LIMIT:
+        raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
+    return values, encoded
+
+
+def _roadmap_row(row):
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    result = dict(row)
+    result["depends_on"] = json.loads(result.pop("depends_on_json", "[]")) if "depends_on_json" in result else []
+    result["links"] = json.loads(result.pop("links_json", "[]")) if "links_json" in result else []
+    return result
+
+
+def create_roadmap_lane(conn, *, project_id, title, sort_order=0):
+    project_id = _roadmap_project(project_id); title = validate_text(title, field="title")
+    now = time.time(); lane_id = "rml_" + secrets.token_hex(6)
+    conn.execute("INSERT INTO roadmap_lanes VALUES (?, ?, ?, ?, ?, ?)", (lane_id, project_id, title, sort_order, now, now)); conn.commit()
+    return dict(conn.execute("SELECT * FROM roadmap_lanes WHERE id = ?", (lane_id,)).fetchone())
+
+
+def list_roadmap_lanes(conn, *, project_id):
+    project_id = _roadmap_project(project_id)
+    return [dict(r) for r in conn.execute("SELECT * FROM roadmap_lanes WHERE project_id = ? ORDER BY sort_order, id", (project_id,))]
+
+
+def update_roadmap_lane(conn, *, project_id, lane_id, title=None, sort_order=None, expected_updated_at=None):
+    project_id = _roadmap_project(project_id); lane_id = _roadmap_id(lane_id, "lane_id")
+    row = conn.execute("SELECT * FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone()
+    if row is None: raise BoundaryError("not_found", "resource not found")
+    if expected_updated_at is not None and row["updated_at"] != expected_updated_at: raise BoundaryError("conflict", "stale or conflicting request")
+    updates, values = [], []
+    if title is not None: updates += ["title = ?"]; values += [validate_text(title, field="title")]
+    if sort_order is not None: updates += ["sort_order = ?"]; values += [sort_order]
+    if not updates: return dict(row)
+    updates += ["updated_at = ?"]; values += [time.time(), lane_id, project_id]
+    conn.execute(f"UPDATE roadmap_lanes SET {', '.join(updates)} WHERE id = ? AND project_id = ?", values); conn.commit()
+    return dict(conn.execute("SELECT * FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone())
+
+
+def _roadmap_item_target_check(conn, project_id, values):
+    for target in values:
+        row = conn.execute("SELECT project_id FROM roadmap_items WHERE id = ?", (target,)).fetchone()
+        if row is not None and row[0] != project_id: raise BoundaryError("not_found", "resource not found")
+
+
+def create_roadmap_item(conn, *, project_id, lane_id, title, description=None, status="planned", sort_order=0, depends_on=None, links=None):
+    project_id = _roadmap_project(project_id); lane_id = _roadmap_id(lane_id, "lane_id")
+    title = validate_text(title, field="title")
+    description = None if description is None else validate_text(description, field="description", allow_empty=True)
+    if status not in _ROADMAP_STATUSES: raise BoundaryError("invalid_input", "invalid roadmap status")
+    depends, depends_json = _roadmap_lists(depends_on, "depends_on"); _, links_json = _roadmap_lists(links, "links")
+    _roadmap_item_target_check(conn, project_id, depends)
+    if conn.execute("SELECT 1 FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone() is None: raise BoundaryError("not_found", "resource not found")
+    now = time.time(); item_id = "rmi_" + secrets.token_hex(6)
+    conn.execute("INSERT INTO roadmap_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (item_id, project_id, lane_id, title, description, status, sort_order, depends_json, links_json, now, now)); conn.commit()
+    return _roadmap_row(conn.execute("SELECT * FROM roadmap_items WHERE id = ?", (item_id,)).fetchone())
+
+
+def list_roadmap_items(conn, *, project_id, lane_id=None):
+    project_id = _roadmap_project(project_id)
+    if lane_id is None: rows = conn.execute("SELECT * FROM roadmap_items WHERE project_id = ? ORDER BY sort_order, id", (project_id,))
+    else: rows = conn.execute("SELECT * FROM roadmap_items WHERE project_id = ? AND lane_id = ? ORDER BY sort_order, id", (project_id, _roadmap_id(lane_id, "lane_id")))
+    return [_roadmap_row(r) for r in rows]
+
+
+def get_roadmap_item(conn, *, project_id, item_id):
+    project_id = _roadmap_project(project_id); item_id = _roadmap_id(item_id, "item_id")
+    return _roadmap_row(conn.execute("SELECT * FROM roadmap_items WHERE id = ? AND project_id = ?", (item_id, project_id)).fetchone())
+
+
+def update_roadmap_item(conn, *, project_id, item_id, lane_id=None, title=None, description=None, status=None, sort_order=None, depends_on=None, links=None, clear_depends_on=False, clear_links=False, expected_updated_at=None):
+    project_id = _roadmap_project(project_id); item_id = _roadmap_id(item_id, "item_id")
+    row = conn.execute("SELECT * FROM roadmap_items WHERE id = ? AND project_id = ?", (item_id, project_id)).fetchone()
+    if row is None: raise BoundaryError("not_found", "resource not found")
+    if expected_updated_at is not None and row["updated_at"] != expected_updated_at: raise BoundaryError("conflict", "stale or conflicting request")
+    updates, values = [], []
+    if lane_id is not None:
+        lane_id = _roadmap_id(lane_id, "lane_id")
+        if conn.execute("SELECT 1 FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone() is None: raise BoundaryError("not_found", "resource not found")
+        updates += ["lane_id = ?"]; values += [lane_id]
+    if title is not None: updates += ["title = ?"]; values += [validate_text(title, field="title")]
+    if description is not None: updates += ["description = ?"]; values += [validate_text(description, field="description", allow_empty=True)]
+    if status is not None:
+        if status not in _ROADMAP_STATUSES: raise BoundaryError("invalid_input", "invalid roadmap status")
+        updates += ["status = ?"]; values += [status]
+    if sort_order is not None: updates += ["sort_order = ?"]; values += [sort_order]
+    if clear_depends_on: depends_on = []
+    if depends_on is not None:
+        depends, encoded = _roadmap_lists(depends_on, "depends_on"); _roadmap_item_target_check(conn, project_id, depends); updates += ["depends_on_json = ?"]; values += [encoded]
+    if clear_links: links = []
+    if links is not None:
+        _, encoded = _roadmap_lists(links, "links"); updates += ["links_json = ?"]; values += [encoded]
+    if not updates: return _roadmap_row(row)
+    updates += ["updated_at = ?"]; values += [time.time(), item_id, project_id]
+    conn.execute(f"UPDATE roadmap_items SET {', '.join(updates)} WHERE id = ? AND project_id = ?", values); conn.commit()
+    return get_roadmap_item(conn, project_id=project_id, item_id=item_id)
+
+
 def _preflight_architecture_legacy(conn: sqlite3.Connection, *, version: int | None = None) -> None:
     """Validate legacy architecture state before any migration can write."""
     if version is None:
@@ -717,6 +863,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v8_stage2_risk_tradeoffs(conn)
     _migrate_v9_flowcharts(conn)
     _migrate_v10_architecture(conn)
+    _migrate_v11_roadmap(conn)
     conn.commit()
 
 
