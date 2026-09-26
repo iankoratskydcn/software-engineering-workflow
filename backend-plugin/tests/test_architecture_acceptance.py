@@ -26,6 +26,48 @@ import db  # noqa: E402
 MAX_COORDINATE = 100_000
 
 
+def _snapshot_db(conn: sqlite3.Connection):
+    schema = tuple(
+        tuple(row)
+        for row in conn.execute(
+            "SELECT type, name, sql FROM sqlite_master "
+            "WHERE sql IS NOT NULL ORDER BY type, name"
+        )
+    )
+    return schema, "\\n".join(conn.iterdump()), conn.execute("PRAGMA user_version").fetchone()[0]
+
+
+def _v9_conn(tmp_path: Path, monkeypatch, *, architecture_sql: str, row=None) -> sqlite3.Connection:
+    conn = _conn(tmp_path, monkeypatch)
+    conn.execute("DROP TABLE architecture_diagrams")
+    conn.execute("PRAGMA user_version = 9")
+    conn.execute(architecture_sql)
+    if row is not None:
+        conn.execute(
+            "INSERT INTO architecture_diagrams "
+            "(id, project_id, title, nodes_json, edges_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            row,
+        )
+    conn.commit()
+    return conn
+
+
+def _canonical_architecture_sql() -> str:
+    return """
+        CREATE TABLE architecture_diagrams (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            nodes_json TEXT NOT NULL,
+            edges_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(project_id, id)
+        )
+    """
+
+
 def _conn(tmp_path: Path, monkeypatch) -> sqlite3.Connection:
     monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
     projects = sqlite3.connect(tmp_path / "projects.db")
@@ -150,3 +192,58 @@ def test_architecture_cli_requires_project_scope_and_emits_one_stable_error_enve
         "ok": False,
         "error": {"code": "invalid_input", "message": "invalid architecture"},
     }]
+
+
+def test_v9_with_preexisting_architecture_table_is_rejected_without_mutation(tmp_path, monkeypatch):
+    conn = _v9_conn(
+        tmp_path,
+        monkeypatch,
+        architecture_sql=_canonical_architecture_sql(),
+        row=("a1", "p_1", "Demo", "[]", "[]", 1, 1),
+    )
+    before = _snapshot_db(conn)
+    with pytest.raises(Exception, match="architecture"):
+        db.init_db(conn)
+    assert _snapshot_db(conn) == before
+    conn.close()
+
+
+def test_invalid_legacy_architecture_json_rejects_atomically_before_prior_schema_mutation(tmp_path, monkeypatch):
+    conn = _v9_conn(
+        tmp_path,
+        monkeypatch,
+        architecture_sql=_canonical_architecture_sql(),
+        row=("a1", "p_1", "Demo", "not-json", "[]", 1, 1),
+    )
+    conn.execute("DROP INDEX idx_decisions_pending")
+    conn.commit()
+    before = _snapshot_db(conn)
+    with pytest.raises(Exception, match="architecture.*JSON|invalid JSON"):
+        db.init_db(conn)
+    assert _snapshot_db(conn) == before
+    conn.close()
+
+
+def test_malformed_legacy_architecture_ddl_is_rejected_without_mutation(tmp_path, monkeypatch):
+    malformed_sql = """
+        CREATE TABLE architecture_diagrams (
+            id TEXT,
+            project_id TEXT,
+            title TEXT,
+            nodes_json TEXT,
+            edges_json TEXT,
+            created_at REAL,
+            updated_at REAL
+        )
+    """
+    conn = _v9_conn(
+        tmp_path,
+        monkeypatch,
+        architecture_sql=malformed_sql,
+        row=("a1", "p_1", "Demo", "[]", "[]", 1, 1),
+    )
+    before = _snapshot_db(conn)
+    with pytest.raises(Exception, match="architecture.*canonical|constraint"):
+        db.init_db(conn)
+    assert _snapshot_db(conn) == before
+    conn.close()
