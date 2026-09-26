@@ -45,10 +45,10 @@
   "migration": {
     "owner": "backend-plugin/db.py:init_db",
     "from_version": 9,
-    "target_version": 10,
-    "fresh_path": "create canonical schema in one transaction, then PRAGMA user_version=10",
-    "upgrade_path": "v9 -> v10_stage2_architecture in one transaction",
-    "partially_migrated_v10": "unsupported; refuse before mutation with machine-readable report",
+    "target_version": 11,
+    "fresh_path": "create canonical schema in one transaction, then PRAGMA user_version=11",
+    "upgrade_path": "v10 -> v11_stage2_roadmap in one transaction",
+    "partially_migrated_v11": "unsupported; refuse before mutation with machine-readable report",
     "invalid_existing_data": "preflight and fail with report; rollback all schema/data changes",
     "rollback": "restore validated SQLite backup; no downgrade migration promised",
     "idempotent": true
