@@ -203,8 +203,8 @@ def validate_json_text(value: Any, *, field: str, max_bytes: int = JSON_LIMIT,
     if len(value.encode("utf-8")) > max_bytes:
         raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
     try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError as exc:
+        decoded = json.loads(value, parse_constant=lambda token: (_ for _ in ()).throw(ValueError(f"non-standard JSON constant: {token}")))
+    except (json.JSONDecodeError, ValueError) as exc:
         raise BoundaryError("invalid_input", f"{field} must be valid JSON") from exc
     _validate_json_value(decoded, field=field, depth=0, max_items=max_items,
                          max_value_chars=max_value_chars)
@@ -898,9 +898,9 @@ def parse_json_kwarg(raw: Optional[str], field_name: str) -> Optional[dict]:
     if not raw:
         return None
     try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError(f"{field_name} is not valid JSON: {exc}") from exc
+        return validate_json_text(raw, field=field_name)
+    except BoundaryError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _verify_card_type(card_type: Optional[str], bucket: Optional[str], answers: Optional[dict]) -> None:
@@ -962,11 +962,11 @@ def push_decision(
     _verify_card_type() above.
     """
     proj = _resolve_project(project_id)
-    if not question or not question.strip():
-        raise ValueError("question is required")
-    choices = [c for c in (choices or []) if isinstance(c, str) and c.strip()]
+    question = validate_text(question, field="question")
+    choices = validate_list(choices or [], field="choices", max_items=4,
+                            max_value_chars=LIST_VALUE_LIMIT)
     if not (2 <= len(choices) <= 4):
-        raise ValueError("choices must have between 2 and 4 non-empty entries")
+        raise BoundaryError("invalid_input", "choices must have between 2 and 4 entries")
     if recommended is not None and recommended not in choices:
         raise ValueError("recommended must be one of choices")
     if card_type is not None:

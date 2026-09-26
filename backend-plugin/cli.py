@@ -70,8 +70,9 @@ def _print(obj) -> None:
 
 def boundary_error(error: BaseException) -> tuple[dict, int]:
     """Map boundary failures to a stable safe envelope and exit code."""
+    detail = None
     if isinstance(error, db.BoundaryError):
-        code = error.code
+        code = error.code if error.code in {"invalid_input", "not_found", "conflict", "busy", "constraint", "internal_error"} else "internal_error"
     elif isinstance(error, sqlite3.OperationalError) and "locked" in str(error).lower():
         code = "busy"
     elif isinstance(error, sqlite3.IntegrityError):
@@ -80,6 +81,7 @@ def boundary_error(error: BaseException) -> tuple[dict, int]:
         code = "not_found"
     elif isinstance(error, ValueError):
         code = "invalid_input"
+        detail = str(error)[:256]
     else:
         code = "internal_error"
     exit_codes = {
@@ -90,7 +92,7 @@ def boundary_error(error: BaseException) -> tuple[dict, int]:
         "constraint": 6,
         "internal_error": 1,
     }
-    message = {
+    message = detail if detail and code == "invalid_input" else {
         "invalid_input": "invalid input",
         "not_found": "resource not found",
         "conflict": "stale or conflicting request",
@@ -294,9 +296,10 @@ def _run_node_command(operation, output_key: str, **kwargs) -> None:
     try:
         result = operation(conn, **kwargs)
         _print({"ok": True, output_key: result})
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        sys.exit(exit_code)
     finally:
         conn.close()
 
@@ -471,9 +474,10 @@ def _cmd_push(args) -> None:
             card_payload = db.parse_json_kwarg(getattr(args, "card_payload", None), "--card-payload")
             card_type_answers = db.parse_json_kwarg(
                 getattr(args, "card_type_answers", None), "--card-type-answers")
-        except ValueError as exc:
-            _print({"ok": False, "error": str(exc)})
-            sys.exit(1)
+        except Exception as exc:
+            envelope, exit_code = boundary_error(exc)
+            _print({"ok": False, "error": envelope["error"]["message"]})
+            sys.exit(exit_code)
             return
         result = db.push_decision(
             conn, project_id=args.project_id, question=args.question, choices=args.choices,
@@ -483,9 +487,10 @@ def _cmd_push(args) -> None:
             card_type_answers=card_type_answers,
         )
         _print({"ok": True, "decision": result})
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print({"ok": False, "error": envelope["error"]["message"]})
+        sys.exit(exit_code)
     finally:
         conn.close()
 
