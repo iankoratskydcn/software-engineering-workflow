@@ -68,4 +68,36 @@ test('Roadmap clears draft only after confirmed successful update', () => {
   assert.match(pane, /await\s+runUpdate\([\s\S]*?\)[\s\S]*?refresh\(/)
 })
 
+test('Roadmap item add keeps the add command instead of rewriting it as update', () => {
+  const pane = roadmapSource()
+  const submit = pane.match(/const submit = async \([\s\S]*?\n  \}\n  const setDraft/)?.[0]
+  assert.ok(submit, 'submit handler must be defined')
+  assert.doesNotMatch(submit, /operation === ['"]item['"][\s\S]*?['"]roadmap['"], ['"]item['"], ['"]update['"]/)
+  assert.match(submit, /runUpdate\(argv\)|cliExec\(argv\)/)
+})
+
+test('Roadmap existing item updates do not clear untouched relationships', () => {
+  const pane = roadmapSource()
+  const itemUpdate = pane.match(/const argv = \['roadmap', 'item', 'update',[\s\S]*?children: 'Save item'/)?.[0]
+  assert.ok(itemUpdate, 'existing item update controls must be defined')
+  assert.doesNotMatch(itemUpdate, /--clear-depends-on|--clear-links/)
+})
+
+test('Roadmap add failures do not clear lane or item drafts', () => {
+  const pane = roadmapSource()
+  assert.doesNotMatch(pane, /submit\('lane',[\s\S]*?\)\.then\(\(\) => setLaneDraft\(['"]['"]\)\)/)
+  assert.doesNotMatch(pane, /submit\('item',[\s\S]*?\)\.then\(\(\) => setItemDraft\(/)
+})
+
+test('Roadmap listValues splits actual newline characters', () => {
+  const pane = roadmapSource()
+  assert.match(pane, /value\.split\(['"]\\n['"]\)/)
+})
+
+test('Roadmap list command is not dead code', () => {
+  const pane = roadmapSource()
+  const matches = pane.match(/roadmapListCommand/g) || []
+  assert.ok(matches.length === 0 || matches.length > 1, 'roadmapListCommand must be used or removed')
+})
+
 console.log('roadmap UI hostile RED tests loaded')
