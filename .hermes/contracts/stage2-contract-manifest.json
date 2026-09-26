@@ -1,0 +1,131 @@
+{
+  "manifest_version": 1,
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "baseline_commit": "62d17f046ea0474bfb358350ae153174d23400da",
+  "owner_decisions": {
+    "limits": {
+      "text_chars": 4096,
+      "id_chars": 128,
+      "list_items": 256,
+      "list_value_chars": 512,
+      "json_bytes": 262144,
+      "nesting_depth": 8,
+      "coordinate_min": -100000,
+      "coordinate_max": 100000
+    },
+    "flowchart": {
+      "step_keys": ["id", "label", "next"],
+      "next_type": "array<string>",
+      "empty_allowed": true,
+      "cycles_allowed": true,
+      "disconnected_allowed": true,
+      "max_steps": 512,
+      "max_outgoing_edges": 32,
+      "duplicate_edges": "reject"
+    },
+    "architecture": {
+      "node_keys": ["id", "label", "x", "y", "drill_to_diagram_id"],
+      "edge_keys": ["source", "target", "label"],
+      "empty_allowed": true,
+      "max_nodes": 512,
+      "max_edges": 1024,
+      "coordinates": "finite and within shared coordinate bounds"
+    },
+    "scrum": {
+      "statuses": ["backlog", "ready", "in_progress", "blocked", "done"],
+      "estimate": "integer 0..100000",
+      "sprint": "null or non-empty string <= 128 chars",
+      "linked_spec_delete": "restrict"
+    },
+    "mindmap_root": "at-most-one per project for level=0 and parent_id IS NULL",
+    "legacy_rows": "fail migration with report; preserve database and rows",
+    "relationships": "same-project IDs; missing/cross-project rejected; destructive deletes restricted",
+    "baseline": "Only exact normalized signatures in .hermes/evidence/stage2/baseline.json are non-blocking."
+  },
+  "migration": {
+    "owner": "backend-plugin/db.py:init_db",
+    "from_version": 7,
+    "target_version": 8,
+    "fresh_path": "create canonical schema in one transaction, then PRAGMA user_version=8",
+    "upgrade_path": "v7 -> v8_stage2 in one transaction",
+    "partially_migrated_v8_v9": "unsupported; refuse before mutation with machine-readable report",
+    "invalid_existing_data": "preflight and fail with report; rollback all schema/data changes",
+    "rollback": "restore validated SQLite backup; no downgrade migration promised",
+    "idempotent": true
+  },
+  "connection_invariant": {
+    "foreign_keys": "PRAGMA foreign_keys=ON immediately after opening, before schema/data statements",
+    "verification": "factory verifies PRAGMA foreign_keys=1 and refuses otherwise"
+  },
+  "tables": {
+    "risks": {
+      "ddl": "CREATE TABLE risks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT, title TEXT NOT NULL, description TEXT, breaks_when TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','mitigated','accepted','closed')), created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT)",
+      "limits": ["title", "description", "breaks_when"],
+      "reader": "list_risks(project_id)",
+      "writers": ["add_risk(project_id)", "update_risk_status(project_id,id)"]
+    },
+    "tradeoffs": {
+      "ddl": "CREATE TABLE tradeoffs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT, kind TEXT NOT NULL CHECK(kind IN ('scale','duel','anchor')), title TEXT NOT NULL, choice TEXT NOT NULL, alt_label TEXT, cost TEXT, gain TEXT, prioritized_side TEXT CHECK(prioritized_side IS NULL OR prioritized_side IN ('a','b')), created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT)",
+      "limits": ["title", "choice", "alt_label", "cost", "gain"],
+      "legacy": "missing/invalid kind aborts migration with report",
+      "reader": "list_tradeoffs(project_id)",
+      "writers": ["add_tradeoff(project_id)", "set_prioritized_side(project_id,id)"]
+    },
+    "flows": {
+      "ddl": "CREATE TABLE flows (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, steps_json TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(project_id,id))",
+      "json": "array of closed step objects {id:string,label:string,next:array<string>}; targets must exist in same payload",
+      "reader": "list_flows(project_id)",
+      "writers": ["create_flow(project_id)", "update_flow(project_id,id)", "set_flow_steps(project_id,id)"]
+    },
+    "architecture_diagrams": {
+      "ddl": "CREATE TABLE architecture_diagrams (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, nodes_json TEXT NOT NULL, edges_json TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id))",
+      "json": "nodes are closed {id,label,x,y,drill_to_diagram_id?}; edges are closed {source,target,label?}; endpoints and drill targets same-project",
+      "reader": "get_diagram(project_id,id), list_diagrams(project_id)",
+      "writers": ["add_diagram(project_id)", "set_diagram(project_id,id)"]
+    },
+    "roadmap_lanes": {
+      "ddl": "CREATE TABLE roadmap_lanes (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id))",
+      "limits": ["title"],
+      "writers": ["create_roadmap_lane(project_id)", "update_roadmap_lane(project_id,id)"]
+    },
+    "roadmap_items": {
+      "ddl": "CREATE TABLE roadmap_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lane_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT, status TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, depends_on_json TEXT NOT NULL DEFAULT '[]', links_json TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,lane_id) REFERENCES roadmap_lanes(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT)",
+      "limits": ["title", "description", "depends_on_json", "links_json", "list counts", "per-value length", "aggregate JSON"],
+      "writers": ["create_roadmap_item(project_id)", "update_roadmap_item(project_id,id)"]
+    },
+    "planning_items": {
+      "ddl": "CREATE TABLE planning_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, spec_node_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','blocked','done')), estimate INTEGER NOT NULL DEFAULT 0 CHECK(estimate BETWEEN 0 AND 100000), sprint TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,spec_node_id) REFERENCES spec_nodes(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT)",
+      "limits": ["title", "sprint"],
+      "writers": ["create_planning_item(project_id)", "update_planning_item(project_id,id)"]
+    }
+  },
+  "existing_authority_changes": {
+    "decisions": "No columns or rows changed; add only UNIQUE(project_id,id) support if required for composite FKs.",
+    "spec_nodes": "No columns changed; add UNIQUE(project_id,id) support and partial unique root index for canonical authority.",
+    "retrospective": "No schema changes; preserve Agent Matrix telemetry and aliases."
+  },
+  "error_taxonomy": {
+    "validation": "invalid_input",
+    "authorization_or_missing": "not_found",
+    "stale": "conflict",
+    "busy": "busy",
+    "constraint": "constraint",
+    "internal": "internal_error"
+  },
+  "cli_contract": {
+    "success": {"ok": true, "payload_key": "surface-specific"},
+    "error": {"ok": false, "error": {"code": "machine-readable", "message": "stable safe text"}},
+    "scope": "project_id/project argument required for every project-scoped operation",
+    "stdout": "one JSON envelope only",
+    "stderr": "diagnostics only",
+    "exit_codes": {"success": 0, "validation": 2, "not_found": 3, "conflict": 4, "busy": 5, "constraint": 6, "internal_error": 1}
+  },
+  "shared_helpers": {
+    "strict_string": ["risk_tradeoffs", "flowcharts", "architecture", "roadmap", "mindmap", "scrum_planning"],
+    "bounded_json": ["flowcharts", "architecture", "roadmap", "scrum_planning"],
+    "project_scope": ["all mutable surfaces"],
+    "error_mapping": ["all CLI commands"],
+    "connection_factory": ["all SQLite callers"]
+  },
+  "non_goals": ["modify decisions behavior", "duplicate Agent Matrix telemetry", "silent legacy-row discard", "unbounded JSON parsing", "UI-only authorization"]
+}

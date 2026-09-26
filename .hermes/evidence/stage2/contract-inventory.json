@@ -1,0 +1,1618 @@
+{
+  "baseline": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "canonical_cli": {
+    "surface_hits": [
+      "21: from .cli_spec_cmds import (",
+      "22: _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,",
+      "23: _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,",
+      "34: from cli_spec_cmds import (  # type: ignore[import-not-found]",
+      "35: _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,",
+      "36: _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,",
+      "117: help=\"Optional JSON string with card-specific config\")",
+      "188: spec = verbs.add_parser(\"spec\", help=\"Spec Digest: manage specification tree nodes\")",
+      "189: spec_verbs = spec.add_subparsers(dest=\"spec_verb\", required=True)",
+      "190: v = spec_verbs.add_parser(\"add-node\")",
+      "195: v.set_defaults(func=_cmd_spec_add_node)",
+      "196: v = spec_verbs.add_parser(\"list\")",
+      "199: v.set_defaults(func=_cmd_spec_list)",
+      "200: v = spec_verbs.add_parser(\"update-node\")",
+      "205: v.set_defaults(func=_cmd_spec_update_node)",
+      "206: v = spec_verbs.add_parser(\"set-criteria\")",
+      "209: v.set_defaults(func=_cmd_spec_set_criteria)",
+      "210: v = spec_verbs.add_parser(\"link-decision\")",
+      "213: v.set_defaults(func=_cmd_spec_link_decision)",
+      "214: v = spec_verbs.add_parser(\"delete-node\")",
+      "216: v.set_defaults(func=_cmd_spec_delete_node)",
+      "218: node = verbs.add_parser(\"node\", help=\"Manage mindmap hierarchy nodes\")",
+      "219: node_verbs = node.add_subparsers(dest=\"node_verb\", required=True)",
+      "221: v = node_verbs.add_parser(\"create\", help=\"Create a hierarchy node\")",
+      "224: help=\"Parent node id, or 'none' for a root\")",
+      "228: v.set_defaults(func=_cmd_node_create)",
+      "230: v = node_verbs.add_parser(\"list\", help=\"List active child nodes\")",
+      "233: v.set_defaults(func=_cmd_node_list)",
+      "235: v = node_verbs.add_parser(\"tree\", help=\"Print the project hierarchy tree\")",
+      "237: v.set_defaults(func=_cmd_node_tree)",
+      "239: v = node_verbs.add_parser(\"link-kanban\", help=\"Link a hierarchy node to a Kanban task\")",
+      "240: v.add_argument(\"node_id\")",
+      "242: v.set_defaults(func=_cmd_node_link_kanban)",
+      "244: v = node_verbs.add_parser(\"update\", help=\"Update a hierarchy node\")",
+      "245: v.add_argument(\"node_id\")",
+      "249: v.set_defaults(func=_cmd_node_update)",
+      "251: v = node_verbs.add_parser(\"archive\", help=\"Archive a hierarchy node and descendants\")",
+      "252: v.add_argument(\"node_id\")",
+      "253: v.set_defaults(func=_cmd_node_archive)",
+      "258: def _run_node_command(operation, output_key: str, **kwargs) -> None:",
+      "270: def _cmd_node_create(args) -> None:",
+      "271: _run_node_command(",
+      "272: db.create_node, \"node\", project_id=args.project_id,",
+      "278: def _cmd_node_list(args) -> None:",
+      "279: _run_node_command(",
+      "280: db.list_nodes, \"nodes\", project_id=args.project_id, parent_id=args.parent_id,",
+      "284: def _cmd_node_tree(args) -> None:",
+      "285: _run_node_command(db.get_subtree, \"tree\", project_id=args.project_id)",
+      "288: def _cmd_node_link_kanban(args) -> None:",
+      "289: _run_node_command(",
+      "290: db.link_node_to_kanban, \"node\", node_id=args.node_id,",
+      "295: def _cmd_node_update(args) -> None:",
+      "303: _run_node_command(db.update_node, \"node\", node_id=args.node_id, **fields)",
+      "306: def _cmd_node_archive(args) -> None:",
+      "307: _run_node_command(db.archive_node, \"node\", node_id=args.node_id)",
+      "375: spec = importlib.util.spec_from_file_location(module_name, path)",
+      "376: if spec is None or spec.loader is None:",
+      "377: raise ImportError(f\"could not load spec for agent-dashboard auth module at {path}\")",
+      "378: module = importlib.util.module_from_spec(spec)",
+      "380: spec.loader.exec_module(module)",
+      "472: # same shape as hermes_cli.kanban_specify). A triage failure still leaves the raw",
+      "581: # exactly the cases the auxiliary triage pass must inspect.",
+      "658: (same call_llm plumbing as hermes_cli.kanban_specify, under auxiliary.triage_specifier",
+      "674: task=\"triage_specifier\",",
+      "705: m = None if raw.lstrip().startswith(\"{\") else re.search(r\"\\{.*\\}\", raw, re.DOTALL)"
+    ]
+  },
+  "canonical_head": "62d17f046ea0474bfb358350ae153174d23400da",
+  "canonical_schema": {
+    "db_py_tables": [
+      {
+        "ddl": "CREATE TABLE IF NOT EXISTS hierarchy_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nparent_id TEXT,\nlevel INTEGER NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\nkanban_task_id TEXT,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\narchived INTEGER NOT NULL DEFAULT 0\n);",
+        "start_line": 231,
+        "table": "hierarchy_nodes"
+      },
+      {
+        "ddl": "CREATE TABLE IF NOT EXISTS decisions (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nquestion TEXT NOT NULL,\nchoices_json TEXT NOT NULL,\nrecommended TEXT,\nurgency TEXT NOT NULL DEFAULT 'normal',\ncreated_at REAL NOT NULL,\nresolved_choice TEXT,\nresolved_at REAL\n)",
+        "start_line": 264,
+        "table": "decisions"
+      },
+      {
+        "ddl": "CREATE TABLE IF NOT EXISTS problem_reports (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nproblem TEXT NOT NULL,\ncontext TEXT,\nreporter TEXT,\ncreated_at REAL NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\ndecision_id TEXT,\ntriage_error TEXT,\ntriaged_at REAL\n)",
+        "start_line": 294,
+        "table": "problem_reports"
+      },
+      {
+        "ddl": "CREATE TABLE IF NOT EXISTS spec_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nkind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),\nparent_id TEXT REFERENCES spec_nodes(id),\ntitle TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'draft',\nnote TEXT,\ncriteria_json TEXT,\ndecision_id TEXT REFERENCES decisions(id),\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n)",
+        "start_line": 311,
+        "table": "spec_nodes"
+      },
+      {
+        "ddl": "CREATE TABLE IF NOT EXISTS hud_settings (\nkey TEXT PRIMARY KEY,\nvalue TEXT NOT NULL\n)",
+        "start_line": 331,
+        "table": "hud_settings"
+      }
+    ],
+    "migration_hits": [
+      "227: def _migrate_v7_hierarchy(conn: sqlite3.Connection) -> None:",
+      "249: current_version = conn.execute(\"PRAGMA user_version\").fetchone()[0]",
+      "251: conn.execute(\"PRAGMA user_version = 7\")",
+      "256: _migrate_v6_project_id(conn)  # must run BEFORE CREATE TABLE IF NOT EXISTS below:",
+      "257: _migrate_v7_hierarchy(conn)",
+      "277: _migrate_v2_columns(conn)",
+      "278: _migrate_v3_columns(conn)",
+      "279: _migrate_v4_columns(conn)",
+      "280: _migrate_v5_columns(conn)",
+      "283: # '$.batch_id')) for portability/clarity \u2014 see _migrate_v4_columns. NULLs",
+      "354: def _migrate_v2_columns(conn: sqlite3.Connection) -> None:",
+      "359: Also repairs PRAGMA user_version, which was never bumped when these",
+      "367: conn.execute(f\"ALTER TABLE decisions ADD COLUMN {col} TEXT\")",
+      "371: current_version = conn.execute(\"PRAGMA user_version\").fetchone()[0]",
+      "373: conn.execute(\"PRAGMA user_version = 2\")",
+      "377: def _migrate_v3_columns(conn: sqlite3.Connection) -> None:",
+      "379: table, matching _migrate_v2_columns's exact pattern (PRAGMA table_info",
+      "385: conn.execute(\"ALTER TABLE decisions ADD COLUMN defer_log_json TEXT\")",
+      "387: conn.execute(\"ALTER TABLE decisions ADD COLUMN last_deferred_at REAL\")",
+      "389: conn.execute(\"ALTER TABLE decisions ADD COLUMN defer_count INTEGER NOT NULL DEFAULT 0\")",
+      "393: current_version = conn.execute(\"PRAGMA user_version\").fetchone()[0]",
+      "395: conn.execute(\"PRAGMA user_version = 3\")",
+      "399: def _migrate_v4_columns(conn: sqlite3.Connection) -> None:",
+      "401: _migrate_v2_columns/_migrate_v3_columns's exact pattern:",
+      "420: conn.execute(\"ALTER TABLE decisions ADD COLUMN batch_id TEXT\")",
+      "422: conn.execute(\"ALTER TABLE decisions ADD COLUMN resolved_by TEXT\")",
+      "434: current_version = conn.execute(\"PRAGMA user_version\").fetchone()[0]",
+      "436: conn.execute(\"PRAGMA user_version = 4\")",
+      "440: def _migrate_v5_columns(conn: sqlite3.Connection) -> None:",
+      "450: Still follows the exact _migrate_v2_columns/_migrate_v3_columns/",
+      "451: _migrate_v4_columns pattern for consistency and so PRAGMA user_version",
+      "460: current_version = conn.execute(\"PRAGMA user_version\").fetchone()[0]",
+      "462: conn.execute(\"PRAGMA user_version = 5\")",
+      "466: def _migrate_v6_project_id(conn: sqlite3.Connection) -> None:",
+      "475: (guarded by PRAGMA user_version like every other migration in this",
+      "477: current_version = conn.execute(\"PRAGMA user_version\").fetchone()[0]",
+      "485: conn.execute(\"PRAGMA user_version = 6\")",
+      "1072: (project_id, batch_id) \u2014 see _migrate_v4_columns/init_db \u2014 not just an",
+      "1229: # see _migrate_v5_columns) per critique_08's hard cap of 3 schema-"
+    ]
+  },
+  "canonical_ui_routes": {
+    "surface_hits": [
+      "1242: 'data-dashboard-section': 'agent-matrix',",
+      "6601: data: { path: '/decision-hud/map' },",
+      "6608: data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },",
+      "6690: id: 'agent-matrix-open',",
+      "6693: id: 'decision-hud.agent-matrix-legacy',"
+    ]
+  },
+  "findings": [
+    {
+      "classification": "historical_only_at_HEAD",
+      "conflicts": [
+        "Historical v8 conflicts with one canonical monotonic migration allocation.",
+        "Historical schema lacks owner-required kind and invalid-row fail/report/preserve migration semantics."
+      ],
+      "evidence": "Historical commit adds risks/tradeoffs and v8 migration; canonical db.py has no risks/tradeoffs table or surface CLI/UI lines.",
+      "surface": "risk_tradeoffs"
+    },
+    {
+      "classification": "historical_only_at_HEAD",
+      "conflicts": [
+        "v8 collides with other historical v8 allocations.",
+        "Owner closed step shape and 512/32 bounds require explicit canonical enforcement."
+      ],
+      "evidence": "Historical commit adds flows and v8 migration; canonical HEAD lacks flow persistence, verbs, route.",
+      "surface": "flowcharts"
+    },
+    {
+      "classification": "historical_only_at_HEAD",
+      "conflicts": [
+        "Owner closed node/edge shapes and 512/1024 bounds not established at HEAD.",
+        "Project authorization and same-project links require proof."
+      ],
+      "evidence": "Historical commit adds architecture_diagrams CRUD and arch CLI; canonical HEAD has no architecture table/CLI/UI route.",
+      "surface": "architecture"
+    },
+    {
+      "classification": "historical_only_at_HEAD",
+      "conflicts": [
+        "Historical v8 conflicts with other v8 allocations.",
+        "Owner list/JSON bounds, same-project links, restricted deletes require canonical enforcement."
+      ],
+      "evidence": "Historical commit adds roadmap_lanes/items, roadmap CLI, /decision-hud/roadmap; canonical HEAD lacks them.",
+      "surface": "roadmap"
+    },
+    {
+      "classification": "partial_current",
+      "conflicts": [
+        "spec_nodes DDL has no visible partial unique root index; owner requires one root max.",
+        "Same-project link and restricted-delete semantics need proof."
+      ],
+      "evidence": "Canonical HEAD retains spec_nodes/hierarchy_nodes, node/spec CLI, /decision-hud/map; no dedicated mindmap migration.",
+      "surface": "mindmap"
+    },
+    {
+      "classification": "historical_only_at_HEAD",
+      "conflicts": [
+        "v9 conflicts with migration reconciliation and historical v8 allocations.",
+        "Owner status/estimate/sprint/composite-FK/restricted-delete rules require DB/API enforcement."
+      ],
+      "evidence": "Historical commit adds planning_items, v9 migration, planning CLI, /decision-hud/planning; canonical HEAD lacks them.",
+      "surface": "scrum_planning"
+    },
+    {
+      "classification": "UI_alias_only",
+      "conflicts": [
+        "Do not infer new persistence; preserve route/nav compatibility aliases."
+      ],
+      "evidence": "Historical commit only renames Agent Matrix to Retrospective; no table or migration. Canonical HEAD retains legacy Agent Matrix route/aliases and metrics UI.",
+      "surface": "retrospective"
+    }
+  ],
+  "historical_commits": {
+    "architecture": "27afff425af9ee8f6681914b128a13bb6db8a6a5",
+    "flowcharts": "4a423c85c9a7f4dd933af8e9f2e991473220f46d",
+    "mindmap": "adf525c46f537c66c62995eda6b4f25638e0649d",
+    "retrospective": "25bcae9cd67cc19f9a327feb0da62ec406cddf6d",
+    "risk_tradeoffs": "723514d8f46a2c070d2de98941dd00d6a69cc7cd",
+    "roadmap": "91ff8b800fac5b058cfb66c43557b635c233c0b3",
+    "scrum_planning": "a6960b8a3b15fd65849959f1ba2200a2a04693eb"
+  },
+  "owner_decisions": {
+    "architecture": "closed nodes {id,label,x,y,drill_to_diagram_id?}; edges {source,target,label?}; empty allowed; 512 nodes/1024 edges",
+    "baseline_signatures": ".hermes/evidence/stage2/baseline.json",
+    "flow_steps": "closed {id,label,next:string[]}; empty/cycles/disconnected allowed; 512 steps/32 outgoing",
+    "legacy_tradeoff_rows": "invalid legacy rows: fail migration with report and preserve DB",
+    "limits": {
+      "coordinate_max": 100000,
+      "coordinate_min": -100000,
+      "depth": 8,
+      "id_chars": 128,
+      "json_bytes": 262144,
+      "list_items": 256,
+      "list_value_chars": 512,
+      "text_chars": 4096
+    },
+    "links": "same-project IDs; destructive deletes restricted",
+    "mindmap": "at-most-one root via partial unique index",
+    "scrum": "status backlog|ready|in_progress|blocked|done; estimate 0..100000; sprint null/non-empty <=128; same-project composite FK; linked deletes restricted"
+  },
+  "report_type": "stage2_schema_contract_inventory",
+  "repository": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "surfaces": {
+    "architecture": {
+      "canonical_HEAD": {
+        "plugin.js": [
+          "1052: return jsxs('svg', { width: W, height: H, role: 'img', 'aria-label': 'agent handoff sankey diagram', children: [...bands, ...fromLabels, ...toLabels] })"
+        ]
+      },
+      "historical": {
+        "backend-plugin/cli.py": {
+          "hits": [
+            "24: _cmd_arch_add_diagram, _cmd_arch_list_diagrams, _cmd_arch_set_diagram,",
+            "38: _cmd_arch_add_diagram, _cmd_arch_list_diagrams, _cmd_arch_set_diagram,",
+            "220: arch = verbs.add_parser(\"arch\", help=\"Architecture: manage C4 diagrams\")",
+            "221: arch_verbs = arch.add_subparsers(dest=\"arch_verb\", required=True)",
+            "222: v = arch_verbs.add_parser(\"add-diagram\")",
+            "227: v.set_defaults(func=_cmd_arch_add_diagram)",
+            "228: v = arch_verbs.add_parser(\"list-diagrams\")",
+            "230: v.set_defaults(func=_cmd_arch_list_diagrams)",
+            "231: v = arch_verbs.add_parser(\"set-diagram\")",
+            "232: v.add_argument(\"--diagram-id\", required=True, dest=\"diagram_id\")",
+            "236: v.set_defaults(func=_cmd_arch_set_diagram)"
+          ],
+          "tables": []
+        },
+        "backend-plugin/cli_spec_cmds.py": {
+          "hits": [
+            "190: # --- Architecture Diagram CLI commands ---",
+            "192: def _cmd_arch_add_diagram(args) -> None:",
+            "193: \"\"\"Add a new architecture diagram.\"\"\"",
+            "197: result = db.add_diagram(",
+            "204: _print({\"ok\": True, \"diagram\": result})",
+            "213: def _cmd_arch_list_diagrams(args) -> None:",
+            "214: \"\"\"List architecture diagrams for a project.\"\"\"",
+            "218: result = db.list_diagrams(conn, project_id=args.project_id)",
+            "219: _print({\"ok\": True, \"diagrams\": result})",
+            "227: def _cmd_arch_set_diagram(args) -> None:",
+            "228: \"\"\"Update an architecture diagram.\"\"\"",
+            "232: result = db.set_diagram(",
+            "234: args.diagram_id,",
+            "239: _print({\"ok\": True, \"diagram\": result})"
+          ],
+          "tables": []
+        },
+        "backend-plugin/db.py": {
+          "hits": [
+            "331: CREATE TABLE IF NOT EXISTS architecture_diagrams (",
+            "342: conn.execute(\"CREATE INDEX IF NOT EXISTS idx_architecture_diagrams_project ON architecture_diagrams(project_id)\")",
+            "1600: # --- Architecture Diagrams CRUD ---",
+            "1602: def add_diagram(",
+            "1606: \"\"\"Add a new architecture diagram.\"\"\"",
+            "1622: \"INSERT INTO architecture_diagrams (id, project_id, title, nodes_json, edges_json, created_at, updated_at) \"",
+            "1627: return dict(conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diag_id,)).fetchone())",
+            "1630: def list_diagrams(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:",
+            "1631: \"\"\"List diagrams for a project.\"\"\"",
+            "1634: \"SELECT * FROM architecture_diagrams WHERE project_id = ? ORDER BY created_at DESC\",",
+            "1640: def set_diagram(",
+            "1641: conn: sqlite3.Connection, diagram_id: str, *,",
+            "1645: \"\"\"Update a diagram. Only provided fields are updated.\"\"\"",
+            "1646: row = conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diagram_id,)).fetchone()",
+            "1648: raise ValueError(f\"diagram {diagram_id!r} not found\")",
+            "1675: f\"UPDATE architecture_diagrams SET {assignments} WHERE id = ?\",",
+            "1676: (*values, diagram_id),",
+            "1679: return dict(conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diagram_id,)).fetchone())",
+            "1682: def get_diagram(conn: sqlite3.Connection, diagram_id: str) -> Optional[dict[str, Any]]:",
+            "1683: \"\"\"Fetch a diagram by id.\"\"\"",
+            "1684: row = conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diagram_id,)).fetchone()"
+          ],
+          "tables": [
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hierarchy_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nparent_id TEXT,\nlevel INTEGER NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\nkanban_task_id TEXT,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\narchived INTEGER NOT NULL DEFAULT 0\n);",
+              "start_line": 231,
+              "table": "hierarchy_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS decisions (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nquestion TEXT NOT NULL,\nchoices_json TEXT NOT NULL,\nrecommended TEXT,\nurgency TEXT NOT NULL DEFAULT 'normal',\ncreated_at REAL NOT NULL,\nresolved_choice TEXT,\nresolved_at REAL\n)",
+              "start_line": 264,
+              "table": "decisions"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS problem_reports (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nproblem TEXT NOT NULL,\ncontext TEXT,\nreporter TEXT,\ncreated_at REAL NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\ndecision_id TEXT,\ntriage_error TEXT,\ntriaged_at REAL\n)",
+              "start_line": 294,
+              "table": "problem_reports"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS spec_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nkind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),\nparent_id TEXT REFERENCES spec_nodes(id),\ntitle TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'draft',\nnote TEXT,\ncriteria_json TEXT,\ndecision_id TEXT REFERENCES decisions(id),\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n)",
+              "start_line": 311,
+              "table": "spec_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS architecture_diagrams (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\ntitle TEXT NOT NULL,\nnodes_json TEXT NOT NULL,\nedges_json TEXT NOT NULL,\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n)",
+              "start_line": 331,
+              "table": "architecture_diagrams"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hud_settings (\nkey TEXT PRIMARY KEY,\nvalue TEXT NOT NULL\n)",
+              "start_line": 345,
+              "table": "hud_settings"
+            }
+          ]
+        },
+        "backend-plugin/db_arch_funcs.py": {
+          "hits": [
+            "1: # Architecture Diagrams CRUD functions",
+            "4: def add_diagram(",
+            "8: \"\"\"Add a new architecture diagram. nodes_json and edges_json must be valid",
+            "26: \"INSERT INTO architecture_diagrams (id, project_id, title, nodes_json, edges_json, created_at, updated_at) \"",
+            "31: row = conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diag_id,)).fetchone()",
+            "35: def list_diagrams(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:",
+            "36: \"\"\"List all diagrams for a project.\"\"\"",
+            "39: \"SELECT * FROM architecture_diagrams WHERE project_id = ? ORDER BY created_at DESC\",",
+            "45: def set_diagram(",
+            "46: conn: sqlite3.Connection, diagram_id: str, *,",
+            "50: \"\"\"Update a diagram. Only provided fields are updated.\"\"\"",
+            "51: row = conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diagram_id,)).fetchone()",
+            "53: raise ValueError(f\"diagram {diagram_id!r} not found\")",
+            "80: f\"UPDATE architecture_diagrams SET {assignments} WHERE id = ?\",",
+            "81: (*values, diagram_id),",
+            "84: return dict(conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diagram_id,)).fetchone())",
+            "87: def get_diagram(conn: sqlite3.Connection, diagram_id: str) -> Optional[dict[str, Any]]:",
+            "88: \"\"\"Fetch a diagram by id.\"\"\"",
+            "89: row = conn.execute(\"SELECT * FROM architecture_diagrams WHERE id = ?\", (diagram_id,)).fetchone()"
+          ],
+          "tables": []
+        },
+        "backend-plugin/tests/test_architecture_diagrams.py": {
+          "hits": [
+            "1: \"\"\"Tests for architecture_diagrams table and CRUD.\"\"\"",
+            "36: def test_architecture_diagrams_table_schema(tmp_path, monkeypatch):",
+            "40: columns = {row[1] for row in conn.execute(\"PRAGMA table_info(architecture_diagrams)\").fetchall()}",
+            "45: def test_add_diagram_minimal(tmp_path, monkeypatch):",
+            "46: \"\"\"Add a diagram with required fields.\"\"\"",
+            "49: result = db.add_diagram(",
+            "63: def test_add_diagram_validates_json(tmp_path, monkeypatch):",
+            "64: \"\"\"add_diagram rejects malformed JSON.\"\"\"",
+            "68: db.add_diagram(",
+            "81: def test_add_diagram_requires_fields(tmp_path, monkeypatch):",
+            "82: \"\"\"add_diagram requires title, nodes_json, edges_json.\"\"\"",
+            "86: db.add_diagram(",
+            "99: def test_list_diagrams_empty(tmp_path, monkeypatch):",
+            "100: \"\"\"list_diagrams returns [] for a project with no diagrams.\"\"\"",
+            "103: result = db.list_diagrams(conn, project_id=\"test-project\")",
+            "108: def test_list_diagrams_multiple(tmp_path, monkeypatch):",
+            "109: \"\"\"list_diagrams returns all diagrams for a project, newest first.\"\"\"",
+            "112: d1 = db.add_diagram(conn, project_id=\"test-project\", title=\"First\", nodes_json='[]', edges_json='[]')",
+            "113: d2 = db.add_diagram(conn, project_id=\"test-project\", title=\"Second\", nodes_json='[]', edges_json='[]')",
+            "114: result = db.list_diagrams(conn, project_id=\"test-project\")",
+            "121: def test_set_diagram_title(tmp_path, monkeypatch):",
+            "122: \"\"\"set_diagram updates title.\"\"\"",
+            "125: d = db.add_diagram(conn, project_id=\"test-project\", title=\"Original\", nodes_json='[]', edges_json='[]')",
+            "126: updated = db.set_diagram(conn, d[\"id\"], title=\"Updated\")",
+            "133: def test_set_diagram_nodes_and_edges(tmp_path, monkeypatch):",
+            "134: \"\"\"set_diagram updates nodes_json and edges_json.\"\"\"",
+            "137: d = db.add_diagram(conn, project_id=\"test-project\", title=\"Diagram\", nodes_json='[]', edges_json='[]')",
+            "140: updated = db.set_diagram(conn, d[\"id\"], nodes_json=new_nodes, edges_json=new_edges)",
+            "146: def test_set_diagram_partial_update(tmp_path, monkeypatch):",
+            "147: \"\"\"set_diagram only updates provided fields.\"\"\"",
+            "150: d = db.add_diagram(conn, project_id=\"test-project\", title=\"Original\", nodes_json='[1]', edges_json='[2]')",
+            "151: updated = db.set_diagram(conn, d[\"id\"], title=\"NewTitle\")  # Only title",
+            "158: def test_set_diagram_validates_json(tmp_path, monkeypatch):",
+            "159: \"\"\"set_diagram rejects malformed JSON in fields.\"\"\"",
+            "162: d = db.add_diagram(conn, project_id=\"test-project\", title=\"Diagram\", nodes_json='[]', edges_json='[]')",
+            "164: db.set_diagram(conn, d[\"id\"], nodes_json='bad')",
+            "171: def test_set_diagram_not_found(tmp_path, monkeypatch):",
+            "172: \"\"\"set_diagram raises ValueError if diagram not found.\"\"\"",
+            "176: db.set_diagram(conn, \"d_nonexistent\", title=\"Test\")",
+            "183: def test_get_diagram(tmp_path, monkeypatch):",
+            "184: \"\"\"get_diagram retrieves a diagram by id.\"\"\"",
+            "187: d = db.add_diagram(conn, project_id=\"test-project\", title=\"Diagram\", nodes_json='[]', edges_json='[]')",
+            "188: retrieved = db.get_diagram(conn, d[\"id\"])",
+            "194: def test_get_diagram_not_found(tmp_path, monkeypatch):",
+            "195: \"\"\"get_diagram returns None if not found.\"\"\"",
+            "198: result = db.get_diagram(conn, \"d_nonexistent\")",
+            "203: def test_diagram_project_scoping(tmp_path, monkeypatch):",
+            "204: \"\"\"Diagrams are isolated per project.\"\"\"",
+            "210: d1 = db.add_diagram(conn, project_id=\"project-a\", title=\"Diag A\", nodes_json='[]', edges_json='[]')",
+            "211: d2 = db.add_diagram(conn, project_id=\"project-b\", title=\"Diag B\", nodes_json='[]', edges_json='[]')",
+            "212: result_a = db.list_diagrams(conn, project_id=\"project-a\")",
+            "213: result_b = db.list_diagrams(conn, project_id=\"project-b\")",
+            "221: def test_diagram_nodes_with_x_y_layout(tmp_path, monkeypatch):",
+            "229: d = db.add_diagram(",
+            "236: retrieved = db.get_diagram(conn, d[\"id\"])"
+          ],
+          "tables": []
+        }
+      }
+    },
+    "flowcharts": {
+      "canonical_HEAD": {
+        "plugin.js": [
+          "349: coordination_workflow: 'Coordination / Workflow',",
+          "492: className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',",
+          "540: style: { width: '80px', height: '6px', background: 'var(--ui-stroke-secondary)', borderRadius: '3px', overflow: 'hidden' },",
+          "647: className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',",
+          "994: // Sankey: handoffs[] from -> to flow. Two-column layout (from-nodes left,",
+          "995: // to-nodes right) with flow bands sized by volume \u2014 the simplest sankey",
+          "1104: jsx(AgentMetricsWidgetsSection, { title: 'Sankey (handoff flow) \u2014 click a node label to isolate', dataKey: 'sankey', children: jsx(AgentMetricsSankey, { handoffs, selected, onSelect: setSelected }) }),",
+          "1128: className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',",
+          "1231: className: 'flex h-full flex-col gap-4 overflow-auto p-4 text-sm',",
+          "1853: const step = (key, dir) => {",
+          "1885: onClick: () => step(key, -1),",
+          "1894: onClick: () => step(key, 1),",
+          "1919: // card_payload: { min, max, step, default, unit }",
+          "1924: const step = typeof p.step === 'number' ? p.step : 1",
+          "1936: step,",
+          "1953: // card_payload: { min, max, step, default_low, default_high, unit }",
+          "1958: const step = typeof p.step === 'number' ? p.step : 10",
+          "1977: jsx('input', { type: 'range', min, max, step, value: lo, disabled: resolving, onChange: (e) => setLo(Number(e.target.value)), className: 'w-full' }),",
+          "1978: jsx('input', { type: 'range', min, max, step, value: hi, disabled: resolving, onChange: (e) => setHi(Number(e.target.value)), className: 'w-full' }),",
+          "2394: // to 100 with no separate validation step needed.",
+          "2465: className: 'relative flex h-8 w-full overflow-hidden rounded-md',",
+          "2509: // +/- steppers) that CAN be dragged past the point of exceeding the total \u2014",
+          "2510: // there is no hard per-step gate. A live status banner reports",
+          "2598: // card_payload: { min, max, step, default, unit, confidence_levels: [{ key, label }] }",
+          "2626: const step = typeof p.step === 'number' ? p.step : 1",
+          "2657: step,",
+          "2788: className: 'pointer-events-none absolute inset-0 h-full w-full overflow-visible',",
+          "3478: // value is the tick INDEX (min 0, max ticks.length-1, step 1) rather than",
+          "3480: // range-input drag/keyboard/touch handling already snaps to integer steps",
+          "3558: step: 1,",
+          "3616: // advance to the next unplaced item, if any, for a faster placement flow",
+          "4127: // the flex row then overflows the header and the sibling label to",
+          "4131: className: 'w-40 min-w-0 shrink-0 overflow-hidden',",
+          "4351: const stepper = (label, key, value) =>",
+          "4377: stepper('cols', 'cols', layout.cols),",
+          "4378: stepper('rows', 'rows', layout.rows),",
+          "4384: // SidebarPositionControls: left/right toggle + width stepper for the",
+          "4506: // and `fixed` escapes any ancestor's overflow/clipping regardless.",
+          "4953: className: 'flex max-h-64 flex-col gap-1 overflow-y-auto rounded border border-(--ui-stroke-secondary) p-2',",
+          "5091: className: 'mx-auto flex h-full w-full max-w-2xl flex-col gap-5 overflow-y-auto p-6',",
+          "5146: className: 'min-w-0 flex-1 overflow-y-auto',",
+          "5252: // so useAgentHealthHistoryStats below can share one token-minting flow",
+          "5710: className: 'h-1.5 flex-1 overflow-hidden rounded-full bg-(--ui-stroke-secondary)',",
+          "5814: className: `flex shrink-0 flex-col gap-3 overflow-y-auto border-(--ui-stroke-secondary) ${borderClass}`,",
+          "6131: return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [",
+          "6398: className: 'flex flex-1 flex-col overflow-y-auto',",
+          "6413: // gridAutoFlow: 'column' makes placement follow the",
+          "6422: // of the whole grid re-flowing row-by-row.",
+          "6427: gridAutoFlow: 'column',"
+        ]
+      },
+      "historical": {
+        "backend-plugin/cli.py": {
+          "hits": [
+            "217: flow = verbs.add_parser(\"flow\", help=\"Manage project flowcharts\")",
+            "218: flow_verbs = flow.add_subparsers(dest=\"flow_verb\", required=True)",
+            "219: v = flow_verbs.add_parser(\"add\", help=\"Create a flowchart\")",
+            "222: v.set_defaults(func=_cmd_flow_add)",
+            "223: v = flow_verbs.add_parser(\"list\", help=\"List project flowcharts\")",
+            "225: v.set_defaults(func=_cmd_flow_list)",
+            "226: v = flow_verbs.add_parser(\"update\", help=\"Rename a flowchart\")",
+            "228: v.add_argument(\"flow_id\")",
+            "230: v.set_defaults(func=_cmd_flow_update)",
+            "231: v = flow_verbs.add_parser(\"set-steps\", help=\"Replace flowchart graph steps\")",
+            "233: v.add_argument(\"flow_id\")",
+            "234: v.add_argument(\"--steps\", required=True, help=\"JSON array of steps\")",
+            "235: v.set_defaults(func=_cmd_flow_set_steps)",
+            "292: def _cmd_flow_add(args) -> None:",
+            "293: _run_node_command(db.create_flow, \"flow\", project_id=args.project_id, name=args.name)",
+            "296: def _cmd_flow_list(args) -> None:",
+            "297: _run_node_command(db.list_flows, \"flows\", project_id=args.project_id)",
+            "300: def _cmd_flow_update(args) -> None:",
+            "301: _run_node_command(db.update_flow, \"flow\", flow_id=args.flow_id, project_id=args.project_id, name=args.name)",
+            "304: def _cmd_flow_set_steps(args) -> None:",
+            "306: steps = json.loads(args.steps)",
+            "308: _print({\"ok\": False, \"error\": f\"--steps must be valid JSON: {exc.msg}\"})",
+            "310: _run_node_command(db.set_flow_steps, \"flow\", flow_id=args.flow_id, project_id=args.project_id, steps=steps)"
+          ],
+          "tables": []
+        },
+        "backend-plugin/db.py": {
+          "hits": [
+            "248: def _migrate_v8_flows(conn: sqlite3.Connection) -> None:",
+            "249: \"\"\"Create project-scoped flowchart records with JSON graph steps.\"\"\"",
+            "252: CREATE TABLE IF NOT EXISTS flows (",
+            "256: steps_json TEXT NOT NULL DEFAULT '[]',",
+            "260: CREATE INDEX IF NOT EXISTS idx_flows_project ON flows(project_id, updated_at, id);",
+            "271: _migrate_v8_flows(conn)",
+            "1558: def _flow_row(row: sqlite3.Row) -> dict[str, Any]:",
+            "1562: def _flow(conn: sqlite3.Connection, flow_id: str) -> sqlite3.Row:",
+            "1563: row = conn.execute(\"SELECT * FROM flows WHERE id = ?\", (flow_id,)).fetchone()",
+            "1565: raise ValueError(f\"flow {flow_id!r} not found\")",
+            "1569: def create_flow(conn: sqlite3.Connection, *, project_id: str, name: str) -> dict[str, Any]:",
+            "1573: flow_id = \"flow_\" + secrets.token_hex(4)",
+            "1576: \"INSERT INTO flows (id, project_id, name, steps_json, created_at, updated_at) VALUES (?, ?, ?, '[]', ?, ?)\",",
+            "1577: (flow_id, project[\"id\"], name.strip(), now, now),",
+            "1580: return _flow_row(_flow(conn, flow_id))",
+            "1583: def list_flows(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:",
+            "1585: return [_flow_row(row) for row in conn.execute(",
+            "1586: \"SELECT * FROM flows WHERE project_id = ? ORDER BY updated_at DESC, id\",",
+            "1591: def _flow_for_project(conn: sqlite3.Connection, flow_id: str, project_id: str) -> sqlite3.Row:",
+            "1592: flow = _flow(conn, flow_id)",
+            "1594: if flow[\"project_id\"] != project[\"id\"]:",
+            "1595: raise ValueError(f\"flow {flow_id!r} does not belong to project {project['id']!r}\")",
+            "1596: return flow",
+            "1599: def update_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str, name: str) -> dict[str, Any]:",
+            "1600: _flow_for_project(conn, flow_id, project_id)",
+            "1603: conn.execute(\"UPDATE flows SET name = ?, updated_at = ? WHERE id = ?\", (name.strip(), int(time.time()), flow_id))",
+            "1605: return _flow_row(_flow_for_project(conn, flow_id, project_id))",
+            "1608: def _validate_flow_steps(steps: Any) -> list[dict[str, Any]]:",
+            "1609: if not isinstance(steps, list):",
+            "1610: raise ValueError(\"steps must be an array\")",
+            "1612: for step in steps:",
+            "1613: if not isinstance(step, dict) or not isinstance(step.get(\"id\"), str) or not step[\"id\"].strip():",
+            "1614: raise ValueError(\"each step requires a non-empty string id\")",
+            "1615: if step[\"id\"] in ids:",
+            "1616: raise ValueError(f\"duplicate step id {step['id']!r}\")",
+            "1617: ids.add(step[\"id\"])",
+            "1618: if not isinstance(step.get(\"label\"), str) or not step[\"label\"].strip():",
+            "1619: raise ValueError(\"each step requires a non-empty string label\")",
+            "1620: if not isinstance(step.get(\"next\", []), list) or any(not isinstance(target, str) for target in step.get(\"next\", [])):",
+            "1621: raise ValueError(\"step next must be an array of step ids\")",
+            "1622: for step in steps:",
+            "1623: missing = [target for target in step.get(\"next\", []) if target not in ids]",
+            "1625: raise ValueError(f\"step {step['id']!r} references missing step {missing[0]!r}\")",
+            "1626: return steps",
+            "1629: def set_flow_steps(conn: sqlite3.Connection, flow_id: str, *, project_id: str, steps: Any) -> dict[str, Any]:",
+            "1630: _flow_for_project(conn, flow_id, project_id)",
+            "1631: valid = _validate_flow_steps(steps)",
+            "1632: conn.execute(\"UPDATE flows SET steps_json = ?, updated_at = ? WHERE id = ?\", (json.dumps(valid, separators=(\",\", \":\")), int(time.time()), flow_id))",
+            "1634: return _flow_row(_flow_for_project(conn, flow_id, project_id))"
+          ],
+          "tables": [
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hierarchy_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nparent_id TEXT,\nlevel INTEGER NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\nkanban_task_id TEXT,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\narchived INTEGER NOT NULL DEFAULT 0\n);",
+              "start_line": 224,
+              "table": "hierarchy_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS flows (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nname TEXT NOT NULL,\nsteps_json TEXT NOT NULL DEFAULT '[]',\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL\n);",
+              "start_line": 252,
+              "table": "flows"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS decisions (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nquestion TEXT NOT NULL,\nchoices_json TEXT NOT NULL,\nrecommended TEXT,\nurgency TEXT NOT NULL DEFAULT 'normal',\ncreated_at REAL NOT NULL,\nresolved_choice TEXT,\nresolved_at REAL\n)",
+              "start_line": 278,
+              "table": "decisions"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS problem_reports (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nproblem TEXT NOT NULL,\ncontext TEXT,\nreporter TEXT,\ncreated_at REAL NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\ndecision_id TEXT,\ntriage_error TEXT,\ntriaged_at REAL\n)",
+              "start_line": 308,
+              "table": "problem_reports"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hud_settings (\nkey TEXT PRIMARY KEY,\nvalue TEXT NOT NULL\n)",
+              "start_line": 325,
+              "table": "hud_settings"
+            }
+          ]
+        },
+        "backend-plugin/tests/test_flows.py": {
+          "hits": [
+            "1: \"\"\"Flowchart persistence contracts.\"\"\"",
+            "27: def test_flow_schema_and_project_scoped_crud(tmp_path, monkeypatch):",
+            "29: flow = db.create_flow(conn, project_id=\"p_1\", name=\"Onboarding\")",
+            "30: assert flow[\"project_id\"] == \"p_1\"",
+            "31: assert json.loads(flow[\"steps_json\"]) == []",
+            "32: db.create_flow(conn, project_id=\"p_2\", name=\"Other\")",
+            "33: assert [item[\"name\"] for item in db.list_flows(conn, project_id=\"p_1\")] == [\"Onboarding\"]",
+            "34: updated = db.update_flow(conn, flow[\"id\"], project_id=\"p_1\", name=\"Signup\")",
+            "37: db.update_flow(conn, flow[\"id\"], project_id=\"p_2\", name=\"Leaked\")",
+            "43: def test_set_steps_validates_graph_and_preserves_branching(tmp_path, monkeypatch):",
+            "45: flow = db.create_flow(conn, project_id=\"p_1\", name=\"Branch\")",
+            "46: steps = [",
+            "51: saved = db.set_flow_steps(conn, flow[\"id\"], project_id=\"p_1\", steps=steps)",
+            "52: assert json.loads(saved[\"steps_json\"]) == steps",
+            "59: db.set_flow_steps(conn, flow[\"id\"], project_id=\"p_1\", steps=bad)",
+            "65: def test_empty_graph_allowed_and_missing_flow_rejected(tmp_path, monkeypatch):",
+            "67: flow = db.create_flow(conn, project_id=\"p_1\", name=\"Empty\")",
+            "68: assert json.loads(db.set_flow_steps(conn, flow[\"id\"], project_id=\"p_1\", steps=[])['steps_json']) == []",
+            "70: db.set_flow_steps(conn, \"missing\", project_id=\"p_1\", steps=[])",
+            "71: assert False, \"expected missing flow rejection\""
+          ],
+          "tables": []
+        },
+        "plugin.js": {
+          "hits": [
+            "335: coordination_workflow: 'Coordination / Workflow',",
+            "478: className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',",
+            "526: style: { width: '80px', height: '6px', background: 'var(--ui-stroke-secondary)', borderRadius: '3px', overflow: 'hidden' },",
+            "633: className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',",
+            "980: // Sankey: handoffs[] from -> to flow. Two-column layout (from-nodes left,",
+            "981: // to-nodes right) with flow bands sized by volume \u2014 the simplest sankey",
+            "1090: jsx(AgentMetricsWidgetsSection, { title: 'Sankey (handoff flow) \u2014 click a node label to isolate', dataKey: 'sankey', children: jsx(AgentMetricsSankey, { handoffs, selected, onSelect: setSelected }) }),",
+            "1114: className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',",
+            "1217: className: 'flex h-full flex-col gap-4 overflow-auto p-4 text-sm',",
+            "1839: const step = (key, dir) => {",
+            "1871: onClick: () => step(key, -1),",
+            "1880: onClick: () => step(key, 1),",
+            "1905: // card_payload: { min, max, step, default, unit }",
+            "1910: const step = typeof p.step === 'number' ? p.step : 1",
+            "1922: step,",
+            "1939: // card_payload: { min, max, step, default_low, default_high, unit }",
+            "1944: const step = typeof p.step === 'number' ? p.step : 10",
+            "1963: jsx('input', { type: 'range', min, max, step, value: lo, disabled: resolving, onChange: (e) => setLo(Number(e.target.value)), className: 'w-full' }),",
+            "1964: jsx('input', { type: 'range', min, max, step, value: hi, disabled: resolving, onChange: (e) => setHi(Number(e.target.value)), className: 'w-full' }),",
+            "2380: // to 100 with no separate validation step needed.",
+            "2451: className: 'relative flex h-8 w-full overflow-hidden rounded-md',",
+            "2495: // +/- steppers) that CAN be dragged past the point of exceeding the total \u2014",
+            "2496: // there is no hard per-step gate. A live status banner reports",
+            "2584: // card_payload: { min, max, step, default, unit, confidence_levels: [{ key, label }] }",
+            "2612: const step = typeof p.step === 'number' ? p.step : 1",
+            "2643: step,",
+            "2774: className: 'pointer-events-none absolute inset-0 h-full w-full overflow-visible',",
+            "3464: // value is the tick INDEX (min 0, max ticks.length-1, step 1) rather than",
+            "3466: // range-input drag/keyboard/touch handling already snaps to integer steps",
+            "3544: step: 1,",
+            "3602: // advance to the next unplaced item, if any, for a faster placement flow",
+            "4113: // the flex row then overflows the header and the sibling label to",
+            "4117: className: 'w-40 min-w-0 shrink-0 overflow-hidden',",
+            "4337: const stepper = (label, key, value) =>",
+            "4363: stepper('cols', 'cols', layout.cols),",
+            "4364: stepper('rows', 'rows', layout.rows),",
+            "4370: // SidebarPositionControls: left/right toggle + width stepper for the",
+            "4492: // and `fixed` escapes any ancestor's overflow/clipping regardless.",
+            "4939: className: 'flex max-h-64 flex-col gap-1 overflow-y-auto rounded border border-(--ui-stroke-secondary) p-2',",
+            "5077: className: 'mx-auto flex h-full w-full max-w-2xl flex-col gap-5 overflow-y-auto p-6',",
+            "5132: className: 'min-w-0 flex-1 overflow-y-auto',",
+            "5238: // so useAgentHealthHistoryStats below can share one token-minting flow",
+            "5696: className: 'h-1.5 flex-1 overflow-hidden rounded-full bg-(--ui-stroke-secondary)',",
+            "5800: className: `flex shrink-0 flex-col gap-3 overflow-y-auto border-(--ui-stroke-secondary) ${borderClass}`,",
+            "6072: function parseFlowResponse(res) {",
+            "6073: if (!res || typeof res.output !== 'string') throw new Error('flow output unavailable')",
+            "6075: if (!payload || payload.ok !== true) throw new Error(payload?.error || 'flow request failed')",
+            "6079: function deriveFlowLayout(steps) {",
+            "6080: const rows = Array.isArray(steps) ? steps : []",
+            "6081: const byId = new Map(rows.map((step) => [step.id, step]))",
+            "6090: rows.forEach((step) => { if (!depths.has(step.id)) depths.set(step.id, 0) })",
+            "6091: return rows.map((step, index) => ({ ...step, x: (depths.get(step.id) || 0) * 180, y: index * 72 }))",
+            "6094: function FlowchartsPane() {",
+            "6099: const [state, setState] = React.useState({ loading: true, flows: [], error: null })",
+            "6104: const [stepsText, setStepsText] = React.useState('[]')",
+            "6106: const runFlowCommand = async (argv) => {",
+            "6109: parseFlowResponse(response)",
+            "6121: if (!projectId) { setState({ loading: false, flows: [], error: null }); return () => { active = false } }",
+            "6123: host.request('cli.exec', { argv: ['decision', 'flow', 'list', '--project', projectId], timeout: 30 })",
+            "6124: .then((res) => { if (!active) return; try { setState({ loading: false, flows: parseFlowResponse(res).flows || [], error: null }) } catch (error) { setState({ loading: false, flows: [], error: String(error.message || error) }) } })",
+            "6125: .catch((error) => active && setState({ loading: false, flows: [], error: String(error.message || error) }))",
+            "6129: const selected = state.flows.find((flow) => flow.id === selectedId) || state.flows[0]",
+            "6130: React.useEffect(() => { setStepsText(selected?.steps_json || '[]'); setRename(selected?.name || '') }, [selected?.id, selected?.steps_json, selected?.name])",
+            "6131: let steps = []",
+            "6133: if (selected) { try { steps = JSON.parse(selected.steps_json); if (!Array.isArray(steps)) malformed = true } catch { malformed = true } }",
+            "6134: const layout = malformed ? [] : deriveFlowLayout(steps)",
+            "6135: const content = boardsLoading || state.loading ? 'Loading flowcharts\u2026' : boardsError || state.error ? (boardsError || state.error) : !selected ? 'No flowcharts yet' : malformed ? 'Malformed graph' : steps.length === 0 ? 'No flow steps yet' : layout.map((step) => jsx('div', { key: step.id, className: 'rounded border border-(--ui-stroke-secondary) p-2', style: { marginLeft: `${step.x}px` }, children: `${step.label} (${(step.next || []).join(', ') || 'end'})` }))",
+            "6136: return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [",
+            "6137: jsx('div', { className: 'font-medium', children: 'Flowcharts' }),",
+            "6139: jsx('input', { value: newName, placeholder: 'New flow name', onChange: (event) => setNewName(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),",
+            "6140: jsx('button', { type: 'button', disabled: !newName.trim(), onClick: async () => { if (await runFlowCommand(['decision', 'flow', 'add', '--project', projectId, '--name', newName])) setNewName('') }, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Add' }),",
+            "6142: state.flows.length > 0 ? jsx('select', { value: selected?.id || '', onChange: (event) => setSelectedId(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent p-1', children: state.flows.map((flow) => jsx('option', { value: flow.id, children: flow.name }, flow.id)) }) : null,",
+            "6144: jsx('input', { value: rename, placeholder: 'Flow name', 'aria-label': 'Flow name', onChange: (event) => setRename(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),",
+            "6145: jsx('button', { type: 'button', disabled: !rename.trim(), onClick: () => runFlowCommand(['decision', 'flow', 'update', '--project', projectId, selected.id, '--name', rename]), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Rename flow' }),",
+            "6147: selected ? jsx('textarea', { value: stepsText, onChange: (event) => setStepsText(event.target.value), 'aria-label': 'Flow steps JSON', className: 'min-h-24 rounded border border-(--ui-stroke-secondary) bg-transparent p-2 font-mono text-xs' }) : null,",
+            "6148: selected ? jsx('button', { type: 'button', onClick: () => runFlowCommand(['decision', 'flow', 'set-steps', '--project', projectId, selected.id, '--steps', stepsText]), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Save steps' }) : null,",
+            "6199: return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [",
+            "6466: className: 'flex flex-1 flex-col overflow-y-auto',",
+            "6481: // gridAutoFlow: 'column' makes placement follow the",
+            "6490: // of the whole grid re-flowing row-by-row.",
+            "6495: gridAutoFlow: 'column',",
+            "6625: id: 'decision-hud-flowcharts-route',",
+            "6627: data: { path: '/decision-hud/flowcharts' },",
+            "6628: render: () => jsx(FlowchartsPane, {}),",
+            "6631: id: 'decision-hud-flowcharts-nav',",
+            "6634: data: { codicon: 'graph', label: 'Flowcharts', path: '/decision-hud/flowcharts' },"
+          ],
+          "tables": []
+        },
+        "test/flowcharts-pane.test.mjs": {
+          "hits": [
+            "7: assert.match(source, /Flowcharts/)",
+            "8: assert.match(source, /decision-hud-flowcharts-route[\\s\\S]*?path: ['\"]\\/decision-hud\\/flowcharts['\"]/)",
+            "9: assert.match(source, /decision-hud-flowcharts-nav[\\s\\S]*?label: ['\"]Flowcharts['\"]/)",
+            "10: assert.match(source, /decision', 'flow', 'list', '--project/)",
+            "11: assert.match(source, /decision', 'flow', 'add/)",
+            "12: assert.match(source, /decision', 'flow', 'set-steps/)",
+            "13: assert.match(source, /decision', 'flow', 'update/)",
+            "14: assert.match(source, /project_id[\\s\\S]*?flow_id|--project[\\s\\S]*?set-steps/)",
+            "15: assert.match(source, /Flow name|Rename flow|Update flow/)",
+            "17: assert.match(source, /parseFlowResponse\\(res\\)/)",
+            "19: assert.match(source, /malformed graph|Malformed graph|No flow steps yet|empty graph/i)",
+            "21: console.log('flowcharts UI contract RED test passed')"
+          ],
+          "tables": []
+        }
+      }
+    },
+    "mindmap": {
+      "canonical_HEAD": {
+        "backend-plugin/cli.py": [
+          "218: node = verbs.add_parser(\"node\", help=\"Manage mindmap hierarchy nodes\")",
+          "221: v = node_verbs.add_parser(\"create\", help=\"Create a hierarchy node\")",
+          "235: v = node_verbs.add_parser(\"tree\", help=\"Print the project hierarchy tree\")",
+          "239: v = node_verbs.add_parser(\"link-kanban\", help=\"Link a hierarchy node to a Kanban task\")",
+          "244: v = node_verbs.add_parser(\"update\", help=\"Update a hierarchy node\")",
+          "251: v = node_verbs.add_parser(\"archive\", help=\"Archive a hierarchy node and descendants\")"
+        ],
+        "backend-plugin/cli_spec_cmds.py": [
+          "24: \"SELECT id, project_id, kind, parent_id, title, status, note, criteria_json, decision_id, created_at, updated_at FROM spec_nodes WHERE id = ?\",",
+          "36: parent = conn.execute(\"SELECT project_id FROM spec_nodes WHERE id = ?\", (parent_id,)).fetchone()",
+          "46: \"INSERT INTO spec_nodes (id, project_id, kind, parent_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\",",
+          "71: sql = \"SELECT id, project_id, kind, parent_id, title, status, note, criteria_json, decision_id, created_at, updated_at FROM spec_nodes\"",
+          "92: conn.execute(f\"UPDATE spec_nodes SET {', '.join(f'{key} = ?' for key, _ in updates)} WHERE id = ?\", [value for _, value in updates] + [args.id])",
+          "115: conn.execute(\"UPDATE spec_nodes SET criteria_json = ?, updated_at = ? WHERE id = ?\", (args.criteria_json, time.time(), args.id))",
+          "137: conn.execute(\"UPDATE spec_nodes SET decision_id = ?, updated_at = ? WHERE id = ?\", (args.decision_id, time.time(), args.id))",
+          "150: row = conn.execute(\"SELECT id FROM spec_nodes WHERE id = ?\", (node_id,)).fetchone()",
+          "153: child_count = conn.execute(\"SELECT COUNT(*) FROM spec_nodes WHERE parent_id = ?\", (node_id,)).fetchone()[0]",
+          "156: conn.execute(\"DELETE FROM spec_nodes WHERE id = ?\", (node_id,))",
+          "183: parent = conn.execute(\"SELECT parent_id FROM spec_nodes WHERE id = ?\", (current,)).fetchone()",
+          "187: raise ValueError(f\"ancestor chain exceeds max depth {max_depth}; refusing to trust malformed hierarchy\")"
+        ],
+        "backend-plugin/db.py": [
+          "227: def _migrate_v7_hierarchy(conn: sqlite3.Connection) -> None:",
+          "228: \"\"\"Create the persisted Project-to-Task hierarchy tables idempotently.\"\"\"",
+          "231: CREATE TABLE IF NOT EXISTS hierarchy_nodes (",
+          "243: CREATE INDEX IF NOT EXISTS idx_hierarchy_parent ON hierarchy_nodes(parent_id);",
+          "244: CREATE INDEX IF NOT EXISTS idx_hierarchy_project ON hierarchy_nodes(project_id, level);",
+          "245: CREATE UNIQUE INDEX IF NOT EXISTS idx_hierarchy_one_root_per_project",
+          "246: ON hierarchy_nodes(project_id) WHERE level = 0;",
+          "257: _migrate_v7_hierarchy(conn)",
+          "311: CREATE TABLE IF NOT EXISTS spec_nodes (",
+          "315: parent_id TEXT REFERENCES spec_nodes(id),",
+          "326: conn.execute(\"CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)\")",
+          "327: conn.execute(\"CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)\")",
+          "328: conn.execute(\"CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)\")",
+          "1389: def _hierarchy_row(row: sqlite3.Row) -> dict[str, Any]:",
+          "1393: def _hierarchy_project(project_id: str) -> dict[str, str]:",
+          "1401: \"\"\"Create one hierarchy node, enforcing the fixed parent-depth tree.\"\"\"",
+          "1402: proj = _hierarchy_project(project_id)",
+          "1414: \"SELECT project_id, level, archived FROM hierarchy_nodes WHERE id = ?\", (parent_id,)",
+          "1426: \"INSERT INTO hierarchy_nodes \"",
+          "1435: raise ValueError(f\"project {proj['id']!r} already has a hierarchy root\") from exc",
+          "1437: return _hierarchy_row(conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone())",
+          "1441: proj = _hierarchy_project(project_id)",
+          "1443: \"SELECT * FROM hierarchy_nodes WHERE project_id = ? AND archived = 0 \"",
+          "1447: return [_hierarchy_row(row) for row in rows]",
+          "1476: proj = _hierarchy_project(project_id)",
+          "1478: \"SELECT * FROM hierarchy_nodes WHERE project_id = ? AND archived = 0 ORDER BY level, sort_order, created_at, id\",",
+          "1482: raise ValueError(f\"project {proj['id']!r} has no hierarchy root\")",
+          "1488: raise ValueError(f\"project {proj['id']!r} has no hierarchy root\")",
+          "1495: result = _hierarchy_row(row)",
+          "1516: row = conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone()",
+          "1525: \"SELECT id FROM hierarchy_nodes WHERE kanban_task_id = ? AND id != ? AND archived = 0\",",
+          "1534: f\"UPDATE hierarchy_nodes SET {assignments}, updated_at = ? WHERE id = ?\",",
+          "1538: return _hierarchy_row(conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone())",
+          "1542: row = conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone()",
+          "1550: \"SELECT id FROM hierarchy_nodes WHERE parent_id IN ({})\".format(\",\".join(\"?\" for _ in pending)),",
+          "1557: f\"UPDATE hierarchy_nodes SET archived = 1, updated_at = ? WHERE id IN ({placeholders})\",",
+          "1561: return _hierarchy_row(conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone())",
+          "1567: row = conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone()",
+          "1573: \"SELECT id FROM hierarchy_nodes WHERE kanban_task_id = ? AND id != ? AND archived = 0\",",
+          "1579: \"UPDATE hierarchy_nodes SET kanban_task_id = ?, updated_at = ? WHERE id = ?\",",
+          "1583: return _hierarchy_row(conn.execute(\"SELECT * FROM hierarchy_nodes WHERE id = ?\", (node_id,)).fetchone())"
+        ],
+        "plugin.js": [
+          "5821: const VALID_HIERARCHY_STATUS_COLORS = {",
+          "5828: function parseHierarchyTreeResponse(res) {",
+          "5829: if (!res || typeof res.output !== 'string') throw new Error('hierarchy tree output unavailable')",
+          "5834: function hierarchyNodeStatus(node) {",
+          "5835: if (node && VALID_HIERARCHY_STATUS_COLORS[node.status]) return node.status",
+          "5842: function HierarchyStatusDot({ node }) {",
+          "5843: const status = hierarchyNodeStatus(node)",
+          "5846: style: { backgroundColor: VALID_HIERARCHY_STATUS_COLORS[status] },",
+          "5852: function hierarchyDecisionMatchesNode(decision, nodeId) {",
+          "5856: return !!parsed && parsed._hierarchy_node_id === nodeId",
+          "5859: function useHierarchyDecisions(projectId) {",
+          "5881: function HierarchyKanbanLink({ node, boardSlug, onChanged }) {",
+          "5960: function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, onSelect }) {",
+          "5994: jsx(HierarchyStatusDot, { node }),",
+          "6002: ? jsx(HierarchyKanbanLink, { node, boardSlug, onChanged })",
+          "6006: ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, boardSlug, projectId, onChanged, onSelect }))",
+          "6015: function HierarchyDecisionComposer({ projectId, selectedNode, onPushed }) {",
+          "6028: '--card-payload', JSON.stringify({ _hierarchy_node_id: selectedNode.id }),",
+          "6048: function HierarchyAttachedDecision({ decision, onChanged }) {",
+          "6086: function HierarchyMapPane() {",
+          "6097: const { decisions, loading: decisionsLoading, error: decisionsError, refresh: refreshDecisions } = useHierarchyDecisions(projectId)",
+          "6109: if (res && res.code !== 0 && /no hierarchy root/i.test(res.output || '')) {",
+          "6114: setState({ loading: false, tree: parseHierarchyTreeResponse(res), error: null })",
+          "6123: const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []",
+          "6130: : jsx(HierarchyTreeNode, { key: treeRevision, node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })",
+          "6138: ...attachedDecisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: refreshDecisions })),",
+          "6139: jsx(HierarchyDecisionComposer, { projectId, selectedNode, onPushed: refreshDecisions }),",
+          "6602: render: () => jsx(HierarchyMapPane, {}),",
+          "6608: data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },"
+        ]
+      },
+      "historical": {
+        "backend-plugin/tests/test_mindmap_spec_tree.py": {
+          "hits": [
+            "1: \"\"\"MindMap uses Spec Digest nodes as its single hierarchy authority.\"\"\"",
+            "48: \"INSERT INTO spec_nodes (id, project_id, kind, parent_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\",",
+            "54: conn.execute(\"DELETE FROM spec_nodes\")",
+            "56: \"INSERT INTO spec_nodes (id, project_id, kind, parent_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)\",",
+            "64: def test_cli_exposes_mindmap_tree_and_add_node(tmp_path, monkeypatch):"
+          ],
+          "tables": []
+        },
+        "plugin.js": {
+          "hits": [
+            "5821: const VALID_HIERARCHY_STATUS_COLORS = {",
+            "5828: function parseHierarchyTreeResponse(res) {",
+            "5829: if (!res || typeof res.output !== 'string') throw new Error('hierarchy tree output unavailable')",
+            "5834: function hierarchyNodeStatus(node) {",
+            "5835: if (node && VALID_HIERARCHY_STATUS_COLORS[node.status]) return node.status",
+            "5842: function HierarchyStatusDot({ node }) {",
+            "5843: const status = hierarchyNodeStatus(node)",
+            "5846: style: { backgroundColor: VALID_HIERARCHY_STATUS_COLORS[status] },",
+            "5852: function hierarchyDecisionMatchesNode(decision, nodeId, persistedDecisionId) {",
+            "5857: return !!parsed && (parsed._hierarchy_node_id === nodeId || parsed._spec_node_id === nodeId)",
+            "5860: function useHierarchyDecisions(projectId) {",
+            "5882: function HierarchyKanbanLink({ node, boardSlug, onChanged }) {",
+            "5961: function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, onSelect }) {",
+            "5995: jsx(HierarchyStatusDot, { node }),",
+            "6003: ? jsx(HierarchyKanbanLink, { node, boardSlug, onChanged })",
+            "6007: ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, boardSlug, projectId, onChanged, onSelect }))",
+            "6016: function MindMapNodeComposer({ projectId, selectedNode, onCreated }) {",
+            "6029: host.notify({ kind: 'success', message: 'MindMap node created' })",
+            "6037: jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: 'MindMap node kind' }),",
+            "6044: function HierarchyDecisionComposer({ projectId, selectedNode, onPushed }) {",
+            "6057: '--card-payload', JSON.stringify({ _spec_node_id: selectedNode.id, _hierarchy_node_id: selectedNode.id }),",
+            "6080: function HierarchyAttachedDecision({ decision, onChanged }) {",
+            "6118: function HierarchyMapPane() {",
+            "6129: const { decisions, loading: decisionsLoading, error: decisionsError, refresh: refreshDecisions } = useHierarchyDecisions(projectId)",
+            "6141: if (res && res.code !== 0 && /no (hierarchy|spec) root/i.test(res.output || '')) {",
+            "6146: setState({ loading: false, tree: parseHierarchyTreeResponse(res), error: null })",
+            "6155: const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id, selectedNode.decision_id)) : []",
+            "6162: : jsx(HierarchyTreeNode, { key: treeRevision, node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })",
+            "6165: jsx(MindMapNodeComposer, { projectId, selectedNode, onCreated: () => setTreeRevision((value) => value + 1) }),",
+            "6171: ...attachedDecisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: refreshDecisions })),",
+            "6172: jsx(HierarchyDecisionComposer, { projectId, selectedNode, onPushed: refreshDecisions }),",
+            "6635: render: () => jsx(HierarchyMapPane, {}),",
+            "6641: data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },"
+          ],
+          "tables": []
+        },
+        "test/mindmap-decision-attachment.test.mjs": {
+          "hits": [
+            "5: assert.match(source, /function hierarchyDecisionMatchesNode\\(decision, nodeId, persistedDecisionId\\)/)",
+            "7: assert.match(source, /_hierarchy_node_id/)",
+            "10: assert.match(source, /HierarchyAttachedDecision[\\s\\S]*?DecisionCard/)",
+            "14: assert.match(source, /_hierarchy_node_id: selectedNode.id/)",
+            "16: console.log('mindmap decision attachment contract passed')"
+          ],
+          "tables": []
+        },
+        "test/mindmap-pane.test.mjs": {
+          "hits": [
+            "7: assert.match(source, /id: ['\"]decision-hud-map-route['\"][\\s\\S]*?path: ['\"]\\/decision-hud\\/map['\"][\\s\\S]*?render: \\(\\) => jsx\\(HierarchyMapPane/)",
+            "10: assert.match(source, /function parseHierarchyTreeResponse\\(res\\)[\\s\\S]*?parseTrailingJson\\(res\\.output\\)/)",
+            "11: assert.match(source, /VALID_HIERARCHY_STATUS_COLORS[\\s\\S]*?grey[\\s\\S]*?blue[\\s\\S]*?red[\\s\\S]*?green/)",
+            "16: assert.match(source, /function hierarchyDecisionMatchesNode\\(decision, nodeId, persistedDecisionId\\)/)",
+            "18: assert.match(source, /_hierarchy_node_id/)",
+            "23: assert.match(source, /_hierarchy_node_id: selectedNode.id/)",
+            "27: assert.match(source, /function HierarchyKanbanLink\\(\\{ node, boardSlug, onChanged \\}\\)/)",
+            "34: assert.match(source, /jsx\\(HierarchyTreeNode, \\{ key: treeRevision, node: state\\.tree/)",
+            "36: console.log('mindmap pane contract RED test passed')"
+          ],
+          "tables": []
+        }
+      }
+    },
+    "retrospective": {
+      "canonical_HEAD": {
+        "backend-plugin/cli.py": [
+          "162: v = verbs.add_parser(\"mark-necessity\", help=\"Retro: mark whether a resolved (non-batch) escalation was necessary\")"
+        ],
+        "backend-plugin/db.py": [
+          "739: (\"matrix_2x2\", \"categorize\", {\"is_tree_not_flat\": False, \"is_two_axis_grid\": True}),",
+          "1142: \"\"\"Retro-time judgment call (MVP metric per the scoped-adoption decision):",
+          "1144: PO judges in retro that this escalation should have been resolved",
+          "1172: \"\"\"Fraction of retro-marked escalations judged unnecessary, plus raw",
+          "1173: counts. Only counts decisions that actually got a retro mark \u2014 unmarked"
+        ],
+        "plugin.js": [
+          "281: // Agent Matrix section on one page; fetch failures are already isolated",
+          "1139: // metrics, Postgres-backed) above the Agent Matrix widgets section",
+          "1200: // Wave 4: Cost/Quality/Speed is a focus WITHIN Agent Matrix (an analysis",
+          "1242: 'data-dashboard-section': 'agent-matrix',",
+          "1244: jsx('div', { className: 'font-medium', children: 'Agent Matrix' }),",
+          "1769: const MATRIX_QUADRANTS = ['top-left', 'top-right', 'bottom-left', 'bottom-right']",
+          "2075: function Matrix2x2Card({ decision, onResolve, resolving }) {",
+          "2162: children: MATRIX_QUADRANTS.map((q) =>",
+          "3704: matrix_2x2: Matrix2x2Card,",
+          "4268: row('agentDashboard', 'Agent Matrix'),",
+          "5162: jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children: 'Decision HUD and Agent Matrix open as full workspace pages. Task List remains docked beside chat.' }),",
+          "6618: // all six matrix widgets, stacked) is the ONLY visible Agent",
+          "6619: // Dashboard/Matrix nav destination \u2014 the owner explicitly does not",
+          "6620: // want separate \"Agent Dashboard\" and \"Agent Matrix\" nav entries",
+          "6622: // \"Agent Matrix\" per owner preference, not \"Agent Dashboard\".",
+          "6626: data: { codicon: 'pulse', label: 'Agent Matrix', path: AGENT_DASHBOARD_ROUTE_PATH },",
+          "6633: label: 'Agent Matrix: Open page',",
+          "6634: keywords: ['agent', 'dashboard', 'metrics', 'matrix', 'heatmap', 'charts'],",
+          "6649: // subsumed by the combined Agent Dashboard/Matrix page above (it",
+          "6687: // \"Agent Matrix: Open page\" label now points at the combined page)",
+          "6690: id: 'agent-matrix-open',",
+          "6693: id: 'decision-hud.agent-matrix-legacy',",
+          "6694: label: 'Agent Matrix (legacy widgets page): Open page',",
+          "6695: keywords: ['agent', 'matrix', 'charts', 'tradeoffs', 'legacy'],"
+        ]
+      },
+      "historical": {
+        "plugin.js": {
+          "hits": [
+            "281: // Agent Matrix section on one page; fetch failures are already isolated",
+            "1139: // metrics, Postgres-backed) above the Agent Matrix widgets section",
+            "1200: // Wave 4: Cost/Quality/Speed is a focus WITHIN Agent Matrix (an analysis",
+            "1242: 'data-dashboard-section': 'agent-matrix',",
+            "1244: jsx('div', { className: 'font-medium', children: 'Retrospective' }),",
+            "1769: const MATRIX_QUADRANTS = ['top-left', 'top-right', 'bottom-left', 'bottom-right']",
+            "2075: function Matrix2x2Card({ decision, onResolve, resolving }) {",
+            "2162: children: MATRIX_QUADRANTS.map((q) =>",
+            "3704: matrix_2x2: Matrix2x2Card,",
+            "4268: row('agentDashboard', 'Retrospective'),",
+            "5162: jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children: 'Decision HUD and Retrospective open as full workspace pages. Task List remains docked beside chat.' }),",
+            "6618: // all six matrix widgets, stacked) is the ONLY visible Agent",
+            "6619: // Dashboard/Matrix nav destination \u2014 the owner explicitly does not",
+            "6620: // want separate \"Agent Dashboard\" and \"Agent Matrix\" nav entries",
+            "6622: // \"Agent Matrix\" per owner preference, not \"Agent Dashboard\".",
+            "6626: data: { codicon: 'pulse', label: 'Retrospective', path: AGENT_DASHBOARD_ROUTE_PATH },",
+            "6633: label: 'Retrospective: Open page',",
+            "6634: keywords: ['agent', 'dashboard', 'metrics', 'matrix', 'retrospective', 'heatmap', 'charts'],",
+            "6649: // subsumed by the combined Agent Dashboard/Matrix page above (it",
+            "6687: // \"Agent Matrix: Open page\" label now points at the combined page)",
+            "6690: id: 'agent-matrix-open',",
+            "6693: id: 'decision-hud.agent-matrix-legacy',",
+            "6694: label: 'Agent Matrix (legacy widgets page): Open page',",
+            "6695: keywords: ['agent', 'matrix', 'charts', 'tradeoffs', 'legacy'],"
+          ],
+          "tables": []
+        },
+        "test/agent-dashboard-combined-page.test.mjs": {
+          "hits": [
+            "12: // above the Agent Matrix widgets section, sharing one board/project",
+            "79: assert.ok(findRoute(registrations, '/decision-hud/agent-metrics/snapshot'), 'Agent Matrix route must still exist')",
+            "81: // Wave 4: Cost/Quality/Speed is a focus WITHIN Agent Matrix, not a sibling",
+            "84: // the standalone sidebar nav entry for it must be gone \u2014 Agent Matrix is",
+            "92: assert.ok(navEntries.some((r) => r.data?.label === 'Retrospective' && r.data?.path === ROUTE_PATH), 'Retrospective must remain the single nav destination')",
+            "114: // dashboard read-model section and the Agent Matrix widgets section both",
+            "120: assert.match(rendered, /Retrospective/)",
+            "128: // Agent Matrix page \u2014 not a separate page reached via its own nav entry.",
+            "132: assert.match(rendered, /Cost\\/Quality\\/Speed/i, 'comparison section must render inside the combined Agent Matrix page')",
+            "137: // Matrix keeps working (both sections fetch independently).",
+            "142: assert.match(rendered, /Heatmap/i, 'Agent Matrix section must render even when the read-model section errors')"
+          ],
+          "tables": []
+        },
+        "test/pinned-pane.test.mjs": {
+          "hits": [
+            "14: assert.match(source, /label:\\s*'Retrospective'/)"
+          ],
+          "tables": []
+        },
+        "test/retrospective-tab.test.mjs": {
+          "hits": [
+            "9: /id:\\s*'agent-dashboard-nav'[\\s\\S]*?label:\\s*'Retrospective'[\\s\\S]*?path:\\s*AGENT_DASHBOARD_ROUTE_PATH/,",
+            "10: 'Agent Matrix route must be user-facing Retrospective nav',",
+            "12: assert.match(source, /data-dashboard-section': 'agent-matrix'[\\s\\S]*?children: 'Retrospective'/)",
+            "13: assert.match(source, /label: 'Retrospective: Open page'/)",
+            "14: assert.match(source, /keywords: \\[[^\\]]*'retrospective'/)",
+            "16: // Internal telemetry-backed Agent Matrix route and snapshot command stay intact.",
+            "20: console.log('retrospective tab contract passed')"
+          ],
+          "tables": []
+        }
+      }
+    },
+    "risk_tradeoffs": {
+      "canonical_HEAD": {
+        "backend-plugin/db.py": [
+          "747: (\"balance_scale\", \"compare_tradeoff\", {\"is_exactly_two_options\": True}),",
+          "748: (\"pairwise_duel\", \"compare_tradeoff\",",
+          "750: (\"spider_compare\", \"compare_tradeoff\","
+        ],
+        "plugin.js": [
+          "2212: // fall back to the plain choice list rather than risk a broken render.",
+          "2995: // back to the plain choice list rather than risking a crash or a",
+          "6695: keywords: ['agent', 'matrix', 'charts', 'tradeoffs', 'legacy'],"
+        ]
+      },
+      "historical": {
+        "backend-plugin/cli.py": {
+          "hits": [
+            "217: v = verbs.add_parser(\"risk\", help=\"Manage project risks\")",
+            "218: risk_verbs = v.add_subparsers(dest=\"risk_verb\", required=True)",
+            "219: rv = risk_verbs.add_parser(\"add\")",
+            "225: rv.set_defaults(func=_cmd_risk_add)",
+            "226: rv = risk_verbs.add_parser(\"list\")",
+            "228: rv.set_defaults(func=_cmd_risk_list)",
+            "229: rv = risk_verbs.add_parser(\"update-status\")",
+            "230: rv.add_argument(\"risk_id\")",
+            "232: rv.set_defaults(func=_cmd_risk_update_status)",
+            "234: v = verbs.add_parser(\"tradeoff\", help=\"Manage project tradeoffs\")",
+            "235: tradeoff_verbs = v.add_subparsers(dest=\"tradeoff_verb\", required=True)",
+            "236: tv = tradeoff_verbs.add_parser(\"add\")",
+            "242: tv.set_defaults(func=_cmd_tradeoff_add)",
+            "243: tv = tradeoff_verbs.add_parser(\"list\")",
+            "245: tv.set_defaults(func=_cmd_tradeoff_list)",
+            "246: tv = tradeoff_verbs.add_parser(\"set-prioritized-side\")",
+            "247: tv.add_argument(\"tradeoff_id\")",
+            "249: tv.set_defaults(func=_cmd_tradeoff_set_side)",
+            "266: def _cmd_risk_add(args) -> None:",
+            "267: _run_node_command(db.add_risk, \"risk\", project_id=args.project_id, title=args.title,",
+            "271: def _cmd_risk_list(args) -> None:",
+            "272: _run_node_command(db.list_risks, \"risks\", project_id=args.project_id)",
+            "275: def _cmd_risk_update_status(args) -> None:",
+            "276: _run_node_command(db.update_risk_status, \"risk\", risk_id=args.risk_id, status=args.status)",
+            "279: def _cmd_tradeoff_add(args) -> None:",
+            "280: _run_node_command(db.add_tradeoff, \"tradeoff\", project_id=args.project_id, title=args.title,",
+            "284: def _cmd_tradeoff_list(args) -> None:",
+            "285: _run_node_command(db.list_tradeoffs, \"tradeoffs\", project_id=args.project_id)",
+            "288: def _cmd_tradeoff_set_side(args) -> None:",
+            "289: _run_node_command(db.set_prioritized_side, \"tradeoff\", tradeoff_id=args.tradeoff_id, side=args.side)"
+          ],
+          "tables": []
+        },
+        "backend-plugin/db.py": {
+          "hits": [
+            "248: def _migrate_v8_risks_tradeoffs(conn: sqlite3.Connection) -> None:",
+            "249: \"\"\"Create project-scoped risk and tradeoff records.\"\"\"",
+            "252: CREATE TABLE IF NOT EXISTS risks (",
+            "262: CREATE INDEX IF NOT EXISTS idx_risks_project ON risks(project_id, created_at);",
+            "263: CREATE TABLE IF NOT EXISTS tradeoffs (",
+            "274: CREATE INDEX IF NOT EXISTS idx_tradeoffs_project ON tradeoffs(project_id, created_at);",
+            "285: _migrate_v8_risks_tradeoffs(conn)",
+            "755: (\"balance_scale\", \"compare_tradeoff\", {\"is_exactly_two_options\": True}),",
+            "756: (\"pairwise_duel\", \"compare_tradeoff\",",
+            "758: (\"spider_compare\", \"compare_tradeoff\",",
+            "1594: _VALID_RISK_STATUSES = (\"open\", \"mitigated\", \"accepted\", \"closed\")",
+            "1607: def add_risk(conn: sqlite3.Connection, *, project_id: str, title: str,",
+            "1613: if status not in _VALID_RISK_STATUSES:",
+            "1614: raise ValueError(f\"invalid risk status: {status!r}\")",
+            "1615: risk_id = \"risk_\" + secrets.token_hex(4)",
+            "1618: \"INSERT INTO risks (id, project_id, decision_id, title, description, status, created_at, updated_at) \"",
+            "1620: (risk_id, project, decision_id, title.strip(), description.strip() if description else None, status, now, now),",
+            "1623: return dict(conn.execute(\"SELECT * FROM risks WHERE id = ?\", (risk_id,)).fetchone())",
+            "1626: def list_risks(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:",
+            "1629: \"SELECT * FROM risks WHERE project_id = ? ORDER BY created_at, id\", (project,)",
+            "1633: def update_risk_status(conn: sqlite3.Connection, risk_id: str, status: str) -> dict[str, Any]:",
+            "1634: if status not in _VALID_RISK_STATUSES:",
+            "1635: raise ValueError(f\"invalid risk status: {status!r}\")",
+            "1636: row = conn.execute(\"SELECT id FROM risks WHERE id = ?\", (risk_id,)).fetchone()",
+            "1638: raise ValueError(f\"risk {risk_id!r} not found\")",
+            "1639: conn.execute(\"UPDATE risks SET status = ?, updated_at = ? WHERE id = ?\", (status, time.time(), risk_id))",
+            "1641: return dict(conn.execute(\"SELECT * FROM risks WHERE id = ?\", (risk_id,)).fetchone())",
+            "1644: def add_tradeoff(conn: sqlite3.Connection, *, project_id: str, title: str,",
+            "1651: tradeoff_id = \"tradeoff_\" + secrets.token_hex(4)",
+            "1654: \"INSERT INTO tradeoffs (id, project_id, decision_id, title, option_a, option_b, created_at, updated_at) \"",
+            "1656: (tradeoff_id, project, decision_id, title.strip(), option_a.strip(), option_b.strip(), now, now),",
+            "1659: return dict(conn.execute(\"SELECT * FROM tradeoffs WHERE id = ?\", (tradeoff_id,)).fetchone())",
+            "1662: def list_tradeoffs(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:",
+            "1665: \"SELECT * FROM tradeoffs WHERE project_id = ? ORDER BY created_at, id\", (project,)",
+            "1669: def set_prioritized_side(conn: sqlite3.Connection, tradeoff_id: str, side: str) -> dict[str, Any]:",
+            "1672: row = conn.execute(\"SELECT id FROM tradeoffs WHERE id = ?\", (tradeoff_id,)).fetchone()",
+            "1674: raise ValueError(f\"tradeoff {tradeoff_id!r} not found\")",
+            "1675: conn.execute(\"UPDATE tradeoffs SET prioritized_side = ?, updated_at = ? WHERE id = ?\", (side, time.time(), tradeoff_id))",
+            "1677: return dict(conn.execute(\"SELECT * FROM tradeoffs WHERE id = ?\", (tradeoff_id,)).fetchone())"
+          ],
+          "tables": [
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hierarchy_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nparent_id TEXT,\nlevel INTEGER NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\nkanban_task_id TEXT,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\narchived INTEGER NOT NULL DEFAULT 0\n);",
+              "start_line": 224,
+              "table": "hierarchy_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS risks (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\ndecision_id TEXT,\ntitle TEXT NOT NULL,\ndescription TEXT,\nstatus TEXT NOT NULL DEFAULT 'open',\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n);",
+              "start_line": 252,
+              "table": "risks"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS tradeoffs (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\ndecision_id TEXT,\ntitle TEXT NOT NULL,\noption_a TEXT NOT NULL,\noption_b TEXT NOT NULL,\nprioritized_side TEXT,\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n);",
+              "start_line": 263,
+              "table": "tradeoffs"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS decisions (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nquestion TEXT NOT NULL,\nchoices_json TEXT NOT NULL,\nrecommended TEXT,\nurgency TEXT NOT NULL DEFAULT 'normal',\ncreated_at REAL NOT NULL,\nresolved_choice TEXT,\nresolved_at REAL\n)",
+              "start_line": 292,
+              "table": "decisions"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS problem_reports (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nproblem TEXT NOT NULL,\ncontext TEXT,\nreporter TEXT,\ncreated_at REAL NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\ndecision_id TEXT,\ntriage_error TEXT,\ntriaged_at REAL\n)",
+              "start_line": 322,
+              "table": "problem_reports"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hud_settings (\nkey TEXT PRIMARY KEY,\nvalue TEXT NOT NULL\n)",
+              "start_line": 339,
+              "table": "hud_settings"
+            }
+          ]
+        },
+        "backend-plugin/tests/test_risk_tradeoff.py": {
+          "hits": [
+            "1: \"\"\"Risk and tradeoff vertical-slice contracts.\"\"\"",
+            "23: def test_risk_schema_and_project_scoped_lifecycle(monkeypatch, tmp_path):",
+            "26: columns = {row[\"name\"] for row in conn.execute(\"PRAGMA table_info(risks)\")}",
+            "28: risk = db.add_risk(conn, project_id=\"p1\", title=\"Vendor lock-in\", description=\"Migration cost\")",
+            "29: assert risk[\"project_id\"] == \"p1\"",
+            "30: assert risk[\"status\"] == \"open\"",
+            "31: assert db.list_risks(conn, project_id=\"p2\") == []",
+            "32: assert db.list_risks(conn, project_id=\"p1\")[0][\"id\"] == risk[\"id\"]",
+            "33: updated = db.update_risk_status(conn, risk[\"id\"], \"mitigated\")",
+            "39: def test_risk_validation_and_tradeoff_resolution(monkeypatch, tmp_path):",
+            "44: ({\"project_id\": \"p1\", \"title\": \"Risk\", \"status\": \"bogus\"}, \"invalid risk status\"),",
+            "47: db.add_risk(conn, **kwargs)",
+            "51: tradeoff = db.add_tradeoff(conn, project_id=\"p1\", title=\"Speed vs safety\", option_a=\"Speed\", option_b=\"Safety\")",
+            "52: assert tradeoff[\"prioritized_side\"] is None",
+            "53: resolved = db.set_prioritized_side(conn, tradeoff[\"id\"], \"b\")",
+            "55: assert db.list_tradeoffs(conn, project_id=\"p2\") == []",
+            "57: db.set_prioritized_side(conn, tradeoff[\"id\"], \"x\")"
+          ],
+          "tables": []
+        },
+        "backend-plugin/tests/test_risk_tradeoff_cli.py": {
+          "hits": [
+            "1: \"\"\"CLI contracts for risk and tradeoff commands.\"\"\"",
+            "24: def test_risk_and_tradeoff_cli_verbs(monkeypatch, capsys):",
+            "29: ([\"risk\", \"add\", \"--project-id\", \"p1\", \"--title\", \"Risk\", \"--description\", \"Desc\", \"--decision-id\", \"d1\"], \"add_risk\", {\"project_id\": \"p1\", \"title\": \"Risk\", \"description\": \"Desc\", \"status\": \"open\", \"decision_id\": \"d1\"}, \"risk\"),",
+            "30: ([\"risk\", \"list\", \"--project-id\", \"p1\"], \"list_risks\", {\"project_id\": \"p1\"}, \"risks\"),",
+            "31: ([\"risk\", \"update-status\", \"r1\", \"--status\", \"closed\"], \"update_risk_status\", {\"risk_id\": \"r1\", \"status\": \"closed\"}, \"risk\"),",
+            "32: ([\"tradeoff\", \"add\", \"--project-id\", \"p1\", \"--title\", \"T\", \"--option-a\", \"A\", \"--option-b\", \"B\"], \"add_tradeoff\", {\"project_id\": \"p1\", \"title\": \"T\", \"option_a\": \"A\", \"option_b\": \"B\", \"decision_id\": None}, \"tradeoff\"),",
+            "33: ([\"tradeoff\", \"list\", \"--project-id\", \"p1\"], \"list_tradeoffs\", {\"project_id\": \"p1\"}, \"tradeoffs\"),",
+            "34: ([\"tradeoff\", \"set-prioritized-side\", \"t1\", \"--side\", \"b\"], \"set_prioritized_side\", {\"tradeoff_id\": \"t1\", \"side\": \"b\"}, \"tradeoff\"),"
+          ],
+          "tables": []
+        },
+        "backend-plugin/tests/test_v5_missing_constraint.py": {
+          "hits": [
+            "200: # --- (5) PRAGMA user_version advances (now 8, post risk/tradeoff migration), idempotent --"
+          ],
+          "tables": []
+        },
+        "plugin.js": {
+          "hits": [
+            "2198: // fall back to the plain choice list rather than risk a broken render.",
+            "2981: // back to the plain choice list rather than risking a crash or a",
+            "6130: function RiskTradeoffsPane() {",
+            "6132: const [tab, setTab] = React.useState('risks')",
+            "6133: const [risks, setRisks] = React.useState([])",
+            "6134: const [tradeoffs, setTradeoffs] = React.useState([])",
+            "6142: const [riskResult, tradeoffResult] = await Promise.all([",
+            "6143: cliExec(['decision', 'risk', 'list', '--project-id', projectId]),",
+            "6144: cliExec(['decision', 'tradeoff', 'list', '--project-id', projectId]),",
+            "6146: setRisks(Array.isArray(riskResult?.risks) ? riskResult.risks : [])",
+            "6147: setTradeoffs(Array.isArray(tradeoffResult?.tradeoffs) ? tradeoffResult.tradeoffs : [])",
+            "6155: const addRisk = async () => {",
+            "6156: const title = window.prompt('Risk title')",
+            "6160: await cliExec(['decision', 'risk', 'add', '--project-id', projectId, '--title', title.trim()])",
+            "6165: const addTradeoff = async () => {",
+            "6167: const title = window.prompt('Tradeoff title')",
+            "6173: await cliExec(['decision', 'tradeoff', 'add', '--project-id', projectId, '--title', title.trim(), '--option-a', optionA.trim(), '--option-b', optionB.trim()])",
+            "6181: : tab === 'risks'",
+            "6182: ? risks.map((risk) => jsxs('div', { className: 'rounded border border-(--ui-stroke-secondary) p-2', children: [",
+            "6183: jsx('div', { className: 'font-medium', children: risk.title }),",
+            "6184: jsx('div', { className: 'text-(--ui-text-tertiary)', children: risk.status }),",
+            "6185: jsx('button', { type: 'button', disabled: busy, onClick: async () => { await cliExec(['decision', 'risk', 'update-status', risk.id, '--status', risk.status === 'closed' ? 'open' : 'closed']); await refresh() }, children: risk.status === 'closed' ? 'Reopen' : 'Close' }),",
+            "6186: ] }, risk.id))",
+            "6187: : tradeoffs.map((tradeoff) => jsxs('div', { className: 'rounded border border-(--ui-stroke-secondary) p-2', children: [",
+            "6188: jsx('div', { className: 'font-medium', children: tradeoff.title }),",
+            "6189: jsx('div', { children: `${tradeoff.option_a} vs ${tradeoff.option_b}` }),",
+            "6190: jsx('button', { type: 'button', disabled: busy, onClick: async () => { await cliExec(['decision', 'tradeoff', 'set-prioritized-side', tradeoff.id, '--side', tradeoff.prioritized_side === 'a' ? 'b' : 'a']); await refresh() }, children: tradeoff.prioritized_side ? `Prioritized: ${tradeoff.prioritized_side}` : 'Prioritize A' }),",
+            "6191: ] }, tradeoff.id))",
+            "6194: jsx('div', { className: 'font-medium', children: 'Risk & Tradeoffs' }),",
+            "6196: jsx('button', { type: 'button', onClick: () => setTab('risks'), children: `Risks (${risks.length})` }),",
+            "6197: jsx('button', { type: 'button', onClick: () => setTab('tradeoffs'), children: `Tradeoffs (${tradeoffs.length})` }),",
+            "6198: jsx('button', { type: 'button', disabled: busy || !projectId, onClick: tab === 'risks' ? addRisk : addTradeoff, children: tab === 'risks' ? 'Add risk' : 'Add tradeoff' }),",
+            "6617: id: 'risk-tradeoffs-route',",
+            "6619: data: { path: '/decision-hud/risk-tradeoffs' },",
+            "6620: render: () => jsx(RiskTradeoffsPane, {}),",
+            "6623: id: 'risk-tradeoffs-nav',",
+            "6626: data: { codicon: 'warning', label: 'Risk & Tradeoffs', path: '/decision-hud/risk-tradeoffs' },",
+            "6713: keywords: ['agent', 'matrix', 'charts', 'tradeoffs', 'legacy'],"
+          ],
+          "tables": []
+        },
+        "test/risk-tradeoffs-tab.test.mjs": {
+          "hits": [
+            "7: test('Decision HUD exposes Risk & Tradeoffs tab with project-scoped CLI wiring', () => {",
+            "8: assert.match(source, /Risk & Tradeoffs/)",
+            "9: assert.match(source, /risk', 'list'/)",
+            "10: assert.match(source, /tradeoff', 'list'/)",
+            "11: assert.match(source, /risk', 'add'/)",
+            "12: assert.match(source, /tradeoff', 'add'/)",
+            "13: assert.match(source, /risk-tradeoffs-route/)"
+          ],
+          "tables": []
+        }
+      }
+    },
+    "roadmap": {
+      "canonical_HEAD": {},
+      "historical": {
+        "backend-plugin/cli.py": {
+          "hits": [
+            "218: roadmap = verbs.add_parser(\"roadmap\", help=\"Manage project roadmap lanes and items\")",
+            "219: roadmap_verbs = roadmap.add_subparsers(dest=\"roadmap_verb\", required=True)",
+            "220: v = roadmap_verbs.add_parser(\"list\")",
+            "222: v.set_defaults(func=_cmd_roadmap_list)",
+            "223: lane = roadmap_verbs.add_parser(\"lane\")",
+            "229: v.set_defaults(func=_cmd_roadmap_lane_add)",
+            "232: v.set_defaults(func=_cmd_roadmap_list)",
+            "238: v.set_defaults(func=_cmd_roadmap_lane_update)",
+            "239: item = roadmap_verbs.add_parser(\"item\")",
+            "249: v.set_defaults(func=_cmd_roadmap_item_add)",
+            "252: v.set_defaults(func=_cmd_roadmap_list)",
+            "264: v.set_defaults(func=_cmd_roadmap_item_update)",
+            "318: def _cmd_roadmap_lane_add(args) -> None:",
+            "319: _run_node_command(db.create_roadmap_lane, \"lane\", project_id=args.project_id, title=args.title, sort_order=args.sort_order)",
+            "322: def _cmd_roadmap_list(args) -> None:",
+            "323: _run_node_command(db.list_roadmap, \"roadmap\", project_id=args.project_id)",
+            "326: def _cmd_roadmap_lane_update(args) -> None:",
+            "328: _run_node_command(db.update_roadmap_lane, \"lane\", project_id=args.project_id, lane_id=args.id, **fields)",
+            "331: def _cmd_roadmap_item_add(args) -> None:",
+            "332: _run_node_command(db.create_roadmap_item, \"item\", project_id=args.project_id, lane_id=args.lane_id, title=args.title, status=args.status, sort_order=args.sort_order, depends_on=args.depends_on, links=args.links)",
+            "335: def _cmd_roadmap_item_update(args) -> None:",
+            "341: _run_node_command(db.update_roadmap_item, \"item\", project_id=args.project_id, item_id=args.id, **fields)"
+          ],
+          "tables": []
+        },
+        "backend-plugin/db.py": {
+          "hits": [
+            "255: def _migrate_v8_roadmap(conn: sqlite3.Connection) -> None:",
+            "258: CREATE TABLE IF NOT EXISTS roadmap_lanes (",
+            "266: CREATE INDEX IF NOT EXISTS idx_roadmap_lanes_project ON roadmap_lanes(project_id, sort_order, created_at);",
+            "267: CREATE TABLE IF NOT EXISTS roadmap_items (",
+            "270: lane_id TEXT NOT NULL REFERENCES roadmap_lanes(id),",
+            "279: CREATE INDEX IF NOT EXISTS idx_roadmap_items_lane ON roadmap_items(project_id, lane_id, sort_order, created_at);",
+            "290: _migrate_v8_roadmap(conn)",
+            "1617: _ROADMAP_STATUSES = (\"backlog\", \"planned\", \"in_progress\", \"done\")",
+            "1620: def _roadmap_project(project_id: str) -> dict[str, str]:",
+            "1624: def _roadmap_json(value: Any, field: str) -> list[str]:",
+            "1632: def _roadmap_row(row: sqlite3.Row) -> dict[str, Any]:",
+            "1639: def create_roadmap_lane(conn: sqlite3.Connection, *, project_id: str, title: str, sort_order: int = 0) -> dict[str, Any]:",
+            "1640: project = _roadmap_project(project_id)",
+            "1645: conn.execute(\"INSERT INTO roadmap_lanes (id, project_id, title, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)\", (lane_id, project[\"id\"], title.strip(), int(sort_order), now, now))",
+            "1647: return dict(conn.execute(\"SELECT * FROM roadmap_lanes WHERE id = ?\", (lane_id,)).fetchone())",
+            "1650: def list_roadmap(conn: sqlite3.Connection, *, project_id: str) -> dict[str, Any]:",
+            "1651: project = _roadmap_project(project_id)",
+            "1653: for lane in conn.execute(\"SELECT * FROM roadmap_lanes WHERE project_id = ? ORDER BY sort_order, created_at, id\", (project[\"id\"],)):",
+            "1655: lane_result[\"items\"] = [_roadmap_row(row) for row in conn.execute(\"SELECT * FROM roadmap_items WHERE project_id = ? AND lane_id = ? ORDER BY sort_order, created_at, id\", (project[\"id\"], lane[\"id\"]))]",
+            "1660: def update_roadmap_lane(conn: sqlite3.Connection, *, project_id: str, lane_id: str, **fields: Any) -> dict[str, Any]:",
+            "1663: raise ValueError(\"unsupported roadmap lane fields\")",
+            "1664: project = _roadmap_project(project_id)",
+            "1665: row = conn.execute(\"SELECT * FROM roadmap_lanes WHERE id = ?\", (lane_id,)).fetchone()",
+            "1667: raise ValueError(f\"roadmap lane {lane_id!r} not found\")",
+            "1669: raise ValueError(\"roadmap lane does not belong to project\")",
+            "1675: conn.execute(f\"UPDATE roadmap_lanes SET {assignments}, updated_at = ? WHERE id = ?\", (*values.values(), time.time(), lane_id))",
+            "1677: return dict(conn.execute(\"SELECT * FROM roadmap_lanes WHERE id = ?\", (lane_id,)).fetchone())",
+            "1680: def create_roadmap_item(conn: sqlite3.Connection, *, project_id: str, lane_id: str, title: str, status: str = \"planned\", sort_order: int = 0, depends_on: Any = None, links: Any = None) -> dict[str, Any]:",
+            "1681: project = _roadmap_project(project_id)",
+            "1684: if status not in _ROADMAP_STATUSES:",
+            "1685: raise ValueError(f\"status must be one of {', '.join(_ROADMAP_STATUSES)}\")",
+            "1686: lane = conn.execute(\"SELECT project_id FROM roadmap_lanes WHERE id = ?\", (lane_id,)).fetchone()",
+            "1689: dependencies = _roadmap_json(depends_on, \"depends_on\")",
+            "1690: item_links = _roadmap_json(links, \"links\")",
+            "1692: dep_row = conn.execute(\"SELECT project_id FROM roadmap_items WHERE id = ?\", (dep,)).fetchone()",
+            "1697: conn.execute(\"INSERT INTO roadmap_items (id, project_id, lane_id, title, status, sort_order, depends_on_json, links_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\", (item_id, project[\"id\"], lane_id, title.strip(), status, int(sort_order), json.dumps(dependencies), json.dumps(item_links), now, now))",
+            "1699: return _roadmap_row(conn.execute(\"SELECT * FROM roadmap_items WHERE id = ?\", (item_id,)).fetchone())",
+            "1702: def update_roadmap_item(conn: sqlite3.Connection, *, project_id: str, item_id: str, **fields: Any) -> dict[str, Any]:",
+            "1706: raise ValueError(f\"unsupported roadmap item fields: {sorted(unknown)}\")",
+            "1707: project = _roadmap_project(project_id)",
+            "1708: row = conn.execute(\"SELECT * FROM roadmap_items WHERE id = ?\", (item_id,)).fetchone()",
+            "1710: raise ValueError(f\"roadmap item {item_id!r} not found\")",
+            "1712: raise ValueError(\"roadmap item does not belong to project\")",
+            "1720: if \"status\" in values and values[\"status\"] not in _ROADMAP_STATUSES:",
+            "1721: raise ValueError(f\"status must be one of {', '.join(_ROADMAP_STATUSES)}\")",
+            "1723: lane = conn.execute(\"SELECT project_id FROM roadmap_lanes WHERE id = ?\", (values[\"lane_id\"],)).fetchone()",
+            "1727: values[\"depends_on_json\"] = json.dumps(_roadmap_json(values.pop(\"depends_on\"), \"depends_on\"))",
+            "1729: values[\"links_json\"] = json.dumps(_roadmap_json(values.pop(\"links\"), \"links\"))",
+            "1735: dep_row = conn.execute(\"SELECT project_id FROM roadmap_items WHERE id = ?\", (dep,)).fetchone()",
+            "1741: conn.execute(f\"UPDATE roadmap_items SET {assignments}, updated_at = ? WHERE id = ?\", (*normalized, time.time(), item_id))",
+            "1743: return _roadmap_row(conn.execute(\"SELECT * FROM roadmap_items WHERE id = ?\", (item_id,)).fetchone())"
+          ],
+          "tables": [
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hierarchy_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nparent_id TEXT,\nlevel INTEGER NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\nkanban_task_id TEXT,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\narchived INTEGER NOT NULL DEFAULT 0\n);",
+              "start_line": 231,
+              "table": "hierarchy_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS roadmap_lanes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n);",
+              "start_line": 258,
+              "table": "roadmap_lanes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS roadmap_items (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nlane_id TEXT NOT NULL REFERENCES roadmap_lanes(id),\ntitle TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('backlog', 'planned', 'in_progress', 'done')),\nsort_order INTEGER NOT NULL DEFAULT 0,\ndepends_on_json TEXT NOT NULL DEFAULT '[]',\nlinks_json TEXT NOT NULL DEFAULT '[]',\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n);",
+              "start_line": 267,
+              "table": "roadmap_items"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS decisions (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nquestion TEXT NOT NULL,\nchoices_json TEXT NOT NULL,\nrecommended TEXT,\nurgency TEXT NOT NULL DEFAULT 'normal',\ncreated_at REAL NOT NULL,\nresolved_choice TEXT,\nresolved_at REAL\n)",
+              "start_line": 297,
+              "table": "decisions"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS problem_reports (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nproblem TEXT NOT NULL,\ncontext TEXT,\nreporter TEXT,\ncreated_at REAL NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\ndecision_id TEXT,\ntriage_error TEXT,\ntriaged_at REAL\n)",
+              "start_line": 327,
+              "table": "problem_reports"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS spec_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nkind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),\nparent_id TEXT REFERENCES spec_nodes(id),\ntitle TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'draft',\nnote TEXT,\ncriteria_json TEXT,\ndecision_id TEXT REFERENCES decisions(id),\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n)",
+              "start_line": 344,
+              "table": "spec_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hud_settings (\nkey TEXT PRIMARY KEY,\nvalue TEXT NOT NULL\n)",
+              "start_line": 364,
+              "table": "hud_settings"
+            }
+          ]
+        },
+        "backend-plugin/tests/test_roadmap.py": {
+          "hits": [
+            "1: \"\"\"Roadmap vertical-slice contracts.\"\"\"",
+            "26: def test_roadmap_lanes_and_items_are_scoped_ordered_and_persisted(tmp_path, monkeypatch):",
+            "28: doing = db.create_roadmap_lane(conn, project_id=\"p_1\", title=\"Doing\", sort_order=2)",
+            "29: todo = db.create_roadmap_lane(conn, project_id=\"p_1\", title=\"Todo\", sort_order=1)",
+            "30: item = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=todo[\"id\"], title=\"Ship it\", status=\"planned\", sort_order=1)",
+            "31: db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=doing[\"id\"], title=\"Build it\", status=\"in_progress\")",
+            "32: view = db.list_roadmap(conn, project_id=\"p_1\")",
+            "35: assert db.list_roadmap(conn, project_id=\"p_2\")[\"lanes\"] == []",
+            "38: def test_roadmap_validates_status_links_dependencies_and_cross_project_refs(tmp_path, monkeypatch):",
+            "40: lane = db.create_roadmap_lane(conn, project_id=\"p_1\", title=\"Todo\")",
+            "41: other = db.create_roadmap_lane(conn, project_id=\"p_2\", title=\"Other\")",
+            "42: first = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=lane[\"id\"], title=\"First\")",
+            "44: db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=other[\"id\"], title=\"Wrong project\")",
+            "49: db.update_roadmap_item(conn, project_id=\"p_1\", item_id=first[\"id\"], status=\"not-a-status\")",
+            "53: second = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=lane[\"id\"], title=\"Second\", depends_on=[first[\"id\"]], links=[\"decision:abc\"])",
+            "57: db.update_roadmap_item(conn, project_id=\"p_1\", item_id=first[\"id\"], depends_on=[first[\"id\"]])",
+            "63: def test_roadmap_updates_require_project_scope_and_preserve_cross_project_rows(tmp_path, monkeypatch):",
+            "65: lane_one = db.create_roadmap_lane(conn, project_id=\"p_1\", title=\"One\")",
+            "66: lane_two = db.create_roadmap_lane(conn, project_id=\"p_2\", title=\"Two\")",
+            "67: item_one = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=lane_one[\"id\"], title=\"One item\")",
+            "69: db.update_roadmap_lane(conn, project_id=\"p_2\", lane_id=lane_one[\"id\"], title=\"Hacked\")",
+            "74: db.update_roadmap_item(conn, project_id=\"p_2\", item_id=item_one[\"id\"], lane_id=lane_two[\"id\"])",
+            "78: assert db.list_roadmap(conn, project_id=\"p_1\")[\"lanes\"][0][\"title\"] == \"One\"",
+            "79: assert db.list_roadmap(conn, project_id=\"p_1\")[\"lanes\"][0][\"items\"][0][\"lane_id\"] == lane_one[\"id\"]",
+            "82: def test_roadmap_update_can_explicitly_clear_dependencies_and_links(tmp_path, monkeypatch):",
+            "84: lane = db.create_roadmap_lane(conn, project_id=\"p_1\", title=\"Todo\")",
+            "85: dependency = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=lane[\"id\"], title=\"Dependency\")",
+            "86: item = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=lane[\"id\"], title=\"Item\", depends_on=[dependency[\"id\"]], links=[\"decision:abc\"])",
+            "87: cleared = db.update_roadmap_item(conn, project_id=\"p_1\", item_id=item[\"id\"], clear_depends_on=True, clear_links=True)",
+            "92: def test_roadmap_rejects_stale_updates_and_preserves_existing_values(tmp_path, monkeypatch):",
+            "94: lane = db.create_roadmap_lane(conn, project_id=\"p_1\", title=\"Todo\")",
+            "95: item = db.create_roadmap_item(conn, project_id=\"p_1\", lane_id=lane[\"id\"], title=\"Keep\", status=\"planned\")",
+            "96: updated = db.update_roadmap_item(conn, project_id=\"p_1\", item_id=item[\"id\"], status=\"done\", sort_order=3)",
+            "100: db.update_roadmap_item(conn, project_id=\"p_1\", item_id=\"item_missing\", status=\"done\")",
+            "106: def test_roadmap_cli_contracts(monkeypatch, capsys):",
+            "114: monkeypatch.setattr(cli.db, \"create_roadmap_lane\", lambda conn, **kw: calls.append((\"lane\", kw)) or {\"id\": \"lane_1\"})",
+            "117: args = parser.parse_args([\"roadmap\", \"lane\", \"add\", \"--project-id\", \"p_1\", \"--title\", \"Todo\"])",
+            "122: monkeypatch.setattr(cli.db, \"update_roadmap_lane\", lambda conn, **kw: calls.append((\"lane-update\", kw)) or {\"id\": \"lane_1\"})",
+            "123: lane_args = parser.parse_args([\"roadmap\", \"lane\", \"update\", \"lane_1\", \"--project-id\", \"p_1\", \"--title\", \"Renamed\"])",
+            "128: monkeypatch.setattr(cli.db, \"update_roadmap_item\", lambda conn, **kw: calls.append((\"item-update\", kw)) or {\"id\": \"item_1\"})",
+            "129: item_args = parser.parse_args([\"roadmap\", \"item\", \"update\", \"item_1\", \"--project-id\", \"p_1\", \"--clear-depends-on\", \"--clear-links\"])"
+          ],
+          "tables": []
+        },
+        "plugin.js": {
+          "hits": [
+            "6144: function RoadmapPane() {",
+            "6146: const [roadmap, setRoadmap] = React.useState(null)",
+            "6157: const response = await cliExec(['roadmap', 'lane', 'list', '--project-id', projectId])",
+            "6158: if (!response || !response.roadmap || !Array.isArray(response.roadmap.lanes)) throw new Error('roadmap unavailable')",
+            "6159: setRoadmap(response.roadmap)",
+            "6175: await runUpdate(['roadmap', 'lane', 'add', '--project-id', projectId, '--title', laneTitle.trim()])",
+            "6182: await runUpdate(['roadmap', 'item', 'add', '--project-id', projectId, '--lane-id', laneId, '--title', title])",
+            "6188: const argv = ['roadmap', 'lane', 'update', lane.id, '--project-id', projectId, '--title', draft.title.trim(), '--sort-order', String(Number(draft.sort_order) || 0)]",
+            "6194: const argv = ['roadmap', 'item', 'update', item.id, '--project-id', projectId, '--title', draft.title.trim(), '--lane-id', draft.lane_id, '--status', draft.status, '--sort-order', String(Number(draft.sort_order) || 0)]",
+            "6204: if (scopeLoading) return jsx('div', { className: 'p-3 text-sm', children: 'Loading roadmap\u2026' })",
+            "6208: jsx('div', { className: 'font-medium', children: 'Roadmap' }),",
+            "6214: roadmap?.lanes?.length ? jsx('div', { className: 'grid gap-3 md:grid-cols-2 xl:grid-cols-3', children: roadmap.lanes.map((lane) => {",
+            "6241: }) }) : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No roadmap lanes yet.' }),",
+            "6712: id: 'decision-hud-roadmap-route',",
+            "6714: data: { path: '/decision-hud/roadmap' },",
+            "6715: render: () => jsx(RoadmapPane, {}),",
+            "6718: id: 'decision-hud-roadmap-nav',",
+            "6721: data: { codicon: 'calendar', label: 'Roadmap', path: '/decision-hud/roadmap' },"
+          ],
+          "tables": []
+        },
+        "test/roadmap-route.test.mjs": {
+          "hits": [
+            "10: let failRoadmap = false",
+            "17: if (argv[0] === 'roadmap' && argv[1] === 'lane' && argv[2] === 'list') {",
+            "18: if (failRoadmap) return { code: 1, output: 'backend unavailable' }",
+            "19: return { code: 0, output: JSON.stringify({ ok: true, roadmap: { project_id: 'p_1', lanes: [{ id: 'lane_1', title: 'Todo', items: [{ id: 'item_1', title: 'Seed item', status: 'planned', sort_order: 0, lane_id: 'lane_1', depends_on: [], links: [] }] }] } }) }",
+            "26: const route = registrations.find((item) => item.data?.path === '/decision-hud/roadmap')",
+            "30: assert.match(mounted.container.textContent, /Roadmap/)",
+            "32: assert.ok(mounted.container.querySelector('select'), 'roadmap item status must be editable')",
+            "49: const itemUpdate = requests.find((argv) => argv[0] === 'roadmap' && argv[1] === 'item' && argv[2] === 'update')",
+            "58: const clearedItemUpdate = requests.filter((argv) => argv[0] === 'roadmap' && argv[1] === 'item' && argv[2] === 'update').at(-1)",
+            "67: assert.ok(requests.some((argv) => argv[0] === 'roadmap' && argv[1] === 'lane' && argv[2] === 'update' && argv.includes('--sort-order') && argv.includes('2')))",
+            "74: assert.ok(requests.some((argv) => argv[0] === 'roadmap' && argv[1] === 'lane' && argv[2] === 'add'))",
+            "77: failRoadmap = true",
+            "84: console.log('roadmap route passed')"
+          ],
+          "tables": []
+        }
+      }
+    },
+    "scrum_planning": {
+      "canonical_HEAD": {},
+      "historical": {
+        "backend-plugin/cli.py": {
+          "hits": [
+            "255: v = verbs.add_parser(\"planning\", help=\"Manage Scrum Planning items\")",
+            "256: planning_verbs = v.add_subparsers(dest=\"planning_verb\", required=True)",
+            "257: pv = planning_verbs.add_parser(\"add\")",
+            "260: pv.add_argument(\"--sprint\", required=True)",
+            "263: pv.set_defaults(func=_cmd_planning_add)",
+            "264: pv = planning_verbs.add_parser(\"list\")",
+            "266: pv.set_defaults(func=_cmd_planning_list)",
+            "267: pv = planning_verbs.add_parser(\"update\")",
+            "271: pv.add_argument(\"--sprint\", default=None)",
+            "273: pv.set_defaults(func=_cmd_planning_update)",
+            "290: def _cmd_planning_add(args) -> None:",
+            "292: db.add_planning_item, \"planning_item\", project_id=args.project_id,",
+            "293: spec_node_id=args.spec_node_id, sprint=args.sprint, status=args.status, estimate=args.estimate,",
+            "297: def _cmd_planning_list(args) -> None:",
+            "298: _run_node_command(db.list_planning_items, \"planning_items\", project_id=args.project_id)",
+            "301: def _cmd_planning_update(args) -> None:",
+            "303: db.update_planning_item, \"planning_item\", item_id=args.item_id, project_id=args.project_id,",
+            "304: status=args.status, sprint=args.sprint, estimate=args.estimate,"
+          ],
+          "tables": []
+        },
+        "backend-plugin/cli_spec_cmds.py": {
+          "hits": [
+            "156: planning_count = conn.execute(\"SELECT COUNT(*) FROM planning_items WHERE spec_node_id = ?\", (node_id,)).fetchone()[0]",
+            "157: if planning_count:",
+            "158: raise ValueError(f\"cannot delete node {node_id!r}: it has a linked planning item. Remove planning item first.\")"
+          ],
+          "tables": []
+        },
+        "backend-plugin/db.py": {
+          "hits": [
+            "255: def _migrate_v9_scrum_planning(conn: sqlite3.Connection) -> None:",
+            "256: \"\"\"Create project-scoped Scrum Planning records linked to spec_nodes.\"\"\"",
+            "259: CREATE TABLE IF NOT EXISTS planning_items (",
+            "263: sprint TEXT NOT NULL,",
+            "269: CREATE INDEX IF NOT EXISTS idx_planning_items_project",
+            "270: ON planning_items(project_id, sprint, status, created_at);",
+            "271: CREATE UNIQUE INDEX IF NOT EXISTS idx_planning_items_spec_node",
+            "272: ON planning_items(project_id, spec_node_id);",
+            "283: _migrate_v9_scrum_planning(conn)",
+            "1612: _VALID_PLANNING_STATUSES = (\"backlog\", \"ready\", \"in_progress\", \"done\")",
+            "1615: def _planning_project_and_node(conn: sqlite3.Connection, project_id: str, spec_node_id: str) -> tuple[str, sqlite3.Row]:",
+            "1627: def _validate_planning_values(sprint: str, status: str, estimate: int) -> None:",
+            "1628: if not sprint or not sprint.strip():",
+            "1629: raise ValueError(\"sprint is required\")",
+            "1630: if status not in _VALID_PLANNING_STATUSES:",
+            "1631: raise ValueError(f\"invalid planning status: {status!r}\")",
+            "1636: def add_planning_item(conn: sqlite3.Connection, *, project_id: str, spec_node_id: str, sprint: str,",
+            "1638: project, _ = _planning_project_and_node(conn, project_id, spec_node_id)",
+            "1639: _validate_planning_values(sprint, status, estimate)",
+            "1640: item_id = \"planning_\" + secrets.token_hex(4)",
+            "1644: \"INSERT INTO planning_items (id, project_id, spec_node_id, sprint, status, estimate, created_at, updated_at) \"",
+            "1646: (item_id, project, spec_node_id.strip(), sprint.strip(), status, estimate, now, now),",
+            "1651: raise ValueError(f\"spec_node_id {spec_node_id!r} already has a planning item in this project\") from exc",
+            "1652: return dict(conn.execute(\"SELECT * FROM planning_items WHERE id = ?\", (item_id,)).fetchone())",
+            "1655: def list_planning_items(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:",
+            "1658: \"SELECT planning_items.*, spec_nodes.title AS spec_node_title, spec_nodes.kind AS spec_node_kind \"",
+            "1659: \"FROM planning_items JOIN spec_nodes ON spec_nodes.id = planning_items.spec_node_id \"",
+            "1660: \"WHERE planning_items.project_id = ? ORDER BY planning_items.sprint, planning_items.created_at, planning_items.id\",",
+            "1665: def update_planning_item(conn: sqlite3.Connection, item_id: str, *, project_id: str,",
+            "1666: status: Optional[str] = None, sprint: Optional[str] = None,",
+            "1669: row = conn.execute(\"SELECT * FROM planning_items WHERE id = ?\", (item_id,)).fetchone()",
+            "1671: raise ValueError(f\"planning item {item_id!r} not found\")",
+            "1673: raise ValueError(\"planning item must belong to the same project\")",
+            "1675: next_sprint = row[\"sprint\"] if sprint is None else sprint",
+            "1677: _validate_planning_values(next_sprint, next_status, next_estimate)",
+            "1679: \"UPDATE planning_items SET status = ?, sprint = ?, estimate = ?, updated_at = ? WHERE id = ?\",",
+            "1680: (next_status, next_sprint.strip(), next_estimate, time.time(), item_id),",
+            "1683: return dict(conn.execute(\"SELECT * FROM planning_items WHERE id = ?\", (item_id,)).fetchone())"
+          ],
+          "tables": [
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hierarchy_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nparent_id TEXT,\nlevel INTEGER NOT NULL,\ntitle TEXT NOT NULL,\nsort_order INTEGER NOT NULL DEFAULT 0,\nkanban_task_id TEXT,\ncreated_at INTEGER NOT NULL,\nupdated_at INTEGER NOT NULL,\narchived INTEGER NOT NULL DEFAULT 0\n);",
+              "start_line": 231,
+              "table": "hierarchy_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS planning_items (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nspec_node_id TEXT NOT NULL,\nsprint TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'backlog',\nestimate INTEGER NOT NULL DEFAULT 0,\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n);",
+              "start_line": 259,
+              "table": "planning_items"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS decisions (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nquestion TEXT NOT NULL,\nchoices_json TEXT NOT NULL,\nrecommended TEXT,\nurgency TEXT NOT NULL DEFAULT 'normal',\ncreated_at REAL NOT NULL,\nresolved_choice TEXT,\nresolved_at REAL\n)",
+              "start_line": 290,
+              "table": "decisions"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS problem_reports (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nproblem TEXT NOT NULL,\ncontext TEXT,\nreporter TEXT,\ncreated_at REAL NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'pending',\ndecision_id TEXT,\ntriage_error TEXT,\ntriaged_at REAL\n)",
+              "start_line": 320,
+              "table": "problem_reports"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS spec_nodes (\nid TEXT PRIMARY KEY,\nproject_id TEXT NOT NULL,\nkind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),\nparent_id TEXT REFERENCES spec_nodes(id),\ntitle TEXT NOT NULL,\nstatus TEXT NOT NULL DEFAULT 'draft',\nnote TEXT,\ncriteria_json TEXT,\ndecision_id TEXT REFERENCES decisions(id),\ncreated_at REAL NOT NULL,\nupdated_at REAL NOT NULL\n)",
+              "start_line": 337,
+              "table": "spec_nodes"
+            },
+            {
+              "ddl": "CREATE TABLE IF NOT EXISTS hud_settings (\nkey TEXT PRIMARY KEY,\nvalue TEXT NOT NULL\n)",
+              "start_line": 357,
+              "table": "hud_settings"
+            }
+          ]
+        },
+        "backend-plugin/tests/test_scrum_planning.py": {
+          "hits": [
+            "1: \"\"\"Scrum Planning persistence contracts.\"\"\"",
+            "22: def test_planning_items_are_project_scoped_and_link_spec_node(monkeypatch, tmp_path):",
+            "30: item = db.add_planning_item(conn, project_id=\"p1\", spec_node_id=\"feature-1\", sprint=\"Sprint 1\", estimate=5)",
+            "34: assert db.list_planning_items(conn, project_id=\"p2\") == []",
+            "35: assert db.list_planning_items(conn, project_id=\"p1\")[0][\"id\"] == item[\"id\"]",
+            "36: updated = db.update_planning_item(conn, item[\"id\"], project_id=\"p1\", status=\"in_progress\", sprint=\"Sprint 2\", estimate=8)",
+            "37: assert (updated[\"status\"], updated[\"sprint\"], updated[\"estimate\"]) == (\"in_progress\", \"Sprint 2\", 8)",
+            "39: db.update_planning_item(conn, item[\"id\"], project_id=\"p2\", status=\"done\")",
+            "47: def test_planning_validation_rejects_cross_project_and_bad_values(monkeypatch, tmp_path):",
+            "60: ({\"project_id\": \"p1\", \"spec_node_id\": \"missing\", \"sprint\": \"Sprint 1\"}, \"spec_node_id\"),",
+            "61: ({\"project_id\": \"p1\", \"spec_node_id\": \"feature-2\", \"sprint\": \"Sprint 1\"}, \"same project\"),",
+            "62: ({\"project_id\": \"p1\", \"spec_node_id\": \"feature-1\", \"sprint\": \"\", \"estimate\": 1}, \"sprint is required\"),",
+            "65: db.add_planning_item(conn, **kwargs)",
+            "71: db.add_planning_item(conn, project_id=\"p1\", spec_node_id=\"feature-1\", sprint=\"Sprint 1\", status=bad_status, estimate=bad_estimate)",
+            "79: def test_spec_node_delete_rejects_linked_planning_item(monkeypatch, tmp_path):",
+            "87: db.add_planning_item(conn, project_id=\"p1\", spec_node_id=\"feature-1\", sprint=\"Sprint 1\")",
+            "91: assert False, \"expected linked planning rejection\"",
+            "93: assert \"planning item\" in str(exc)",
+            "95: assert db.list_planning_items(conn, project_id=\"p1\")"
+          ],
+          "tables": []
+        },
+        "backend-plugin/tests/test_scrum_planning_cli.py": {
+          "hits": [
+            "1: \"\"\"CLI contracts for Scrum Planning commands.\"\"\"",
+            "24: def test_planning_cli_verbs(monkeypatch, capsys):",
+            "26: result = {\"id\": \"planning-1\"}",
+            "29: ([\"planning\", \"add\", \"--project-id\", \"p1\", \"--spec-node-id\", \"n1\", \"--sprint\", \"Sprint 1\", \"--estimate\", \"5\"], \"add_planning_item\", {\"project_id\": \"p1\", \"spec_node_id\": \"n1\", \"sprint\": \"Sprint 1\", \"status\": \"backlog\", \"estimate\": 5}, \"planning_item\"),",
+            "30: ([\"planning\", \"list\", \"--project-id\", \"p1\"], \"list_planning_items\", {\"project_id\": \"p1\"}, \"planning_items\"),",
+            "31: ([\"planning\", \"update\", \"planning-1\", \"--project-id\", \"p1\", \"--status\", \"done\", \"--sprint\", \"Sprint 2\", \"--estimate\", \"8\"], \"update_planning_item\", {\"item_id\": \"planning-1\", \"project_id\": \"p1\", \"status\": \"done\", \"sprint\": \"Sprint 2\", \"estimate\": 8}, \"planning_item\"),"
+          ],
+          "tables": []
+        },
+        "plugin.js": {
+          "hits": [
+            "6144: function ScrumPlanningPane() {",
+            "6154: const result = await cliExec(['decision', 'planning', 'list', '--project-id', projectId])",
+            "6155: setItems(Array.isArray(result?.planning_items) ? result.planning_items : [])",
+            "6166: const sprint = window.prompt('Sprint')",
+            "6167: if (!specNodeId?.trim() || !sprint?.trim()) return",
+            "6170: await cliExec(['decision', 'planning', 'add', '--project-id', projectId, '--spec-node-id', specNodeId.trim(), '--sprint', sprint.trim()])",
+            "6179: const argv = ['decision', 'planning', 'update', item.id, '--project-id', projectId]",
+            "6189: : items.length === 0 ? 'No planning items yet.'",
+            "6192: jsx('div', { className: 'text-(--ui-text-tertiary)', children: `${item.sprint} \u00b7 ${item.estimate} points \u00b7 ${item.status}` }),",
+            "6201: jsx('div', { className: 'font-medium', children: 'Scrum Planning' }),",
+            "6202: jsx('button', { type: 'button', disabled: busy || !projectId, onClick: addItem, children: 'Add planning item' }),",
+            "6675: id: 'scrum-planning-route',",
+            "6677: data: { path: '/decision-hud/planning' },",
+            "6678: render: () => jsx(ScrumPlanningPane, {}),",
+            "6681: id: 'scrum-planning-nav',",
+            "6684: data: { codicon: 'calendar', label: 'Scrum Planning', path: '/decision-hud/planning' },"
+          ],
+          "tables": []
+        }
+      }
+    }
+  },
+  "verification": {
+    "file_edits_except_report": false,
+    "git_writes": false,
+    "inspection_method": "git show/git grep/read-only source inspection",
+    "tests_run": false
+  },
+  "working_tree": [
+    "## stage2-integration"
+  ]
+}
