@@ -10,7 +10,7 @@ const source = await readFile(resolve(here, '..', 'plugin.js'), 'utf8')
 // route pattern and are opened through the sidebar or command palette.
 assert.match(source, /host\.navigate\('\/decision-hud'\)/)
 assert.match(source, /host\.navigate\(AGENT_METRICS_ROUTE_PATH\)/)
-assert.match(source, /host\.navigate\(AGENT_METRICS_WIDGETS_ROUTE_PATH\)/)
+assert.match(source, /host\.navigate\(AGENT_DASHBOARD_ROUTE_PATH\)/)
 
 assert.doesNotMatch(
   source,
@@ -23,7 +23,7 @@ assert.doesNotMatch(
 // permanently right-docked operational queue in its separate plugin.
 assert.match(source, /area:\s*SIDEBAR_NAV_AREA/)
 assert.match(source, /label:\s*'Decision HUD',\s*path:\s*'\/decision-hud'/)
-assert.match(source, /label:\s*'Agent Matrix',\s*path:\s*AGENT_METRICS_WIDGETS_ROUTE_PATH/)
+assert.match(source, /label:\s*'Agent Matrix',\s*path:\s*AGENT_DASHBOARD_ROUTE_PATH/)
 
 assert.match(
   source,

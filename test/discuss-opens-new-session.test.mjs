@@ -41,9 +41,9 @@ assert.match(
 
 // Still banned per palette-navigate-safety.test.mjs.
 assert.doesNotMatch(
-  source,
+  handleDiscussBody,
   /host\.navigate\(/,
-  'host.navigate must never be called from plugin.js',
+  'handleDiscuss must never use host.navigate',
 )
 
 console.log('discuss-opens-new-session regression test passed')

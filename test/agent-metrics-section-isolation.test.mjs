@@ -17,7 +17,7 @@ import { host } from '@hermes/plugin-sdk'
 
 installLocalStorageStub()
 
-const DASHBOARD_ROUTE_PATH = '/decision-hud/agent-metrics'
+const DASHBOARD_ROUTE_PATH = '/decision-hud/agent-dashboard'
 const WIDGETS_ROUTE_PATH = '/decision-hud/agent-metrics/snapshot'
 const SELECTED_BOARD_STORAGE_KEY = 'decision-hud:selected-board'
 
@@ -75,6 +75,7 @@ function throwingMetric() {
   const dashboardRoute = findRoute(regs, DASHBOARD_ROUTE_PATH)
   assert.ok(dashboardRoute, `expected a ${DASHBOARD_ROUTE_PATH} route registration`)
   const mounted = mount(dashboardRoute.render)
+  await flush()
   await flush()
 
   // Section degrades to its own explicit unavailable message...
