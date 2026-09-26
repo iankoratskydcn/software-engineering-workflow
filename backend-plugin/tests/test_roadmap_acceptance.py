@@ -265,3 +265,93 @@ def test_roadmap_rejects_missing_dependency_targets_before_insert_and_update(tmp
         assert _snapshot_db(conn) == before
     finally:
         conn.close()
+
+
+def test_roadmap_rejects_arbitrary_missing_dependency_targets_before_insert_and_update(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        lane = _lane(conn)
+        missing_target = "dependency-that-does-not-exist"
+        before = _snapshot_db(conn)
+        with pytest.raises((TypeError, ValueError, sqlite3.IntegrityError)):
+            db.create_roadmap_item(
+                conn,
+                project_id="p_1",
+                lane_id=lane["id"],
+                title="Missing arbitrary dependency",
+                depends_on=[missing_target],
+            )
+        assert _snapshot_db(conn) == before
+
+        item = db.create_roadmap_item(
+            conn, project_id="p_1", lane_id=lane["id"], title="Keep"
+        )
+        before = _snapshot_db(conn)
+        with pytest.raises((TypeError, ValueError, sqlite3.IntegrityError)):
+            db.update_roadmap_item(
+                conn,
+                project_id="p_1",
+                item_id=item["id"],
+                depends_on=[missing_target],
+                expected_updated_at=item["updated_at"],
+            )
+        assert _snapshot_db(conn) == before
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("column", ["depends_on_json", "links_json"])
+def test_v11_preflight_rejects_malformed_existing_roadmap_json_without_mutation(
+    tmp_path, monkeypatch, column
+):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        lane = _lane(conn)
+        item = db.create_roadmap_item(
+            conn, project_id="p_1", lane_id=lane["id"], title="Malformed payload"
+        )
+        conn.execute(
+            f"UPDATE roadmap_items SET {column} = ? WHERE id = ?",
+            ("{not-json", item["id"]),
+        )
+        conn.commit()
+        before = _snapshot_db(conn)
+
+        with pytest.raises((db.BoundaryError, ValueError)):
+            db.init_db(conn)
+
+        assert _snapshot_db(conn) == before
+    finally:
+        conn.close()
+
+
+def test_v11_preflight_rejects_roadmap_items_without_status_check_without_mutation(
+    tmp_path, monkeypatch
+):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        conn.execute("DROP TABLE roadmap_items")
+        conn.execute(
+            "CREATE TABLE roadmap_items ("
+            "id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lane_id TEXT NOT NULL, "
+            "title TEXT NOT NULL, description TEXT, status TEXT NOT NULL DEFAULT 'planned', "
+            "sort_order INTEGER NOT NULL DEFAULT 0, depends_on_json TEXT NOT NULL DEFAULT '[]', "
+            "links_json TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, updated_at REAL NOT NULL, "
+            "UNIQUE(project_id, id), "
+            "FOREIGN KEY(project_id, lane_id) REFERENCES roadmap_lanes(project_id, id) "
+            "ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ")"
+        )
+        conn.execute(
+            "CREATE INDEX idx_roadmap_items_project "
+            "ON roadmap_items(project_id, lane_id, sort_order, id)"
+        )
+        conn.commit()
+        before = _snapshot_db(conn)
+
+        with pytest.raises((db.BoundaryError, ValueError)):
+            db.init_db(conn)
+
+        assert _snapshot_db(conn) == before
+    finally:
+        conn.close()
