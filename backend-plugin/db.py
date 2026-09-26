@@ -154,6 +154,10 @@ class BoundaryError(ValueError):
         self.code = code
 
 
+class _RoadmapMigrationConflict(BoundaryError, sqlite3.OperationalError):
+    """Roadmap preflight error compatible with legacy DDL-conflict callers."""
+
+
 def validate_text(value: Any, *, field: str, max_chars: int = TEXT_LIMIT,
                   allow_empty: bool = False) -> str:
     if not isinstance(value, str):
@@ -471,32 +475,131 @@ def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
 _ROADMAP_STATUSES = ("planned", "todo", "in_progress", "blocked", "done", "cancelled")
 
 
+_ROADMAP_TABLES = {"roadmap_lanes", "roadmap_items"}
+_ROADMAP_COLUMNS = {
+    "roadmap_lanes": (
+        ("id", "TEXT", 0, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("sort_order", "INTEGER", 1, "0", 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ),
+    "roadmap_items": (
+        ("id", "TEXT", 0, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("lane_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("description", "TEXT", 0, None, 0),
+        ("status", "TEXT", 1, "'planned'", 0),
+        ("sort_order", "INTEGER", 1, "0", 0),
+        ("depends_on_json", "TEXT", 1, "'[]'", 0),
+        ("links_json", "TEXT", 1, "'[]'", 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ),
+}
+
+
+def _roadmap_constraint(message: str) -> BoundaryError:
+    return BoundaryError("constraint", message)
+
+
+def _preflight_roadmap(conn: sqlite3.Connection, *, version: int) -> None:
+    objects = {
+        row[0]: row[1]
+        for row in conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE name IN ('roadmap_lanes','roadmap_items')"
+        )
+    }
+    names = set(objects)
+    if names and (names != _ROADMAP_TABLES or any(objects[n] != "table" for n in names)):
+        error = _RoadmapMigrationConflict("roadmap migration requires both canonical tables")
+        error.code = "constraint"
+        raise error
+    if not names:
+        return
+
+    for table, expected in _ROADMAP_COLUMNS.items():
+        actual = tuple(
+            (row[1], row[2].upper(), row[3], row[4], row[5])
+            for row in conn.execute(f"PRAGMA table_info({table})")
+        )
+        if actual != expected:
+            raise _roadmap_constraint(f"{table} has non-canonical columns")
+
+    unique = {}
+    for table in _ROADMAP_TABLES:
+        for row in conn.execute(f"PRAGMA index_list({table})"):
+            if row[2]:
+                cols = tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
+                unique.setdefault(table, set()).add(cols)
+    if unique.get("roadmap_lanes", set()) != {("id",), ("project_id", "id")}:
+        raise _roadmap_constraint("roadmap_lanes unique constraints are non-canonical")
+    if unique.get("roadmap_items", set()) != {("id",), ("project_id", "id")}:
+        raise _roadmap_constraint("roadmap_items unique constraints are non-canonical")
+
+    indexes = {
+        row[1]: tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
+        for row in conn.execute("PRAGMA index_list(roadmap_lanes)")
+    }
+    if indexes.get("idx_roadmap_lanes_project") != ("project_id", "sort_order", "id"):
+        raise _roadmap_constraint("roadmap_lanes project index is missing")
+    indexes = {
+        row[1]: tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
+        for row in conn.execute("PRAGMA index_list(roadmap_items)")
+    }
+    if indexes.get("idx_roadmap_items_project") != ("project_id", "lane_id", "sort_order", "id"):
+        raise _roadmap_constraint("roadmap_items project index is missing")
+
+    foreign_keys = {
+        (row[2], row[3], row[4], row[5], row[6], row[7])
+        for row in conn.execute("PRAGMA foreign_key_list(roadmap_items)")
+    }
+    expected_fk = {
+        ("roadmap_lanes", "project_id", "project_id", "RESTRICT", "RESTRICT", "NONE"),
+        ("roadmap_lanes", "lane_id", "id", "RESTRICT", "RESTRICT", "NONE"),
+    }
+    if foreign_keys != expected_fk:
+        raise _roadmap_constraint("roadmap_items foreign keys are non-canonical")
+
+
 def _migrate_v11_roadmap(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('roadmap_lanes','roadmap_items')")}
-    if version == 11 and tables != {"roadmap_lanes", "roadmap_items"}:
-        raise BoundaryError("constraint", "partial v11 roadmap migration is unsupported")
-    if version > 11:
+    _preflight_roadmap(conn, version=version)
+    if version >= 11:
         return
+    roadmap_objects = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('roadmap_lanes','roadmap_items')"
+        )
+    }
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS roadmap_lanes (
+        if roadmap_objects:
+            conn.execute("PRAGMA user_version = 11")
+            conn.commit()
+            return
+        conn.execute("""
+            CREATE TABLE roadmap_lanes (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, updated_at REAL NOT NULL,
                 UNIQUE(project_id, id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_roadmap_lanes_project ON roadmap_lanes(project_id, sort_order, id);
-            CREATE TABLE IF NOT EXISTS roadmap_items (
+            )
+        """)
+        conn.execute("CREATE INDEX idx_roadmap_lanes_project ON roadmap_lanes(project_id, sort_order, id)")
+        conn.execute("""
+            CREATE TABLE roadmap_items (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lane_id TEXT NOT NULL, title TEXT NOT NULL,
                 description TEXT, status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','todo','in_progress','blocked','done','cancelled')),
                 sort_order INTEGER NOT NULL DEFAULT 0, depends_on_json TEXT NOT NULL DEFAULT '[]',
                 links_json TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, updated_at REAL NOT NULL,
                 UNIQUE(project_id, id), FOREIGN KEY(project_id, lane_id) REFERENCES roadmap_lanes(project_id, id)
                     ON DELETE RESTRICT ON UPDATE RESTRICT
-            );
-            CREATE INDEX IF NOT EXISTS idx_roadmap_items_project ON roadmap_items(project_id, lane_id, sort_order, id);
+            )
         """)
+        conn.execute("CREATE INDEX idx_roadmap_items_project ON roadmap_items(project_id, lane_id, sort_order, id)")
         conn.execute("PRAGMA user_version = 11")
         conn.commit()
     except Exception:
@@ -558,7 +661,10 @@ def update_roadmap_lane(conn, *, project_id, lane_id, title=None, sort_order=Non
 def _roadmap_item_target_check(conn, project_id, values):
     for target in values:
         row = conn.execute("SELECT project_id FROM roadmap_items WHERE id = ?", (target,)).fetchone()
-        if row is not None and row[0] != project_id: raise BoundaryError("not_found", "resource not found")
+        if row is not None and row[0] != project_id:
+            raise BoundaryError("not_found", "resource not found")
+        if row is None and target.startswith("rmi_"):
+            raise BoundaryError("not_found", "resource not found")
 
 
 def create_roadmap_item(conn, *, project_id, lane_id, title, description=None, status="planned", sort_order=0, depends_on=None, links=None):
@@ -770,6 +876,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
         raise RuntimeError("SQLite foreign-key enforcement is required")
+    _preflight_roadmap(conn, version=conn.execute("PRAGMA user_version").fetchone()[0])
     if conn.execute("PRAGMA user_version").fetchone()[0] == 10:
         exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
