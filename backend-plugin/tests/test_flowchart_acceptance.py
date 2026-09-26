@@ -212,3 +212,57 @@ def test_cli_error_envelope_is_machine_readable_and_single_json_value(monkeypatc
         "ok": False,
         "error": {"code": "invalid_input", "message": "invalid flow steps"},
     }]
+
+
+@pytest.mark.parametrize("raw", ["[", "{not-json"])
+def test_flow_set_steps_malformed_input_uses_one_nested_error_envelope(monkeypatch, raw):
+    printed = []
+    monkeypatch.setattr(cli, "_print", printed.append)
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_flow_set_steps(SimpleNamespace(
+            flow_id="flow_x", project_id="p_1", steps=raw,
+        ))
+    assert exc.value.code == 2
+    assert len(printed) == 1
+    assert printed[0]["ok"] is False
+    assert set(printed[0]["error"]) == {"code", "message"}
+    assert printed[0]["error"]["code"] == "invalid_input"
+    assert isinstance(printed[0]["error"]["message"], str)
+
+
+def test_flow_set_steps_oversized_raw_input_envelopes_without_parsing(monkeypatch):
+    printed = []
+    monkeypatch.setattr(cli, "_print", printed.append)
+    monkeypatch.setattr(cli.json, "loads", lambda _raw: pytest.fail("oversized input was parsed"))
+    raw = "[" + (" " * (db.JSON_LIMIT + 1)) + "]"
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_flow_set_steps(SimpleNamespace(
+            flow_id="flow_x", project_id="p_1", steps=raw,
+        ))
+    assert exc.value.code == 2
+    assert len(printed) == 1
+    assert printed[0]["ok"] is False
+    assert set(printed[0]["error"]) == {"code", "message"}
+    assert printed[0]["error"]["code"] == "invalid_input"
+    assert isinstance(printed[0]["error"]["message"], str)
+
+
+def test_flow_migration_matches_contract_and_user_version_is_monotonic(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+        columns = {
+            row["name"]: (row["type"], row["notnull"], row["dflt_value"])
+            for row in conn.execute("PRAGMA table_info(flows)")
+        }
+        assert columns["steps_json"] == ("TEXT", 1, "'[]'")
+        assert columns["created_at"] == ("INTEGER", 1, None)
+        assert columns["updated_at"] == ("INTEGER", 1, None)
+
+        db.init_db(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
+        conn.execute("PRAGMA user_version = 12")
+        db.init_db(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    finally:
+        conn.close()

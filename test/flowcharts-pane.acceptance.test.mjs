@@ -31,4 +31,23 @@ assert.match(pane, /deriveFlowLayout|next[\s\S]*?layout/)
 assert.match(pane, /if \(await runFlowCommand\([\s\S]*?\)\) setNewName\(''\)/)
 assert.doesNotMatch(pane, /setNewName\(''\)[\s\S]*?runFlowCommand/)
 
+// Refresh failures retain authoritative rows, selected identity, and drafts.
+const refreshEffect = pane.match(/React\.useEffect\(\(\) => \{[\s\S]*?\}, \[projectId, revision\]\)/)?.[0]
+assert.ok(refreshEffect, 'flow refresh effect must exist')
+assert.doesNotMatch(refreshEffect, /setState\(\{\s*loading:\s*false,\s*flows:\s*\[\],/)
+assert.match(refreshEffect, /\.catch\([\s\S]*?setState\(\s*\(current\)\s*=>\s*\(\{\s*\.\.\.current,\s*loading:\s*false,\s*error:/)
+assert.match(pane, /\[selected\?\.id\]/)
+
+// Every mutation is serialized, and cleanup runs on success and failure.
+assert.match(pane, /mutationLoading|flowMutationLoading|flowBusy/)
+assert.match(pane, /if \([^)]*(?:mutationLoading|flowMutationLoading|flowBusy)[^)]*\) return false/)
+assert.match(pane, /finally\s*\{[\s\S]*?(?:mutationLoading|flowMutationLoading|flowBusy)[\s\S]*?false/)
+assert.match(pane, /disabled:[^,}]*?(?:mutationLoading|flowMutationLoading|flowBusy)/)
+
+// Structured backend errors render their message, not JavaScript object text.
+const flowResponse = source.match(/function parseFlowResponse\(res\)[\s\S]*?(?=\nfunction |\nconst |\nexport )/)?.[0]
+assert.ok(flowResponse, 'parseFlowResponse must exist')
+assert.match(flowResponse, /payload\?\.error\?\.message|payload\?\.error\s*&&\s*typeof payload\?\.error === ['"]object['"]|error\.message/)
+assert.doesNotMatch(flowResponse, /throw new Error\(payload\?\.error \|\| ['"]flow request failed['"]\)/)
+
 console.log('flowcharts UI mutation acceptance test passed')
