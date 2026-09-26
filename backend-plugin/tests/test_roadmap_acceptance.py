@@ -174,19 +174,25 @@ def test_roadmap_payloads_are_canonical_json_arrays(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     try:
         lane = _lane(conn)
+        dependency = db.create_roadmap_item(
+            conn,
+            project_id="p_1",
+            lane_id=lane["id"],
+            title="Dependency target",
+        )
         item = db.create_roadmap_item(
             conn,
             project_id="p_1",
             lane_id=lane["id"],
             title="Canonical payload",
-            depends_on=["item_a"],
+            depends_on=[dependency["id"]],
             links=["spec:abc"],
         )
         row = conn.execute(
             "SELECT depends_on_json, links_json FROM roadmap_items WHERE id = ?",
             (item["id"],),
         ).fetchone()
-        assert json.loads(row["depends_on_json"]) == ["item_a"]
+        assert json.loads(row["depends_on_json"]) == [dependency["id"]]
         assert json.loads(row["links_json"]) == ["spec:abc"]
     finally:
         conn.close()
