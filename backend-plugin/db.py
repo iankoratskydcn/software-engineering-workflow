@@ -943,8 +943,23 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
                 if existing["decision_id"] is not None:
                     raise BoundaryError("constraint", f"decision mismatch for {row['id']!r}")
 
+        planning_rows = None
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='planning_items'"
+        ).fetchone() is not None:
+            # Rebuild child table after spec_nodes so ALTER TABLE does not
+            # retarget its foreign key to spec_nodes_v11.
+            _preflight_planning(conn)
+            planning_rows = conn.execute(
+                "SELECT id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at "
+                "FROM planning_items"
+            ).fetchall()
+
         try:
             conn.execute("BEGIN IMMEDIATE")
+            if planning_rows is not None:
+                conn.execute("DROP INDEX IF EXISTS idx_planning_items_project")
+                conn.execute("DROP TABLE planning_items")
             conn.execute("ALTER TABLE spec_nodes RENAME TO spec_nodes_v11")
             conn.execute("""CREATE TABLE spec_nodes (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
@@ -993,6 +1008,35 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)")
+            if planning_rows is not None:
+                conn.execute(
+                    """
+                    CREATE TABLE planning_items (
+                        id TEXT PRIMARY KEY,
+                        project_id TEXT NOT NULL,
+                        spec_node_id TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+                        estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+                        sprint INTEGER NOT NULL,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        UNIQUE(project_id, id),
+                        FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                            ON DELETE RESTRICT ON UPDATE CASCADE
+                    ) STRICT
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO planning_items "
+                    "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    planning_rows,
+                )
+                conn.execute(
+                    "CREATE INDEX idx_planning_items_project "
+                    "ON planning_items(project_id, sprint, status, created_at, id)"
+                )
             conn.execute("PRAGMA user_version = 12")
             conn.commit()
         except Exception:
