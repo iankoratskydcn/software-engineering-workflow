@@ -539,6 +539,24 @@ def _preflight_roadmap(conn: sqlite3.Connection, *, version: int) -> None:
     if unique.get("roadmap_items", set()) != {("id",), ("project_id", "id")}:
         raise _roadmap_constraint("roadmap_items unique constraints are non-canonical")
 
+    table_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'roadmap_items'"
+    ).fetchone()[0]
+    normalized_sql = "".join((table_sql or "").lower().split())
+    required_status_check = (
+        "check(statusin('planned','todo','in_progress','blocked','done','cancelled'))"
+    )
+    if required_status_check not in normalized_sql:
+        raise _roadmap_constraint("roadmap_items status constraint is non-canonical")
+
+    for row in conn.execute("SELECT depends_on_json, links_json FROM roadmap_items"):
+        for column, field in (
+            (row["depends_on_json"], "depends_on"),
+            (row["links_json"], "links"),
+        ):
+            decoded = validate_json_text(column, field=f"roadmap {field}")
+            _roadmap_lists(decoded, field)
+
     indexes = {
         row[1]: tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
         for row in conn.execute("PRAGMA index_list(roadmap_lanes)")
@@ -663,7 +681,7 @@ def _roadmap_item_target_check(conn, project_id, values):
         row = conn.execute("SELECT project_id FROM roadmap_items WHERE id = ?", (target,)).fetchone()
         if row is not None and row[0] != project_id:
             raise BoundaryError("not_found", "resource not found")
-        if row is None and target.startswith("rmi_"):
+        if row is None:
             raise BoundaryError("not_found", "resource not found")
 
 
