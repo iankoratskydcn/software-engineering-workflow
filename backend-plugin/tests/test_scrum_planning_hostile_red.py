@@ -114,6 +114,85 @@ def test_raw_planning_item_composite_foreign_key_rejects_cross_project_spec_node
     assert p1_root["project_id"] != p2_root["project_id"]
 
 
+def test_v13_rejects_extra_planning_constraint_without_mutation():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(
+        """
+        PRAGMA user_version = 12;
+        CREATE TABLE decisions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            choices_json TEXT NOT NULL,
+            recommended TEXT,
+            urgency TEXT NOT NULL DEFAULT 'normal',
+            created_at REAL NOT NULL,
+            resolved_choice TEXT,
+            resolved_at REAL,
+            UNIQUE(project_id, id)
+        );
+        CREATE TABLE spec_nodes (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),
+            parent_id TEXT,
+            level INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            note TEXT,
+            description TEXT,
+            rationale TEXT,
+            criteria_json TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            decision_id TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id, parent_id) REFERENCES spec_nodes(project_id, id),
+            FOREIGN KEY(project_id, decision_id) REFERENCES decisions(project_id, id)
+        );
+        CREATE TABLE planning_items (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            spec_node_id TEXT NOT NULL,
+            title TEXT NOT NULL CHECK(title <> ''),
+            status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+            estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+            sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+        ) STRICT;
+        CREATE INDEX idx_planning_items_project
+            ON planning_items(project_id, sprint, status, created_at, id);
+        INSERT INTO spec_nodes
+            (id, project_id, kind, title, metadata_json, created_at, updated_at)
+        VALUES ('sn_1', 'p_1', 'theme', 'Product', '{}', 0, 0);
+        INSERT INTO planning_items
+            (id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at)
+        VALUES ('pi_1', 'p_1', 'sn_1', 'Ship it', 'backlog', 5, 1, 0, 0);
+        """
+    )
+    conn.commit()
+    before = (
+        "\n".join(conn.iterdump()),
+        conn.execute("PRAGMA user_version").fetchone()[0],
+    )
+
+    with pytest.raises((ValueError, db.BoundaryError, sqlite3.IntegrityError)):
+        db.init_db(conn)
+
+    after = (
+        "\n".join(conn.iterdump()),
+        conn.execute("PRAGMA user_version").fetchone()[0],
+    )
+    assert after == before
+
+
 def test_v13_migration_is_atomic_when_preexisting_planning_schema_is_hostile(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     conn.execute("DROP TABLE planning_items")
