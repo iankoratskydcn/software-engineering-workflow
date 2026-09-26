@@ -144,14 +144,14 @@ def test_all_risk_tradeoff_text_fields_reject_non_strings_before_mutation(
 
 
 @pytest.mark.parametrize("operation, kwargs", [
-    ("risk", {"title": "x" * 501}),
-    ("risk", {"description": "x" * 501}),
-    ("risk", {"breaks_when": "x" * 501}),
-    ("tradeoff", {"title": "x" * 501}),
-    ("tradeoff", {"choice": "x" * 501}),
-    ("tradeoff", {"alt_label": "x" * 501}),
-    ("tradeoff", {"cost": "x" * 501}),
-    ("tradeoff", {"gain": "x" * 501}),
+    ("risk", {"title": "x" * 4097}),
+    ("risk", {"description": "x" * 4097}),
+    ("risk", {"breaks_when": "x" * 4097}),
+    ("tradeoff", {"title": "x" * 4097}),
+    ("tradeoff", {"choice": "x" * 4097}),
+    ("tradeoff", {"alt_label": "x" * 4097}),
+    ("tradeoff", {"cost": "x" * 4097}),
+    ("tradeoff", {"gain": "x" * 4097}),
 ])
 def test_all_risk_tradeoff_text_fields_are_bounded_and_failed_add_preserves_rows(
     monkeypatch, tmp_path, operation, kwargs

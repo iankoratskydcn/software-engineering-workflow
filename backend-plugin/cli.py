@@ -73,6 +73,8 @@ def boundary_error(error: BaseException) -> tuple[dict, int]:
     detail = None
     if isinstance(error, db.BoundaryError):
         code = error.code if error.code in {"invalid_input", "not_found", "conflict", "busy", "constraint", "internal_error"} else "internal_error"
+        if code == "invalid_input":
+            detail = str(error)[:256]
     elif isinstance(error, sqlite3.OperationalError) and "locked" in str(error).lower():
         code = "busy"
     elif isinstance(error, sqlite3.IntegrityError):
@@ -288,6 +290,46 @@ def setup(p) -> None:
     v.add_argument("node_id")
     v.set_defaults(func=_cmd_node_archive)
 
+    risk = verbs.add_parser("risk", help="Manage project risks")
+    risk_verbs = risk.add_subparsers(dest="risk_verb", required=True)
+    v = risk_verbs.add_parser("add")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--title", required=True)
+    v.add_argument("--description", default=None)
+    v.add_argument("--breaks-when", default=None, dest="breaks_when")
+    v.add_argument("--status", default="open")
+    v.add_argument("--decision-id", default=None, dest="decision_id")
+    v.set_defaults(func=_cmd_risk_add)
+    v = risk_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_risk_list)
+    v = risk_verbs.add_parser("update-status")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("risk_id")
+    v.add_argument("--status", required=True)
+    v.set_defaults(func=_cmd_risk_update_status)
+
+    tradeoff = verbs.add_parser("tradeoff", help="Manage project tradeoffs")
+    tradeoff_verbs = tradeoff.add_subparsers(dest="tradeoff_verb", required=True)
+    v = tradeoff_verbs.add_parser("add")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--kind", required=True, choices=["scale", "duel", "anchor"])
+    v.add_argument("--title", required=True)
+    v.add_argument("--choice", required=True)
+    v.add_argument("--alt-label", default=None, dest="alt_label")
+    v.add_argument("--cost", default=None)
+    v.add_argument("--gain", default=None)
+    v.add_argument("--decision-id", default=None, dest="decision_id")
+    v.set_defaults(func=_cmd_tradeoff_add)
+    v = tradeoff_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_tradeoff_list)
+    v = tradeoff_verbs.add_parser("set-prioritized-side")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("tradeoff_id")
+    v.add_argument("--side", choices=["a", "b"], required=True)
+    v.set_defaults(func=_cmd_tradeoff_set_side)
+
     p.set_defaults(func=lambda args: p.print_help())
 
 
@@ -302,6 +344,44 @@ def _run_node_command(operation, output_key: str, **kwargs) -> None:
         sys.exit(exit_code)
     finally:
         conn.close()
+
+
+def _cmd_risk_add(args) -> None:
+    _run_node_command(
+        db.add_risk, "risk", project_id=args.project_id, title=args.title,
+        description=args.description, breaks_when=args.breaks_when,
+        status=args.status, decision_id=args.decision_id,
+    )
+
+
+def _cmd_risk_list(args) -> None:
+    _run_node_command(db.list_risks, "risks", project_id=args.project_id)
+
+
+def _cmd_risk_update_status(args) -> None:
+    _run_node_command(
+        db.update_risk_status, "risk", project_id=args.project_id,
+        risk_id=args.risk_id, status=args.status,
+    )
+
+
+def _cmd_tradeoff_add(args) -> None:
+    _run_node_command(
+        db.add_tradeoff, "tradeoff", project_id=args.project_id, kind=args.kind,
+        title=args.title, choice=args.choice, alt_label=args.alt_label,
+        cost=args.cost, gain=args.gain, decision_id=args.decision_id,
+    )
+
+
+def _cmd_tradeoff_list(args) -> None:
+    _run_node_command(db.list_tradeoffs, "tradeoffs", project_id=args.project_id)
+
+
+def _cmd_tradeoff_set_side(args) -> None:
+    _run_node_command(
+        db.set_prioritized_side, "tradeoff", project_id=args.project_id,
+        tradeoff_id=args.tradeoff_id, side=args.side,
+    )
 
 
 def _cmd_node_create(args) -> None:

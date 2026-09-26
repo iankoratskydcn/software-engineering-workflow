@@ -351,10 +351,58 @@ def _migrate_v7_hierarchy(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+_RISK_TRADEOFF_KINDS = ("scale", "duel", "anchor")
+_RISK_STATUSES = ("open", "mitigated", "accepted", "closed")
+
+
+def _preflight_risk_tradeoff_legacy(conn: sqlite3.Connection) -> None:
+    """Refuse incompatible legacy rows before any migration write."""
+    table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tradeoffs'").fetchone()
+    if table is None:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")}
+    required = {"id", "project_id", "kind", "title", "choice", "created_at", "updated_at"}
+    if not required.issubset(columns):
+        raise BoundaryError("constraint", "tradeoff migration requires canonical columns")
+    invalid = conn.execute("SELECT id FROM tradeoffs WHERE kind IS NULL OR kind NOT IN ('scale','duel','anchor') LIMIT 1").fetchone()
+    if invalid is not None:
+        raise BoundaryError("constraint", "tradeoff migration refused invalid legacy kind")
+
+
+def _migrate_v8_stage2_risk_tradeoffs(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_id_unique ON decisions(project_id, id)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS risks (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+            title TEXT NOT NULL, description TEXT, breaks_when TEXT,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','mitigated','accepted','closed')),
+            created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_risks_project ON risks(project_id, created_at, id);
+        CREATE TABLE IF NOT EXISTS tradeoffs (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+            kind TEXT NOT NULL CHECK(kind IN ('scale','duel','anchor')),
+            title TEXT NOT NULL, choice TEXT NOT NULL, alt_label TEXT, cost TEXT, gain TEXT,
+            prioritized_side TEXT CHECK(prioritized_side IS NULL OR prioritized_side IN ('a','b')),
+            created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tradeoffs_project ON tradeoffs(project_id, created_at, id);
+        """
+    )
+    if conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+        conn.execute("PRAGMA user_version = 8")
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
         raise RuntimeError("SQLite foreign-key enforcement is required")
+    _preflight_risk_tradeoff_legacy(conn)
     _migrate_v6_project_id(conn)  # must run BEFORE CREATE TABLE IF NOT EXISTS below:
     _migrate_v7_hierarchy(conn)
     # a pre-v6 db already has a `decisions` table (old `project` schema), so
@@ -428,6 +476,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_project_id_unique ON spec_nodes(project_id, id)")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS hud_settings (
@@ -436,6 +485,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _migrate_v8_stage2_risk_tradeoffs(conn)
     conn.commit()
 
 
@@ -1683,3 +1733,97 @@ def link_node_to_kanban(conn: sqlite3.Connection, node_id: str, kanban_task_id: 
     )
     conn.commit()
     return _hierarchy_row(conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def _risk_project(project_id: str) -> dict[str, str]:
+    return _resolve_project(project_id)
+
+
+def _optional_risk_text(value: Any, field: str) -> Optional[str]:
+    if value is None:
+        return None
+    return validate_text(value, field=field, max_chars=TEXT_LIMIT)
+
+
+def _risk_decision_project(conn: sqlite3.Connection, project_id: str,
+                           decision_id: Optional[str]) -> str:
+    project = _risk_project(project_id)["id"]
+    if decision_id is not None:
+        decision = conn.execute("SELECT project_id FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+        if decision is None or decision["project_id"] != project:
+            raise BoundaryError("not_found", "resource not found")
+    return project
+
+
+def add_risk(conn: sqlite3.Connection, *, project_id: str, title: Any,
+             description: Any = None, breaks_when: Any = None,
+             status: str = "open", decision_id: Optional[str] = None) -> dict[str, Any]:
+    project = _risk_decision_project(conn, project_id, decision_id)
+    title = validate_text(title, field="title")
+    description = _optional_risk_text(description, "description")
+    breaks_when = _optional_risk_text(breaks_when, "breaks_when")
+    if not isinstance(status, str) or status not in _RISK_STATUSES:
+        raise BoundaryError("invalid_input", "invalid risk status")
+    risk_id = "risk_" + secrets.token_hex(4)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO risks (id, project_id, decision_id, title, description, breaks_when, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (risk_id, project, decision_id, title, description, breaks_when, status, now, now),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM risks WHERE id = ?", (risk_id,)).fetchone())
+
+
+def list_risks(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _risk_project(project_id)["id"]
+    return [dict(row) for row in conn.execute("SELECT * FROM risks WHERE project_id = ? ORDER BY created_at, id", (project,)).fetchall()]
+
+
+def update_risk_status(conn: sqlite3.Connection, *, project_id: str, risk_id: str, status: str) -> dict[str, Any]:
+    project = _risk_project(project_id)["id"]
+    if not isinstance(status, str) or status not in _RISK_STATUSES:
+        raise BoundaryError("invalid_input", "invalid risk status")
+    row = conn.execute("SELECT * FROM risks WHERE id = ? AND project_id = ?", (risk_id, project)).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    conn.execute("UPDATE risks SET status = ?, updated_at = ? WHERE id = ? AND project_id = ?", (status, time.time(), risk_id, project))
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM risks WHERE id = ?", (risk_id,)).fetchone())
+
+
+def add_tradeoff(conn: sqlite3.Connection, *, project_id: str, kind: str, title: Any, choice: Any,
+                  alt_label: Any = None, cost: Any = None, gain: Any = None,
+                  decision_id: Optional[str] = None) -> dict[str, Any]:
+    project = _risk_decision_project(conn, project_id, decision_id)
+    if not isinstance(kind, str) or kind not in _RISK_TRADEOFF_KINDS:
+        raise BoundaryError("invalid_input", "invalid tradeoff kind")
+    title = validate_text(title, field="title")
+    choice = validate_text(choice, field="choice")
+    alt_label = _optional_risk_text(alt_label, "alt_label")
+    cost = _optional_risk_text(cost, "cost")
+    gain = _optional_risk_text(gain, "gain")
+    tradeoff_id = "tradeoff_" + secrets.token_hex(4)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO tradeoffs (id, project_id, decision_id, kind, title, choice, alt_label, cost, gain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (tradeoff_id, project, decision_id, kind, title, choice, alt_label, cost, gain, now, now),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM tradeoffs WHERE id = ?", (tradeoff_id,)).fetchone())
+
+
+def list_tradeoffs(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _risk_project(project_id)["id"]
+    return [dict(row) for row in conn.execute("SELECT * FROM tradeoffs WHERE project_id = ? ORDER BY created_at, id", (project,)).fetchall()]
+
+
+def set_prioritized_side(conn: sqlite3.Connection, *, project_id: str, tradeoff_id: str, side: Optional[str]) -> dict[str, Any]:
+    project = _risk_project(project_id)["id"]
+    if side is not None and side not in ("a", "b"):
+        raise BoundaryError("invalid_input", "invalid prioritized side")
+    row = conn.execute("SELECT * FROM tradeoffs WHERE id = ? AND project_id = ?", (tradeoff_id, project)).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    conn.execute("UPDATE tradeoffs SET prioritized_side = ?, updated_at = ? WHERE id = ? AND project_id = ?", (side, time.time(), tradeoff_id, project))
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM tradeoffs WHERE id = ?", (tradeoff_id,)).fetchone())
