@@ -1,0 +1,25 @@
+{
+  "surface": "mindmap",
+  "source_sha": "adf525c",
+  "implementation_sha": "1024074e2095e823ca6262666ac6e8cf5c26c7bc",
+  "canonical_parent_sha": "49b69a424886dab9c6970f76e4136120684efc07",
+  "worktree_path": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "reviewed_sha": "1024074e2095e823ca6262666ac6e8cf5c26c7bc",
+  "reviewer_verdict": "PASS_WITH_VERIFICATION_LIMIT",
+  "reviewer_findings": [
+    "No MindMap v12 code defects found in focused and raw hostile probes.",
+    "Independent full-suite environment could not import agent_telemetry; canonical local run passed 157 backend tests and 48 frontend tests."
+  ],
+  "focused_tests": "25 hostile MindMap tests passed; independent focused hierarchy/MindMap suite 32 passed",
+  "local_full_tests": "157 backend passed, 1 skipped; 48 frontend passed",
+  "review_commands": [
+    "pytest -q backend-plugin/tests/test_mindmap_hostile_red.py backend-plugin/tests/test_hierarchy.py backend-plugin/tests/test_hierarchy_cli.py",
+    "pytest -q backend-plugin/tests",
+    "npm test",
+    "python3 -m compileall -q backend-plugin",
+    "node --check plugin.js",
+    "git diff --check HEAD^..HEAD",
+    "raw SQLite v11-to-v12 migration normalization and cross-project parent probes"
+  ],
+  "status": "accepted_with_environment_limitation"
+}
