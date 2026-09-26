@@ -1018,7 +1018,7 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
                         title TEXT NOT NULL,
                         status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
                         estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
-                        sprint INTEGER NOT NULL,
+                        sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),
                         created_at REAL NOT NULL,
                         updated_at REAL NOT NULL,
                         UNIQUE(project_id, id),
@@ -1052,7 +1052,7 @@ def _planning_constraint(message: str) -> BoundaryError:
     return BoundaryError("constraint", message)
 
 
-def _preflight_planning(conn: sqlite3.Connection) -> None:
+def _preflight_planning(conn: sqlite3.Connection, *, require_sprint_check: bool = False) -> None:
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
     ).fetchone()
@@ -1080,6 +1080,8 @@ def _preflight_planning(conn: sqlite3.Connection) -> None:
         "check(statusin('backlog','ready','in_progress','done','cancelled'))",
         "check(estimatein(1,2,3,5,8,13))",
     )
+    if require_sprint_check:
+        required_checks += ("check(sprintbetween1and100000)",)
     if any(fragment not in table_sql for fragment in required_checks):
         raise _planning_constraint("planning_items constraints are non-canonical")
     foreign_keys = {
@@ -1095,7 +1097,7 @@ def _preflight_planning(conn: sqlite3.Connection) -> None:
             raise _planning_constraint("planning_items contains an invalid status")
         if type(item["estimate"]) is not int or item["estimate"] not in _PLANNING_ESTIMATES:
             raise _planning_constraint("planning_items contains an invalid estimate")
-        if type(item["sprint"]) is not int or item["sprint"] < 1:
+        if type(item["sprint"]) is not int or not 1 <= item["sprint"] <= 100000:
             raise _planning_constraint("planning_items contains an invalid sprint")
         node = conn.execute(
             "SELECT 1 FROM spec_nodes WHERE project_id = ? AND id = ?",
@@ -1106,7 +1108,7 @@ def _preflight_planning(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
-    """Create the strict, project-scoped Scrum Planning table."""
+    """Create or repair the strict, project-scoped Scrum Planning table."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     _preflight_planning(conn)
     exists = conn.execute(
@@ -1114,11 +1116,28 @@ def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
     ).fetchone()
     if version >= 13 and exists is None:
         raise _planning_constraint("partial v13 Scrum Planning migration is unsupported")
-    if version >= 13:
+    table_sql = ""
+    if exists is not None:
+        table_sql = "".join(
+            (conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
+            ).fetchone()[0] or "").lower().split()
+        )
+    needs_rebuild = exists is not None and "check(sprintbetween1and100000)" not in table_sql
+    if version >= 13 and not needs_rebuild:
+        _preflight_planning(conn, require_sprint_check=True)
         return
+    planning_rows = None
     try:
         conn.execute("BEGIN IMMEDIATE")
-        if exists is None:
+        if needs_rebuild:
+            planning_rows = conn.execute(
+                "SELECT id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at "
+                "FROM planning_items"
+            ).fetchall()
+            conn.execute("DROP INDEX IF EXISTS idx_planning_items_project")
+            conn.execute("DROP TABLE planning_items")
+        if exists is None or needs_rebuild:
             conn.execute(
                 """
                 CREATE TABLE planning_items (
@@ -1128,7 +1147,7 @@ def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
                     title TEXT NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
                     estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
-                    sprint INTEGER NOT NULL,
+                    sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     UNIQUE(project_id, id),
@@ -1137,6 +1156,13 @@ def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
                 ) STRICT
                 """
             )
+            if planning_rows is not None:
+                conn.executemany(
+                    "INSERT INTO planning_items "
+                    "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    planning_rows,
+                )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_planning_items_project "
             "ON planning_items(project_id, sprint, status, created_at, id)"
