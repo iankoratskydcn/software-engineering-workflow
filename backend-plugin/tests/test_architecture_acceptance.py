@@ -138,13 +138,13 @@ def test_architecture_cli_requires_project_scope_and_emits_one_stable_error_enve
     parser = argparse.ArgumentParser()
     cli.setup(parser)
     with pytest.raises(SystemExit):
-        parser.parse_args(["architecture", "list"])
+        parser.parse_args(["arch", "list-diagrams"])
 
     printed = []
     monkeypatch.setattr(cli, "_print", printed.append)
     monkeypatch.setattr(cli.db, "connect", lambda: (_ for _ in ()).throw(ValueError("invalid architecture")))
     with pytest.raises(SystemExit) as exc:
-        cli._cmd_architecture_list(SimpleNamespace(project_id="p_1"))
+        cli._cmd_arch_list_diagrams(SimpleNamespace(project_id="p_1"))
     assert exc.value.code == 2
     assert printed == [{
         "ok": False,
