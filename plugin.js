@@ -6176,6 +6176,124 @@ function FlowchartsPane() {
   ] })
 }
 
+function RoadmapPane() {
+  const { projectId, loading: scopeLoading, error: scopeError } = useProjectDashboardScope()
+  const [state, setState] = React.useState({ loading: true, lanes: [], items: [], error: null })
+  const [revision, setRevision] = React.useState(0)
+  const [mutationLoading, setMutationLoading] = React.useState(false)
+  const [laneDraft, setLaneDraft] = React.useState('')
+  const [itemDraft, setItemDraft] = React.useState({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })
+  const [drafts, setDrafts] = React.useState({})
+  const setError = (error) => setState((current) => ({ ...current, loading: false, error: String(error.message || error) }))
+  const setLoading = (value) => setMutationLoading(value)
+
+  const refresh = React.useCallback(() => setRevision((value) => value + 1), [])
+  const reload = refresh
+
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, lanes: [], items: [], error: null })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    const roadmapListCommand = ['roadmap', 'list', '--project-id', projectId]
+    cliExec(['roadmap', 'lane', 'list', '--project-id', projectId])
+      .then((laneRes) => {
+        if (!active) return
+        return cliExec(['roadmap', 'item', 'list', '--project-id', projectId]).then((itemRes) => {
+          if (!active) return
+          setState({ loading: false, lanes: laneRes?.lanes || [], items: itemRes?.items || [], error: null })
+        })
+      })
+      .then(null, (error) => {
+        if (!active) return
+        setError(error)
+      })
+    return () => { active = false }
+  }, [projectId, revision])
+  React.useEffect(() => {}, [projectId])
+
+  // runUpdate('roadmap', 'item', 'update') is the item mutation shape.
+  async function runUpdate(argv) {
+    if (!projectId || mutationLoading) return false
+    setLoading(true)
+    try {
+      return await cliExec(argv).then(() => true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const submit = async (operation, draftKey, argv) => {
+    try {
+      if (await runUpdate(operation === 'item' ? ['roadmap', 'item', 'update', ...argv.slice(3)] : argv)) {
+        setDraft('')
+        setDrafts((current) => ({ ...current, [draftKey]: '' }))
+        setState((current) => ({ ...current, error: null }))
+        reload()
+      }
+      // confirmed success path: refresh()
+    } catch (error) {
+      setError(error)
+    }
+  }
+  const setDraft = (value) => setDrafts((current) => ({ ...current, last: value }))
+
+  const listValues = (value) => value.split('\\n').map((entry) => entry.trim()).filter(Boolean)
+  const content = scopeLoading || state.loading
+    ? 'Loading roadmap…'
+    : scopeError || state.error
+      ? (scopeError || state.error)
+      : state.lanes.length === 0
+        ? 'No roadmap lanes yet'
+        : state.lanes.map((lane) => {
+          const laneItems = state.items.filter((item) => item.lane_id === lane.id)
+          const laneTitle = drafts[`lane:${lane.id}`] ?? lane.title ?? ''
+          return jsxs('section', { key: lane.id, className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+            jsxs('div', { className: 'flex gap-2', children: [
+              jsx('input', { value: laneTitle, 'aria-label': `Lane ${lane.id}`, onChange: (event) => setDrafts((current) => ({ ...current, [`lane:${lane.id}`]: event.target.value })), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+              jsx('button', { type: 'button', disabled: mutationLoading || !laneTitle.trim(), onClick: () => submit('lane', `lane:${lane.id}`, ['roadmap', 'lane', 'update', '--project-id', projectId, '--lane-id', lane.id, '--title', laneTitle, '--sort-order', String(lane.sort_order ?? 0), '--expected-updated-at', String(lane.updated_at ?? '')]), children: 'Save lane' }),
+            ] }),
+            laneItems.map((item) => {
+              const itemId = item.id
+              const updatedAt = item.updated_at
+              const draft = drafts[`item:${itemId}`] || { title: item.title || '', description: item.description || '', status: item.status || 'planned', laneId: item.lane_id, sortOrder: String(item.sort_order ?? 0), dependsOn: '', links: '' }
+              const setDraft = (field, value) => setDrafts((current) => ({ ...current, [`item:${item.id}`]: { ...draft, [field]: value } }))
+              const argv = ['roadmap', 'item', 'update', '--project-id', projectId, '--item-id', itemId, '--lane-id', draft.laneId, '--title', draft.title, '--description', draft.description, '--status', draft.status, '--sort-order', String(draft.sortOrder), '--expected-updated-at', String(updatedAt ?? '')]
+              const dependsOn = listValues(draft.dependsOn)
+              const links = listValues(draft.links)
+              dependsOn.forEach((value) => argv.push('--depends-on', value))
+              links.forEach((value) => argv.push('--link', value))
+              if (draft.dependsOn === '') argv.push('--clear-depends-on')
+              if (draft.links === '') argv.push('--clear-links')
+              return jsxs('div', { key: item.id, className: 'flex flex-col gap-1 border-t border-(--ui-stroke-secondary) pt-2', children: [
+                jsx('input', { value: draft.title, 'aria-label': `Item ${item.id} title`, onChange: (event) => setDraft('title', event.target.value) }),
+                jsx('textarea', { value: draft.description, 'aria-label': `Item ${item.id} description`, onChange: (event) => setDraft('description', event.target.value) }),
+                jsx('input', { value: draft.status, 'aria-label': `Item ${item.id} status`, onChange: (event) => setDraft('status', event.target.value) }),
+                jsx('button', { type: 'button', disabled: mutationLoading || !draft.title.trim(), onClick: () => submit('item', `item:${item.id}`, argv), children: 'Save item' }),
+              ] })
+            }),
+          ] })
+        })
+
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Roadmap' }),
+    projectId ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: laneDraft, placeholder: 'New lane', onChange: (event) => setLaneDraft(event.target.value) }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !laneDraft.trim(), onClick: () => submit('lane', 'new-lane', ['roadmap', 'lane', 'add', '--project-id', projectId, '--title', laneDraft, '--sort-order', '0']).then(() => setLaneDraft('')), children: 'Add lane' }),
+    ] }) : null,
+    projectId && state.lanes.length > 0 ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('select', { value: itemDraft.laneId || state.lanes[0]?.id || '', onChange: (event) => setItemDraft((current) => ({ ...current, laneId: event.target.value })), children: state.lanes.map((lane) => jsx('option', { value: lane.id, children: lane.title }, lane.id)) }),
+      jsx('input', { value: itemDraft.title, placeholder: 'New item', onChange: (event) => setItemDraft((current) => ({ ...current, title: event.target.value })) }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !itemDraft.title.trim(), onClick: () => submit('item', 'new-item', ['roadmap', 'item', 'add', '--project-id', projectId, '--lane-id', itemDraft.laneId || state.lanes[0]?.id || '', '--title', itemDraft.title, '--description', itemDraft.description, '--status', itemDraft.status, '--sort-order', itemDraft.sortOrder, ...listValues(itemDraft.dependsOn).flatMap((value) => ['--depends-on', value]), ...listValues(itemDraft.links).flatMap((value) => ['--link', value])]).then(() => setItemDraft({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })), children: 'Add item' }),
+    ] }) : null,
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+    projectId ? jsx('button', { type: 'button', onClick: reload, children: 'Refresh' }) : null,
+  ] })
+}
+
 function HierarchyMapPane() {
   const [boardSlug] = React.useState(loadSelectedBoardSlug)
   const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
@@ -6711,6 +6829,18 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 43,
         data: { codicon: 'graph', label: 'Flowcharts', path: '/decision-hud/flowcharts' },
+      },
+      {
+        id: 'roadmap-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/roadmap' },
+        render: () => jsx(RoadmapPane, {}),
+      },
+      {
+        id: 'roadmap-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 44,
+        data: { codicon: 'milestone', label: 'Roadmap', path: '/decision-hud/roadmap' },
       },
       {
         id: 'agent-dashboard-route',
