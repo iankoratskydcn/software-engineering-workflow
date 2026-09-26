@@ -35,6 +35,27 @@ def _conn(tmp_path: Path, monkeypatch) -> sqlite3.Connection:
     return conn
 
 
+def _seed_v12_legacy_hierarchy(conn: sqlite3.Connection) -> str:
+    """Seed migrated legacy rows directly; v12 hierarchy authority is read-only."""
+    conn.execute(
+        "INSERT INTO hierarchy_nodes "
+        "(id, project_id, parent_id, level, title, created_at, updated_at) "
+        "VALUES ('legacy-root', 'p_1', NULL, 0, 'Root', 0, 0)"
+    )
+    parent = "legacy-root"
+    for level in range(1, 5):
+        node_id = f"legacy-{level}"
+        conn.execute(
+            "INSERT INTO hierarchy_nodes "
+            "(id, project_id, parent_id, level, title, created_at, updated_at) "
+            "VALUES (?, 'p_1', ?, ?, ?, 0, 0)",
+            (node_id, parent, level, f"Level {level}"),
+        )
+        parent = node_id
+    conn.commit()
+    return parent
+
+
 def test_one_root_per_project_rejects_duplicate_without_mutation(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     root = db.create_spec_node(conn, project_id="p_1", kind="theme", title="Root")
@@ -175,13 +196,7 @@ def test_cli_exposes_spec_tree_and_add_node_surface():
 )
 def test_post_v12_legacy_hierarchy_writes_are_rejected(tmp_path, monkeypatch, operation):
     conn = _conn(tmp_path, monkeypatch)
-    root = db.create_node(conn, project_id="p_1", parent_id=None, level=0, title="Root")
-    parent = root
-    for level in range(1, 5):
-        parent = db.create_node(
-            conn, project_id="p_1", parent_id=parent["id"], level=level, title=f"Level {level}"
-        )
-    story = parent
+    story = {"id": _seed_v12_legacy_hierarchy(conn)}
     before = conn.execute("SELECT * FROM hierarchy_nodes ORDER BY id").fetchall()
 
     with pytest.raises((ValueError, db.BoundaryError, sqlite3.IntegrityError)):
