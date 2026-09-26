@@ -334,8 +334,9 @@ def setup(p) -> None:
 
 
 def _run_node_command(operation, output_key: str, **kwargs) -> None:
-    conn = db.connect()
+    conn = None
     try:
+        conn = db.connect()
         result = operation(conn, **kwargs)
         _print({"ok": True, output_key: result})
     except Exception as exc:
@@ -343,7 +344,8 @@ def _run_node_command(operation, output_key: str, **kwargs) -> None:
         _print(envelope)
         sys.exit(exit_code)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def _cmd_risk_add(args) -> None:

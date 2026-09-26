@@ -364,9 +364,15 @@ def _preflight_risk_tradeoff_legacy(conn: sqlite3.Connection) -> None:
     required = {"id", "project_id", "kind", "title", "choice", "created_at", "updated_at"}
     if not required.issubset(columns):
         raise BoundaryError("constraint", "tradeoff migration requires canonical columns")
-    invalid = conn.execute("SELECT id FROM tradeoffs WHERE kind IS NULL OR kind NOT IN ('scale','duel','anchor') LIMIT 1").fetchone()
-    if invalid is not None:
-        raise BoundaryError("constraint", "tradeoff migration refused invalid legacy kind")
+    for name, required_sql in (
+        ("risks", ("check(statusin('open','mitigated','accepted','closed'))", "foreignkey(project_id,decision_id)")),
+        ("tradeoffs", ("check(kindin('scale','duel','anchor'))", "foreignkey(project_id,decision_id)", "prioritized_side")),
+    ):
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        if row is not None:
+            sql = "".join((row[0] or "").lower().split())
+            if any(fragment not in sql for fragment in required_sql):
+                raise BoundaryError("constraint", f"{name} migration requires canonical constrained schema")
 
 
 def _migrate_v8_stage2_risk_tradeoffs(conn: sqlite3.Connection) -> None:
