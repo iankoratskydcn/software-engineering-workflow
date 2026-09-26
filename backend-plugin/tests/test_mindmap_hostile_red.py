@@ -332,6 +332,110 @@ def test_spec_rejects_kind_level_and_parent_level_mismatch(tmp_path, monkeypatch
         )
 
 
+@pytest.mark.parametrize(
+    "operation",
+    ["create", "update"],
+)
+def test_spec_parent_level_adjacency_is_exactly_one_level(tmp_path, monkeypatch, operation):
+    conn = _conn(tmp_path, monkeypatch)
+    root = db.create_spec_node(conn, project_id="p_1", kind="theme", title="Root")
+
+    if operation == "create":
+        with pytest.raises((ValueError, db.BoundaryError), match="parent|level"):
+            db.create_spec_node(
+                conn,
+                project_id="p_1",
+                kind="feature",
+                title="Feature directly under root",
+                parent_id=root["id"],
+            )
+    else:
+        epic = db.create_spec_node(
+            conn, project_id="p_1", kind="epic", title="Epic", parent_id=root["id"]
+        )
+        with pytest.raises((ValueError, db.BoundaryError), match="parent|level"):
+            db.update_spec_node(
+                conn,
+                epic["id"],
+                kind="feature",
+                level=2,
+                parent_id=root["id"],
+            )
+
+
+def _recreate_v11_spec_nodes(conn: sqlite3.Connection) -> None:
+    conn.execute("DROP TABLE spec_nodes")
+    conn.execute(
+        """
+        CREATE TABLE spec_nodes (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            parent_id TEXT,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            note TEXT,
+            criteria_json TEXT,
+            decision_id TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.commit()
+
+
+def _seed_v11_mindmap(conn: sqlite3.Connection) -> None:
+    _recreate_v11_spec_nodes(conn)
+    parent = None
+    for level in range(6):
+        node_id = f"legacy-{level}"
+        conn.execute(
+            "INSERT INTO hierarchy_nodes "
+            "(id, project_id, parent_id, level, title, sort_order, created_at, updated_at, archived) "
+            "VALUES (?, 'p_1', ?, ?, ?, ?, 1, 1, 0)",
+            (node_id, parent, level, f"Legacy level {level}", level),
+        )
+        parent = node_id
+    conn.execute("PRAGMA user_version = 11")
+    conn.commit()
+
+
+def test_real_v11_to_v12_migration_imports_legacy_rows_and_normalizes_levels(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    _seed_v11_mindmap(conn)
+
+    db.init_db(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(spec_nodes)")}
+    assert {"level", "description", "rationale", "metadata_json"} <= columns
+    migrated = conn.execute(
+        "SELECT id, kind, level, parent_id FROM spec_nodes "
+        "WHERE id LIKE 'legacy-%' ORDER BY level, id"
+    ).fetchall()
+    assert [(row["kind"], row["level"]) for row in migrated] == [
+        ("theme", 0),
+        ("epic", 1),
+        ("feature", 2),
+        ("story", 3),
+        ("story", 3),
+        ("story", 3),
+    ]
+
+
+def test_v12_migration_does_not_leave_story_rows_at_legacy_level_four_or_higher(tmp_path, monkeypatch):
+    conn = _conn(tmp_path, monkeypatch)
+    _seed_v11_mindmap(conn)
+
+    db.init_db(conn)
+
+    invalid = conn.execute(
+        "SELECT id FROM spec_nodes WHERE kind = 'story' AND level > 3"
+    ).fetchall()
+    assert invalid == []
+
+
 def test_spec_cli_rejects_oversized_title_and_criteria_without_mutation(tmp_path, monkeypatch, capsys):
     conn = _conn(tmp_path, monkeypatch)
     node = db.create_spec_node(conn, project_id="p_1", kind="theme", title="Root")
