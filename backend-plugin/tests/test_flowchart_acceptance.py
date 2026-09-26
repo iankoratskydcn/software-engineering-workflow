@@ -250,7 +250,7 @@ def test_flow_set_steps_oversized_raw_input_envelopes_without_parsing(monkeypatc
 def test_flow_migration_matches_contract_and_user_version_is_monotonic(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
         columns = {
             row["name"]: (row["type"], row["notnull"], row["dflt_value"])
             for row in conn.execute("PRAGMA table_info(flows)")
@@ -260,7 +260,7 @@ def test_flow_migration_matches_contract_and_user_version_is_monotonic(tmp_path,
         assert columns["updated_at"] == ("INTEGER", 1, None)
 
         db.init_db(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
         conn.execute("PRAGMA user_version = 12")
         db.init_db(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
