@@ -151,6 +151,12 @@ def _is_delegated_child_process_context() -> bool:
     return bool(os.environ.get(_DELEGATED_CHILD_ENV_MARKER))
 
 
+def _connect_sqlite(path: Path | str, **kwargs: Any) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(path), **kwargs)
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
 def _resolve_project(project_id: str) -> dict[str, str]:
     """Validate `project_id` against the real hermes_cli.projects_db store and
     return {"id", "slug", "name"}. Matches by id first, then by slug —
@@ -175,7 +181,7 @@ def _resolve_project(project_id: str) -> dict[str, str]:
         raise ValueError(
             f"project_id {project_id!r} could not be validated: no projects.db found at "
             f"{projects_db_path} — create the project first with `hermes project create`")
-    conn = sqlite3.connect(str(projects_db_path))
+    conn = _connect_sqlite(projects_db_path)
     try:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -209,7 +215,7 @@ def db_path() -> Path:
 
 
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path()), timeout=30)
+    conn = _connect_sqlite(db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode=WAL")
@@ -1450,7 +1456,7 @@ def _kanban_statuses(task_ids: set[str]) -> dict[str, str]:
         return {}
     kconn: Optional[sqlite3.Connection] = None
     try:
-        kconn = sqlite3.connect(str(kanban_path))
+        kconn = _connect_sqlite(kanban_path)
         rows = kconn.execute(
             f"SELECT id, status FROM tasks WHERE id IN ({','.join('?' for _ in task_ids)})",
             tuple(task_ids),

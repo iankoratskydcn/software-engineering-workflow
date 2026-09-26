@@ -6521,6 +6521,13 @@ function startNewDecisionToastWatcher() {
   if (typeof interval?.unref === 'function') interval.unref()
 }
 
+// Criteria persist as strings, so duplicate entries have no durable identity.
+// Occurrence suffix keeps keys unique; distinct entries keep identity across reorder/insert.
+function stableSpecCriteriaKey(item, index, items) {
+  const occurrence = items.slice(0, index).filter((candidate) => candidate === item).length
+  return `spec-criterion:${JSON.stringify(item)}:${occurrence}`
+}
+
 function SpecDigest({ projectId }) {
   const [nodes, setNodes] = React.useState([])
   const [selectedNode, setSelectedNode] = React.useState(null)
@@ -6546,14 +6553,14 @@ function SpecDigest({ projectId }) {
       jsx('h3', { children: selectedNode.title }, 'selected-title'),
       criteria.error
         ? jsx('p', { role: 'alert', children: 'malformed criteria' }, 'criteria-error')
-        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, index)) }, 'criteria-items'),
+        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items))) }, 'criteria-items'),
     ] }, 'selected-node'),
   ] })
 }
 
-function SpecDigestRoute() {
+function SpecDigestRoute({ projectId: overrideProjectId } = {}) {
   const { projectId } = useProjectDashboardScope()
-  return jsx(SpecDigest, { projectId })
+  return jsx(SpecDigest, { projectId: overrideProjectId || projectId })
 }
 
 export default {
@@ -6580,7 +6587,7 @@ export default {
         id: 'spec-digest-route',
         area: ROUTES_AREA,
         data: { path: '/spec-digest' },
-        render: () => jsx(SpecDigestRoute, {}),
+        render: (props = {}) => jsx(SpecDigestRoute, props),
       },
       {
         id: 'spec-digest-nav',

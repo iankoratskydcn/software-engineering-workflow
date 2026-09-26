@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { host } from '@hermes/plugin-sdk'
-import { mount, flush, installLocalStorageStub } from './dom-harness.mjs'
+import { mount, flush, installLocalStorageStub, click } from './dom-harness.mjs'
 import plugin from '../plugin.js'
 
 installLocalStorageStub()
@@ -8,6 +8,12 @@ localStorage.setItem('decision-hud:selected-board', 'selected-board')
 
 const originalRequest = host.request
 const requests = []
+let projectId = 'canonical-project'
+const criteriaByProject = {
+  'canonical-project': ['Alpha criterion', 'Beta criterion'],
+  'reordered-project': ['Beta criterion', 'Alpha criterion'],
+  'inserted-project': ['Inserted criterion', 'Alpha criterion', 'Beta criterion', 'Alpha criterion'],
+}
 host.request = async (method, params) => {
   if (method !== 'cli.exec') return originalRequest(method, params)
   const argv = params?.argv || []
@@ -16,7 +22,8 @@ host.request = async (method, params) => {
     return { code: 0, output: JSON.stringify([{ slug: 'selected-board', project_id: 'canonical-project' }]) }
   }
   if (argv[0] === 'spec' && argv[1] === 'list') {
-    return { code: 0, output: JSON.stringify([{ id: 'spec-1', kind: 'requirement', title: 'Seeded requirement', criteria_json: '[]' }]) }
+    const requestedProject = argv[argv.indexOf('--project-id') + 1]
+    return { code: 0, output: JSON.stringify([{ id: 'spec-1', kind: 'requirement', title: 'Seeded requirement', criteria_json: JSON.stringify(criteriaByProject[requestedProject]) }]) }
   }
   return { code: 0, output: '[]' }
 }
@@ -34,15 +41,48 @@ const originalConsoleError = console.error
 console.error = (...args) => warnings.push(args.join(' '))
 let mounted
 try {
-  mounted = mount(route.render)
+  const render = () => route.render({ projectId })
+  mounted = mount(render)
   await flush()
+  assert.match(mounted.container.textContent, /Seeded requirement/)
+  assert.ok(requests.some((argv) => argv[0] === 'spec' && argv[1] === 'list' && argv.includes('--project-id') && argv.includes('canonical-project')), 'route must fetch selected canonical project nodes')
+  const nodeButton = mounted.container.querySelector('button')
+  assert.ok(nodeButton)
+  click(nodeButton, mounted.dom)
+  await flush()
+  assert.match(mounted.container.textContent, /Alpha criterion/)
+  assert.match(mounted.container.textContent, /Beta criterion/)
+  const initialItems = [...mounted.container.querySelectorAll('li')]
+  assert.equal(initialItems.length, 2)
+  assert.equal(mounted.errors.length, 0)
+
+  projectId = 'reordered-project'
+  mounted.rerender(render)
+  await flush()
+  const reorderedNodeButton = mounted.container.querySelector('button')
+  click(reorderedNodeButton, mounted.dom)
+  await flush()
+  const reorderedItems = [...mounted.container.querySelectorAll('li')]
+  assert.deepEqual(reorderedItems.map((item) => item.textContent), ['Beta criterion', 'Alpha criterion'])
+  assert.equal(reorderedItems[0], initialItems[1], 'reordered existing criterion must retain DOM identity')
+  assert.equal(reorderedItems[1], initialItems[0], 'reordered existing criterion must retain DOM identity')
+  assert.equal(mounted.errors.length, 0)
+
+  projectId = 'inserted-project'
+  mounted.rerender(render)
+  await flush()
+  const insertedNodeButton = mounted.container.querySelector('button')
+  click(insertedNodeButton, mounted.dom)
+  await flush()
+  assert.match(mounted.container.textContent, /Inserted criterion/)
+  assert.match(mounted.container.textContent, /Alpha criterion/)
+  assert.match(mounted.container.textContent, /Beta criterion/)
+  assert.equal(mounted.container.querySelectorAll('li').length, 4)
+  assert.equal(mounted.errors.length, 0)
 } finally {
   console.error = originalConsoleError
+  await mounted?.unmount()
+  host.request = originalRequest
 }
-assert.match(mounted.container.textContent, /Seeded requirement/)
-assert.ok(requests.some((argv) => argv[0] === 'spec' && argv[1] === 'list' && argv.includes('--project-id') && argv.includes('canonical-project')), 'route must fetch selected canonical project nodes')
-assert.equal(mounted.errors.length, 0)
 assert.deepEqual(warnings, [], `Spec Digest must not emit React warnings: ${warnings.join('; ')}`)
-await mounted.unmount()
-host.request = originalRequest
 console.log('spec digest route regression passed')

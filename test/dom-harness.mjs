@@ -73,6 +73,7 @@ export function mount(renderFn) {
     container,
     dom,
     errors,
+    rerender: (nextRenderFn) => root.render(React.createElement(nextRenderFn)),
     unmount: async () => {
       root.unmount()
       // react-dom's scheduler keeps a `setImmediate` callback queued even
