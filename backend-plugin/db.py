@@ -432,7 +432,7 @@ def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
     """Create the architecture surface as one atomic, idempotent migration."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     table = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
     ).fetchone()
     if version == 10 and table is None:
         raise BoundaryError("constraint", "partial v10 architecture migration is unsupported")
@@ -440,25 +440,7 @@ def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
         return
 
     if table is not None:
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(architecture_diagrams)")}
-        required = {"id", "project_id", "title", "nodes_json", "edges_json", "created_at", "updated_at"}
-        if columns != required:
-            raise BoundaryError("constraint", "architecture migration requires canonical columns")
-        rows = conn.execute("SELECT * FROM architecture_diagrams").fetchall()
-        known = {(row["project_id"], row["id"]) for row in rows}
-        for row in rows:
-            try:
-                nodes = json.loads(row["nodes_json"])
-                edges = json.loads(row["edges_json"])
-            except (TypeError, json.JSONDecodeError) as exc:
-                raise BoundaryError("constraint", "architecture migration found invalid JSON") from exc
-            _validate_architecture_payload(
-                row["title"], nodes, edges,
-                drill_targets=known,
-                project_id=row["project_id"],
-            )
-
-    conn.commit()
+        _preflight_architecture_legacy(conn, version=version)
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
@@ -484,6 +466,73 @@ def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
     except Exception:
         conn.rollback()
         raise
+
+
+def _preflight_architecture_legacy(conn: sqlite3.Connection, *, version: int | None = None) -> None:
+    """Validate legacy architecture state before any migration can write."""
+    if version is None:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+    ).fetchone()
+    if table is None:
+        return
+    assert version is not None
+
+    columns = [tuple(row) for row in conn.execute("PRAGMA table_info(architecture_diagrams)")]
+    expected = [
+        ("id", "TEXT", 0, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("nodes_json", "TEXT", 1, None, 0),
+        ("edges_json", "TEXT", 1, None, 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ]
+    actual = [(row[1], row[2], row[3], row[4], row[5]) for row in columns]
+    if actual != expected:
+        raise BoundaryError("constraint", "architecture migration requires canonical table definition")
+
+    rows = conn.execute("SELECT * FROM architecture_diagrams").fetchall()
+    known = {(row["project_id"], row["id"]) for row in rows}
+    for row in rows:
+        try:
+            nodes = json.loads(row["nodes_json"])
+            edges = json.loads(row["edges_json"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise BoundaryError("constraint", "architecture migration found invalid JSON") from exc
+        _validate_architecture_payload(
+            row["title"], nodes, edges,
+            drill_targets=known,
+            project_id=row["project_id"],
+        )
+    if version < 10:
+        raise BoundaryError(
+            "constraint",
+            "architecture migration refuses a preexisting architecture table in a v9 database",
+        )
+
+    indexes = {
+        row[1]: (row[2], row[3])
+        for row in conn.execute("PRAGMA index_list(architecture_diagrams)")
+    }
+    unique_columns = {
+        tuple(info[2] for info in conn.execute(f"PRAGMA index_info({name!r})"))
+        for name, (unique, _origin) in indexes.items()
+        if unique
+    }
+    if ("project_id", "id") not in unique_columns:
+        raise BoundaryError("constraint", "architecture migration requires UNIQUE(project_id, id)")
+    project_index = indexes.get("idx_architecture_diagrams_project")
+    if project_index is None or project_index[0] != 0:
+        raise BoundaryError("constraint", "architecture migration requires canonical project index")
+    project_index_columns = tuple(
+        info[2] for info in conn.execute(
+            "PRAGMA index_info('idx_architecture_diagrams_project')"
+        )
+    )
+    if project_index_columns != ("project_id", "updated_at", "id"):
+        raise BoundaryError("constraint", "architecture migration requires canonical project index")
 
 
 def _validate_architecture_payload(title, nodes, edges, *, drill_targets, project_id):
@@ -581,6 +630,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         ).fetchone()
         if exists is None:
             raise BoundaryError("constraint", "partial v10 architecture migration is unsupported")
+    _preflight_architecture_legacy(conn)
     _preflight_risk_tradeoff_legacy(conn)
     _migrate_v6_project_id(conn)  # must run BEFORE CREATE TABLE IF NOT EXISTS below:
     _migrate_v7_hierarchy(conn)
