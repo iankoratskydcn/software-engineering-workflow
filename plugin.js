@@ -6199,13 +6199,10 @@ function RoadmapPane() {
     }
     setState((current) => ({ ...current, loading: true, error: null }))
     const roadmapListCommand = ['roadmap', 'list', '--project-id', projectId]
-    cliExec(['roadmap', 'lane', 'list', '--project-id', projectId])
-      .then((laneRes) => {
+    cliExec(roadmapListCommand)
+      .then((res) => {
         if (!active) return
-        return cliExec(['roadmap', 'item', 'list', '--project-id', projectId]).then((itemRes) => {
-          if (!active) return
-          setState({ loading: false, lanes: laneRes?.lanes || [], items: itemRes?.items || [], error: null })
-        })
+        setState({ loading: false, lanes: res?.lanes || [], items: res?.items || [], error: null })
       })
       .then(null, (error) => {
         if (!active) return
@@ -6226,22 +6223,34 @@ function RoadmapPane() {
     }
   }
 
-  const submit = async (operation, draftKey, argv) => {
+  const submit = async (operation, draftKey, argv, onSuccess) => {
     try {
-      if (await runUpdate(operation === 'item' ? ['roadmap', 'item', 'update', ...argv.slice(3)] : argv)) {
+      if (await runUpdate(argv)) {
         setDraft('')
         setDrafts((current) => ({ ...current, [draftKey]: '' }))
         setState((current) => ({ ...current, error: null }))
-        reload()
+        refresh()
+        onSuccess?.()
       }
-      // confirmed success path: refresh()
     } catch (error) {
       setError(error)
     }
   }
   const setDraft = (value) => setDrafts((current) => ({ ...current, last: value }))
 
-  const listValues = (value) => value.split('\\n').map((entry) => entry.trim()).filter(Boolean)
+  const listValues = (value) => value.split('\n').map((entry) => entry.trim()).filter(Boolean)
+  const relationshipArgs = (draft) => {
+    const argv = []
+    if (draft.dependsOn !== null && draft.dependsOn !== undefined) {
+      listValues(draft.dependsOn).forEach((value) => argv.push('--depends-on', value))
+      if (listValues(draft.dependsOn).length === 0) argv.push('--clear-depends-on')
+    }
+    if (draft.links !== null && draft.links !== undefined) {
+      listValues(draft.links).forEach((value) => argv.push('--link', value))
+      if (listValues(draft.links).length === 0) argv.push('--clear-links')
+    }
+    return argv
+  }
   const content = scopeLoading || state.loading
     ? 'Loading roadmap…'
     : scopeError || state.error
@@ -6259,19 +6268,15 @@ function RoadmapPane() {
             laneItems.map((item) => {
               const itemId = item.id
               const updatedAt = item.updated_at
-              const draft = drafts[`item:${itemId}`] || { title: item.title || '', description: item.description || '', status: item.status || 'planned', laneId: item.lane_id, sortOrder: String(item.sort_order ?? 0), dependsOn: '', links: '' }
+              const draft = drafts[`item:${itemId}`] || { title: item.title || '', description: item.description || '', status: item.status || 'planned', laneId: item.lane_id, sortOrder: String(item.sort_order ?? 0), dependsOn: null, links: null }
               const setDraft = (field, value) => setDrafts((current) => ({ ...current, [`item:${item.id}`]: { ...draft, [field]: value } }))
-              const argv = ['roadmap', 'item', 'update', '--project-id', projectId, '--item-id', itemId, '--lane-id', draft.laneId, '--title', draft.title, '--description', draft.description, '--status', draft.status, '--sort-order', String(draft.sortOrder), '--expected-updated-at', String(updatedAt ?? '')]
-              const dependsOn = listValues(draft.dependsOn)
-              const links = listValues(draft.links)
-              dependsOn.forEach((value) => argv.push('--depends-on', value))
-              links.forEach((value) => argv.push('--link', value))
-              if (draft.dependsOn === '') argv.push('--clear-depends-on')
-              if (draft.links === '') argv.push('--clear-links')
+              const argv = ['roadmap', 'item', 'update', '--project-id', projectId, '--item-id', itemId, '--lane-id', draft.laneId, '--title', draft.title, '--description', draft.description, '--status', draft.status, '--sort-order', String(draft.sortOrder), '--expected-updated-at', String(updatedAt ?? ''), ...relationshipArgs(draft)]
               return jsxs('div', { key: item.id, className: 'flex flex-col gap-1 border-t border-(--ui-stroke-secondary) pt-2', children: [
                 jsx('input', { value: draft.title, 'aria-label': `Item ${item.id} title`, onChange: (event) => setDraft('title', event.target.value) }),
                 jsx('textarea', { value: draft.description, 'aria-label': `Item ${item.id} description`, onChange: (event) => setDraft('description', event.target.value) }),
                 jsx('input', { value: draft.status, 'aria-label': `Item ${item.id} status`, onChange: (event) => setDraft('status', event.target.value) }),
+                jsx('textarea', { value: draft.dependsOn ?? '', 'aria-label': `Item ${item.id} dependencies`, onChange: (event) => setDraft('dependsOn', event.target.value) }),
+                jsx('textarea', { value: draft.links ?? '', 'aria-label': `Item ${item.id} links`, onChange: (event) => setDraft('links', event.target.value) }),
                 jsx('button', { type: 'button', disabled: mutationLoading || !draft.title.trim(), onClick: () => submit('item', `item:${item.id}`, argv), children: 'Save item' }),
               ] })
             }),
@@ -6282,12 +6287,12 @@ function RoadmapPane() {
     jsx('div', { className: 'font-medium', children: 'Roadmap' }),
     projectId ? jsxs('div', { className: 'flex gap-2', children: [
       jsx('input', { value: laneDraft, placeholder: 'New lane', onChange: (event) => setLaneDraft(event.target.value) }),
-      jsx('button', { type: 'button', disabled: mutationLoading || !laneDraft.trim(), onClick: () => submit('lane', 'new-lane', ['roadmap', 'lane', 'add', '--project-id', projectId, '--title', laneDraft, '--sort-order', '0']).then(() => setLaneDraft('')), children: 'Add lane' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !laneDraft.trim(), onClick: () => submit('lane', 'new-lane', ['roadmap', 'lane', 'add', '--project-id', projectId, '--title', laneDraft, '--sort-order', '0'], () => setLaneDraft('')), children: 'Add lane' }),
     ] }) : null,
     projectId && state.lanes.length > 0 ? jsxs('div', { className: 'flex gap-2', children: [
       jsx('select', { value: itemDraft.laneId || state.lanes[0]?.id || '', onChange: (event) => setItemDraft((current) => ({ ...current, laneId: event.target.value })), children: state.lanes.map((lane) => jsx('option', { value: lane.id, children: lane.title }, lane.id)) }),
       jsx('input', { value: itemDraft.title, placeholder: 'New item', onChange: (event) => setItemDraft((current) => ({ ...current, title: event.target.value })) }),
-      jsx('button', { type: 'button', disabled: mutationLoading || !itemDraft.title.trim(), onClick: () => submit('item', 'new-item', ['roadmap', 'item', 'add', '--project-id', projectId, '--lane-id', itemDraft.laneId || state.lanes[0]?.id || '', '--title', itemDraft.title, '--description', itemDraft.description, '--status', itemDraft.status, '--sort-order', itemDraft.sortOrder, ...listValues(itemDraft.dependsOn).flatMap((value) => ['--depends-on', value]), ...listValues(itemDraft.links).flatMap((value) => ['--link', value])]).then(() => setItemDraft({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })), children: 'Add item' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !itemDraft.title.trim(), onClick: () => submit('item', 'new-item', ['roadmap', 'item', 'add', '--project-id', projectId, '--lane-id', itemDraft.laneId || state.lanes[0]?.id || '', '--title', itemDraft.title, '--description', itemDraft.description, '--status', itemDraft.status, '--sort-order', itemDraft.sortOrder, ...listValues(itemDraft.dependsOn).flatMap((value) => ['--depends-on', value]), ...listValues(itemDraft.links).flatMap((value) => ['--link', value])], () => setItemDraft({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })), children: 'Add item' }),
     ] }) : null,
     jsx('div', { className: 'flex flex-col gap-2', children: content }),
     projectId ? jsx('button', { type: 'button', onClick: reload, children: 'Refresh' }) : null,
