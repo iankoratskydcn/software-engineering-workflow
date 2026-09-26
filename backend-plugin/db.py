@@ -121,6 +121,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import sqlite3
@@ -130,6 +131,101 @@ from pathlib import Path
 from typing import Any, Optional
 
 _VALID_URGENCY = ("low", "normal", "high")
+
+TEXT_LIMIT = 4096
+ID_LIMIT = 128
+LIST_LIMIT = 256
+LIST_VALUE_LIMIT = 512
+JSON_LIMIT = 256 * 1024
+JSON_DEPTH_LIMIT = 8
+COORDINATE_MIN = -100000
+COORDINATE_MAX = 100000
+
+
+class BoundaryError(ValueError):
+    """Safe, machine-readable rejection at a trust boundary."""
+
+    def __init__(self, code: str, message: str = "request rejected") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def validate_text(value: Any, *, field: str, max_chars: int = TEXT_LIMIT,
+                  allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise BoundaryError("invalid_input", f"{field} must be a string")
+    result = value.strip()
+    if not result and not allow_empty:
+        raise BoundaryError("invalid_input", f"{field} is required")
+    if len(result) > max_chars:
+        raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
+    return result
+
+
+def validate_list(value: Any, *, field: str, max_items: int = LIST_LIMIT,
+                  max_value_chars: int = LIST_VALUE_LIMIT) -> list[str]:
+    if not isinstance(value, list):
+        raise BoundaryError("invalid_input", f"{field} must be a list")
+    if len(value) > max_items:
+        raise BoundaryError("invalid_input", f"{field} has too many items")
+    result: list[str] = []
+    for item in value:
+        result.append(validate_text(item, field=f"{field} item", max_chars=max_value_chars))
+    return result
+
+
+def _validate_json_value(value: Any, *, field: str, depth: int,
+                         max_items: int, max_value_chars: int) -> None:
+    if depth > JSON_DEPTH_LIMIT:
+        raise BoundaryError("invalid_input", f"{field} is too deeply nested")
+    if isinstance(value, dict):
+        if len(value) > max_items:
+            raise BoundaryError("invalid_input", f"{field} has too many object keys")
+        for key, child in value.items():
+            validate_text(key, field=f"{field} key", max_chars=max_value_chars)
+            _validate_json_value(child, field=field, depth=depth + 1,
+                                 max_items=max_items, max_value_chars=max_value_chars)
+    elif isinstance(value, list):
+        if len(value) > max_items:
+            raise BoundaryError("invalid_input", f"{field} has too many items")
+        for child in value:
+            _validate_json_value(child, field=field, depth=depth + 1,
+                                 max_items=max_items, max_value_chars=max_value_chars)
+    elif isinstance(value, str) and len(value) > max_value_chars:
+        raise BoundaryError("invalid_input", f"{field} contains an oversized string")
+
+
+def validate_json_text(value: Any, *, field: str, max_bytes: int = JSON_LIMIT,
+                       max_items: int = LIST_LIMIT,
+                       max_value_chars: int = LIST_VALUE_LIMIT) -> Any:
+    if not isinstance(value, str):
+        raise BoundaryError("invalid_input", f"{field} must be JSON text")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise BoundaryError("invalid_input", f"{field} must be valid JSON") from exc
+    _validate_json_value(decoded, field=field, depth=0, max_items=max_items,
+                         max_value_chars=max_value_chars)
+    return decoded
+
+
+def validate_coordinate(value: Any, *, field: str,
+                        minimum: float = COORDINATE_MIN,
+                        maximum: float = COORDINATE_MAX) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise BoundaryError("invalid_input", f"{field} must be a finite number")
+    if value < minimum or value > maximum:
+        raise BoundaryError("invalid_input", f"{field} is outside its allowed range")
+    return value
+
+
+def require_project_scope(conn: Optional[sqlite3.Connection], *, project_id: str,
+                          row_project_id: Optional[str]) -> None:
+    del conn
+    if row_project_id is None or row_project_id != project_id:
+        raise BoundaryError("not_found", "resource not found")
 
 # --- delegated-child detection --------------------------------------------
 #
@@ -154,6 +250,9 @@ def _is_delegated_child_process_context() -> bool:
 def _connect_sqlite(path: Path | str, **kwargs: Any) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path), **kwargs)
     conn.execute("PRAGMA foreign_keys=ON")
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        conn.close()
+        raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
     return conn
 
 
@@ -253,6 +352,9 @@ def _migrate_v7_hierarchy(conn: sqlite3.Connection) -> None:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys=ON")
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        raise RuntimeError("SQLite foreign-key enforcement is required")
     _migrate_v6_project_id(conn)  # must run BEFORE CREATE TABLE IF NOT EXISTS below:
     _migrate_v7_hierarchy(conn)
     # a pre-v6 db already has a `decisions` table (old `project` schema), so

@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,39 @@ def _triage_user_prompt(report: dict) -> str:
 
 def _print(obj) -> None:
     print(json.dumps(obj, default=str))
+
+
+def boundary_error(error: BaseException) -> tuple[dict, int]:
+    """Map boundary failures to a stable safe envelope and exit code."""
+    if isinstance(error, db.BoundaryError):
+        code = error.code
+    elif isinstance(error, sqlite3.OperationalError) and "locked" in str(error).lower():
+        code = "busy"
+    elif isinstance(error, sqlite3.IntegrityError):
+        code = "constraint"
+    elif isinstance(error, FileNotFoundError):
+        code = "not_found"
+    elif isinstance(error, ValueError):
+        code = "invalid_input"
+    else:
+        code = "internal_error"
+    exit_codes = {
+        "invalid_input": 2,
+        "not_found": 3,
+        "conflict": 4,
+        "busy": 5,
+        "constraint": 6,
+        "internal_error": 1,
+    }
+    message = {
+        "invalid_input": "invalid input",
+        "not_found": "resource not found",
+        "conflict": "stale or conflicting request",
+        "busy": "database is busy",
+        "constraint": "request violates a data constraint",
+        "internal_error": "internal error",
+    }[code]
+    return {"ok": False, "error": {"code": code, "message": message}}, exit_codes[code]
 
 
 def setup(p) -> None:
