@@ -197,27 +197,27 @@ def test_push_after_prior_resolution_is_allowed_and_becomes_latest(tmp_path, mon
         pass
 
 
-# --- (5) PRAGMA user_version advances (now 6, post v6 cutover), idempotent --
+# --- (5) PRAGMA user_version advances (now 9, post v9 cutover), idempotent --
 
 def test_user_version_advances_and_init_db_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
     conn = _conn(tmp_path)
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 8
+    assert version == 9
 
     # Running init_db a second time on the same connection/file must not
     # error and must not double-apply (columns already present, version
-    # already 8 — every _migrate_vN_columns call is a no-op the 2nd time).
+    # already 9 — every _migrate_vN_columns call is a no-op the 2nd time).
     db.init_db(conn)
     version_again = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version_again == 8
+    assert version_again == 9
 
     # And a brand-new connection against the SAME on-disk file (simulating
     # process restart hitting an already-migrated db) is equally idempotent.
     conn2 = sqlite3.connect(str(Path(conn.execute("PRAGMA database_list").fetchone()[2])))
     conn2.row_factory = sqlite3.Row
     db.init_db(conn2)
-    assert conn2.execute("PRAGMA user_version").fetchone()[0] == 8
+    assert conn2.execute("PRAGMA user_version").fetchone()[0] == 9
     conn2.close()
 
     # No duplicate/extra columns were introduced by the no-op v5 migration

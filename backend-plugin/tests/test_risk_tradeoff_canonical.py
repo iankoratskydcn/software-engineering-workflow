@@ -39,10 +39,10 @@ def insert_decision(conn, decision_id: str, project_id: str) -> None:
     conn.commit()
 
 
-def test_canonical_schema_has_closed_fields_constraints_and_v8(monkeypatch, tmp_path):
+def test_canonical_schema_has_closed_fields_constraints_and_v9(monkeypatch, tmp_path):
     conn = setup_conn(monkeypatch, tmp_path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
         risk_columns = {row["name"] for row in conn.execute("PRAGMA table_info(risks)")}
         assert risk_columns == {
             "id", "project_id", "decision_id", "title", "description", "breaks_when",
@@ -257,11 +257,11 @@ def test_preexisting_v7_unconstrained_risk_tradeoff_schema_is_rebuilt_or_refused
         try:
             db.init_db(conn)
         except Exception as exc:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] < 8
+            assert conn.execute("PRAGMA user_version").fetchone()[0] < 9
             assert "risk" in str(exc).lower() or "tradeoff" in str(exc).lower() or "constraint" in str(exc).lower()
             assert "\\n".join(conn.iterdump()) == before_dump
         else:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 9
             for table, check in (
                 ("risks", "status IN ('open','mitigated','accepted','closed')"),
                 ("tradeoffs", "kind IN ('scale','duel','anchor')"),
