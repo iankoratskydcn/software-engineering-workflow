@@ -476,7 +476,7 @@ def _cmd_push(args) -> None:
                 getattr(args, "card_type_answers", None), "--card-type-answers")
         except Exception as exc:
             envelope, exit_code = boundary_error(exc)
-            _print({"ok": False, "error": envelope["error"]["message"]})
+            _print(envelope)
             sys.exit(exit_code)
             return
         result = db.push_decision(
@@ -489,7 +489,7 @@ def _cmd_push(args) -> None:
         _print({"ok": True, "decision": result})
     except Exception as exc:
         envelope, exit_code = boundary_error(exc)
-        _print({"ok": False, "error": envelope["error"]["message"]})
+        _print(envelope)
         sys.exit(exit_code)
     finally:
         conn.close()
