@@ -973,13 +973,18 @@ def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
             conn.execute("DROP TABLE spec_nodes_v11")
             for row in legacy:
                 parent_id = row["parent_id"]
-                kind = ("theme", "epic", "feature", "story")[min(max(int(row["level"]), 0), 3)]
+                # Legacy hierarchy allowed deeper task levels.  v12 has no
+                # task-level spec kinds, so collapse every level >= 3 to the
+                # canonical story level while preserving the legacy parent
+                # links and row identity.
+                normalized_level = min(max(int(row["level"]), 0), 3)
+                kind = ("theme", "epic", "feature", "story")[normalized_level]
                 if conn.execute("SELECT 1 FROM spec_nodes WHERE id = ?", (row["id"],)).fetchone() is None:
                     conn.execute(
                     "INSERT INTO spec_nodes "
                     "(id, project_id, kind, parent_id, level, title, status, description, rationale, "
                     "metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)",
-                    (row["id"], row["project_id"], kind, parent_id, row["level"], row["title"],
+                    (row["id"], row["project_id"], kind, parent_id, normalized_level, row["title"],
                      "draft", None, None, row["created_at"], row["updated_at"]),
                     )
 
@@ -2159,6 +2164,26 @@ _SPEC_KINDS = ("theme", "epic", "feature", "story")
 _SPEC_STATUSES = ("draft", "ready", "converted")
 
 
+def _spec_validate_parent(conn: sqlite3.Connection, *, project_id: str,
+                           parent_id: str | None, level: int) -> None:
+    if level == 0:
+        if parent_id is not None:
+            raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
+        return
+    if parent_id is None:
+        raise BoundaryError("invalid_input", "non-root nodes require a parent")
+    parent = conn.execute(
+        "SELECT project_id, kind, level FROM spec_nodes WHERE id = ?", (parent_id,)
+    ).fetchone()
+    if parent is None:
+        raise BoundaryError("not_found", "parent node not found")
+    if parent["project_id"] != project_id:
+        raise BoundaryError("not_found", "parent node belongs to another project")
+    expected_kind = _SPEC_KINDS[level - 1]
+    if parent["level"] != level - 1 or parent["kind"] != expected_kind:
+        raise BoundaryError("invalid_input", "parent must be exactly one level above and have the compatible kind")
+
+
 def _spec_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -2198,14 +2223,11 @@ def create_spec_node(
         raise BoundaryError("invalid_input", "invalid spec node status")
     if level is None:
         level = _SPEC_KINDS.index(kind)
-    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 5:
-        raise BoundaryError("invalid_input", "level must be an integer from 0 through 5")
+    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 3:
+        raise BoundaryError("invalid_input", "level must be an integer from 0 through 3")
     if level != _SPEC_KINDS.index(kind):
         raise BoundaryError("invalid_input", "kind and level must match")
-    if level == 0 and parent_id is not None:
-        raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
-    if level > 0 and parent_id is None:
-        raise BoundaryError("invalid_input", "non-root nodes require a parent")
+
     note = None if note is None else validate_text(note, field="note", allow_empty=True)
     description = None if description is None else validate_text(description, field="description", allow_empty=True)
     rationale = None if rationale is None else validate_text(rationale, field="rationale", allow_empty=True)
@@ -2219,12 +2241,7 @@ def create_spec_node(
     now = time.time()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        if parent_id is not None:
-            parent = conn.execute("SELECT project_id FROM spec_nodes WHERE id = ?", (parent_id,)).fetchone()
-            if parent is None:
-                raise BoundaryError("not_found", "parent node not found")
-            if parent["project_id"] != project_id:
-                raise BoundaryError("not_found", "parent node belongs to another project")
+        _spec_validate_parent(conn, project_id=project_id, parent_id=parent_id, level=level)
         conn.execute(
             "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -2264,8 +2281,8 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
             fields["metadata_json"] = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
         if "criteria_json" in fields:
             validate_json_text(fields["criteria_json"], field="criteria_json")
-        if "level" in fields and (isinstance(fields["level"], bool) or not isinstance(fields["level"], int) or not 0 <= fields["level"] <= 5):
-            raise BoundaryError("invalid_input", "level must be an integer from 0 through 5")
+        if "level" in fields and (isinstance(fields["level"], bool) or not isinstance(fields["level"], int) or not 0 <= fields["level"] <= 3):
+            raise BoundaryError("invalid_input", "level must be an integer from 0 through 3")
         if "decision_id" in fields:
             _spec_validate_decision(conn, row["project_id"], fields["decision_id"])
         effective_kind = fields.get("kind", row["kind"])
@@ -2273,16 +2290,13 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
         if effective_level != _SPEC_KINDS.index(effective_kind):
             raise BoundaryError("invalid_input", "kind and level must match")
         effective_parent = fields.get("parent_id", row["parent_id"])
-        if effective_level == 0 and effective_parent is not None:
-            raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
-        if effective_level > 0 and effective_parent is None:
-            raise BoundaryError("invalid_input", "non-root nodes require a parent")
+        _spec_validate_parent(
+            conn,
+            project_id=row["project_id"],
+            parent_id=effective_parent,
+            level=effective_level,
+        )
         if "parent_id" in fields and fields["parent_id"] is not None:
-            parent = conn.execute("SELECT project_id FROM spec_nodes WHERE id = ?", (fields["parent_id"],)).fetchone()
-            if parent is None:
-                raise BoundaryError("not_found", "parent node not found")
-            if parent["project_id"] != row["project_id"]:
-                raise BoundaryError("not_found", "parent node belongs to another project")
             current = fields["parent_id"]
             seen = set()
             while current is not None:
