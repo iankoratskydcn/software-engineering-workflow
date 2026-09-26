@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { test } from 'node:test'
+
+import { collectRegistrations, findRegistration } from './render-harness.mjs'
+
+const source = await readFile(resolve('plugin.js'), 'utf8')
+
+function roadmapSource() {
+  const match = source.match(/function Roadmap[\s\S]*?(?=\nfunction |\nconst |\nexport default)/)
+  assert.ok(match, 'Roadmap UI component must exist')
+  return match[0]
+}
+
+test('Roadmap registers route and sidebar navigation entry', () => {
+  const registrations = collectRegistrations()
+  const route = findRegistration(registrations, 'routes', 'roadmap-route')
+  const nav = findRegistration(registrations, 'sidebar.nav', 'roadmap-nav')
+  assert.equal(route.data?.path, '/decision-hud/roadmap')
+  assert.equal(nav.data?.path, '/decision-hud/roadmap')
+  assert.equal(nav.data?.label, 'Roadmap')
+  assert.equal(typeof route.render, 'function')
+})
+
+test('Roadmap loads project-scoped data and ignores delayed stale responses', () => {
+  const pane = roadmapSource()
+  assert.match(pane, /['"]roadmap['"],\s*['"]list['"],\s*['"]--project-id['"],\s*projectId/)
+  assert.match(pane, /let active = true/)
+  assert.match(pane, /return \(\) => \{?\s*active = false/)
+  assert.match(pane, /if \(!active\) return/)
+  assert.match(pane, /\[projectId\]/)
+})
+
+test('Roadmap update sends complete project-scoped payload including clear flags', () => {
+  const pane = roadmapSource()
+  assert.match(pane, /function runUpdate\(/)
+  assert.match(pane, /['"]roadmap['"],\s*['"]item['"],\s*['"]update['"]\)/)
+  assert.match(pane, /['"]--project-id['"].*projectId/)
+  assert.match(pane, /['"]--item-id['"].*itemId/)
+  assert.match(pane, /['"]--lane-id['"].*laneId/)
+  assert.match(pane, /['"]--title['"].*title/)
+  assert.match(pane, /['"]--description['"].*description/)
+  assert.match(pane, /['"]--status['"].*status/)
+  assert.match(pane, /['"]--sort-order['"].*sortOrder/)
+  assert.match(pane, /['"]--depends-on['"]/) 
+  assert.match(pane, /['"]--link['"]/) 
+  assert.match(pane, /['"]--clear-depends-on['"]/) 
+  assert.match(pane, /['"]--clear-links['"]/) 
+  assert.match(pane, /['"]--expected-updated-at['"].*updatedAt/)
+})
+
+test('Roadmap failed update preserves draft, exposes error, clears loading, and does not refresh', () => {
+  const pane = roadmapSource()
+  const update = pane.match(/function runUpdate\([\s\S]*?\n\}/)?.[0]
+  assert.ok(update, 'runUpdate must be defined')
+  assert.match(update, /return\s+await\s+cliExec|return\s+cliExec/)
+  assert.match(pane, /catch\s*\([^)]*\)[\s\S]*?setError\(/)
+  assert.match(pane, /finally\s*\{[\s\S]*?setLoading\(false\)/)
+  assert.doesNotMatch(pane, /catch\s*\([^)]*\)[\s\S]*?refresh\(/)
+  assert.doesNotMatch(pane, /catch\s*\([^)]*\)[\s\S]*?setDraft\(['"]['"]\)/)
+})
+
+test('Roadmap clears draft only after confirmed successful update', () => {
+  const pane = roadmapSource()
+  assert.match(pane, /if\s*\(await\s+runUpdate\([\s\S]*?\)\)\s*\{[\s\S]*?setDraft\(['"]['"]\)/)
+  assert.doesNotMatch(pane, /setDraft\(['"]['"]\)[\s\S]*?runUpdate\(/)
+  assert.match(pane, /await\s+runUpdate\([\s\S]*?\)[\s\S]*?refresh\(/)
+})
+
+console.log('roadmap UI hostile RED tests loaded')
