@@ -6536,18 +6536,18 @@ function SpecDigest({ projectId }) {
     }).catch(() => setNodes([]))
   }, [projectId])
   const criteria = parseSpecCriteria(selectedNode?.criteria_json)
-  return jsx('div', { className: 'flex flex-col gap-3 p-4', children: [
-    jsx('h2', { children: 'Spec Digest' }),
+  return jsxs('div', { className: 'flex flex-col gap-3 p-4', children: [
+    jsx('h2', { children: 'Spec Digest' }, 'title'),
     jsx('div', { className: 'flex flex-col gap-1', children: nodes.map((node) => jsx('button', {
-      key: node.id, type: 'button', onClick: () => setSelectedNode(node), className: 'text-left',
+      type: 'button', onClick: () => setSelectedNode(node), className: 'text-left',
       children: `${node.kind}: ${node.title}`,
-    })) }),
+    }, node.id)) }, 'nodes'),
     selectedNode && jsx('section', { children: [
-      jsx('h3', { children: selectedNode.title }),
+      jsx('h3', { children: selectedNode.title }, 'selected-title'),
       criteria.error
-        ? jsx('p', { role: 'alert', children: 'malformed criteria' })
-        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { key: index, children: item })) }),
-    ] }),
+        ? jsx('p', { role: 'alert', children: 'malformed criteria' }, 'criteria-error')
+        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, index)) }, 'criteria-items'),
+    ] }, 'selected-node'),
   ] })
 }
 

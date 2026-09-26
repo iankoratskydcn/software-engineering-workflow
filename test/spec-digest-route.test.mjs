@@ -29,11 +29,20 @@ plugin.register({
 })
 const route = registrations.find((item) => item.area === 'routes' && item.data?.path === '/spec-digest')
 assert.ok(route, 'Spec Digest route must be registered')
-const mounted = mount(route.render)
-await flush()
+const warnings = []
+const originalConsoleError = console.error
+console.error = (...args) => warnings.push(args.join(' '))
+let mounted
+try {
+  mounted = mount(route.render)
+  await flush()
+} finally {
+  console.error = originalConsoleError
+}
 assert.match(mounted.container.textContent, /Seeded requirement/)
 assert.ok(requests.some((argv) => argv[0] === 'spec' && argv[1] === 'list' && argv.includes('--project-id') && argv.includes('canonical-project')), 'route must fetch selected canonical project nodes')
 assert.equal(mounted.errors.length, 0)
+assert.deepEqual(warnings, [], `Spec Digest must not emit React warnings: ${warnings.join('; ')}`)
 await mounted.unmount()
 host.request = originalRequest
 console.log('spec digest route regression passed')
