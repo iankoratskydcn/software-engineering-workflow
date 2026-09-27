@@ -5914,11 +5914,101 @@ function HierarchyKanbanLink({ node, boardSlug, onChanged }) {
   })
 }
 
-function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, onSelect }) {
+function HierarchyNodeInspector({ node, decisions, decisionsLoading, decisionsError, projectId, onClose, onDecisionChanged }) {
+  React.useEffect(() => {
+    const onKey = (event) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  if (!node) return null
+  let criteria = []
+  try {
+    const parsed = node.criteria_json ? JSON.parse(node.criteria_json) : []
+    criteria = Array.isArray(parsed) ? parsed : []
+  } catch {
+    criteria = []
+  }
+  return jsx('div', {
+    role: 'dialog',
+    'aria-modal': 'true',
+    'aria-label': `Inspect ${node.title}`,
+    className: 'fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6',
+    onMouseDown: (event) => { if (event.target === event.currentTarget) onClose() },
+    children: jsxs('div', {
+      className: 'flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-elevated) shadow-2xl',
+      children: [
+        jsxs('header', {
+          className: 'flex items-start justify-between gap-4 border-b border-(--ui-stroke-secondary) px-6 py-5',
+          children: [
+            jsxs('div', { children: [
+              jsx('div', { className: 'mb-1 text-xs uppercase tracking-wide text-(--ui-text-tertiary)', children: `${node.kind || 'node'} · level ${node.level ?? '—'}` }),
+              jsx('h2', { className: 'text-xl font-semibold', children: node.title }),
+              jsx('div', { className: 'mt-1 text-sm text-(--ui-text-secondary)', children: node.status || 'draft' }),
+            ] }),
+            jsx('button', { type: 'button', 'aria-label': 'Close node inspector', onClick: onClose, className: 'rounded border border-(--ui-stroke-secondary) px-3 py-1.5 text-sm text-(--ui-text-secondary) hover:bg-(--chrome-action-hover)', children: 'Close' }),
+          ],
+        }),
+        jsxs('div', {
+          className: 'grid min-h-0 flex-1 gap-6 overflow-y-auto p-6 md:grid-cols-[1.2fr_0.8fr]',
+          children: [
+            jsxs('section', { className: 'flex flex-col gap-5', children: [
+              jsxs('div', { children: [jsx('div', { className: 'mb-2 text-xs uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Context' }), jsx('p', { className: 'whitespace-pre-wrap text-sm text-(--ui-text-secondary)', children: node.description || node.note || 'No context recorded yet.' })] }),
+              jsxs('div', {
+                children: [
+                  jsx('div', { className: 'mb-2 text-xs uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Acceptance criteria' }),
+                  criteria.length > 0
+                    ? jsx('ul', {
+                        className: 'flex flex-col gap-2',
+                        children: criteria.map((item, index) => jsxs('li', {
+                          className: 'flex gap-2 text-sm text-(--ui-text-secondary)',
+                          children: [jsx('span', { className: 'text-(--ui-success,#59c18a)', children: '□' }), jsx('span', { children: item })],
+                        }, `${node.id}-criteria-${index}`)),
+                      })
+                    : jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'No criteria recorded yet.' }),
+                ],
+              }),
+              jsxs('div', { children: [jsx('div', { className: 'mb-2 text-xs uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Rationale' }), jsx('p', { className: 'whitespace-pre-wrap text-sm text-(--ui-text-secondary)', children: node.rationale || 'No rationale recorded yet.' })] }),
+            ] }),
+            jsxs('aside', { className: 'flex flex-col gap-4 rounded border border-(--ui-stroke-secondary) bg-(--ui-bg-secondary) p-4', children: [
+              jsx('div', { className: 'text-xs uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Linked work' }),
+              jsxs('div', { className: 'grid gap-2 text-sm', children: [jsx('div', { children: jsxs('span', { className: 'text-(--ui-text-tertiary)', children: ['Node ID: ', jsx('code', { children: node.id })] }) }), jsx('div', { className: 'text-(--ui-text-secondary)', children: node.kanban_task_id ? `Kanban link: ${node.kanban_task_id}` : 'No Kanban link' }), jsx('div', { className: 'text-(--ui-text-secondary)', children: node.total_count > 0 ? `${node.done_count || 0}/${node.total_count} descendants done` : 'No descendant progress yet' })] }),
+              jsx('div', { className: 'h-px bg-(--ui-stroke-secondary)' }),
+              jsx('div', { className: 'text-xs uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Attached decisions' }),
+              decisionsLoading ? jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'Loading decisions…' }) : null,
+              decisionsError ? jsx('div', { className: 'text-sm text-(--ui-danger,#e5484d)', children: decisionsError }) : null,
+              decisions.length > 0 ? jsx('div', { className: 'flex flex-col gap-2', children: decisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: onDecisionChanged })) }) : jsx('div', { className: 'text-sm text-(--ui-text-tertiary)', children: 'No decisions attached.' }),
+              jsx(HierarchyDecisionComposer, { projectId, selectedNode: node, onPushed: onDecisionChanged }),
+            ] }),
+          ],
+        }),
+      ],
+    }),
+  })
+}
+
+function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, onSelect, selectedNodeId, onInspect }) {
   const [expanded, setExpanded] = React.useState(depth < 2)
   const [loadedChildren, setLoadedChildren] = React.useState(Array.isArray(node?.children) ? node.children : [])
   const children = loadedChildren
   const hasChildren = children.length > 0 || node?.level === 4
+  const selectNode = () => onSelect(node)
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      selectNode()
+      return
+    }
+    if (event.key === 'ArrowRight' && hasChildren && !expanded) {
+      event.preventDefault()
+      toggleExpanded(event)
+      return
+    }
+    if (event.key === 'ArrowLeft' && hasChildren && expanded) {
+      event.preventDefault()
+      setExpanded(false)
+    }
+  }
   const toggleExpanded = async (event) => {
     event.stopPropagation()
     if (!expanded && node?.level === 4 && children.length === 0 && projectId) {
@@ -5936,8 +6026,18 @@ function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, o
     style: { marginLeft: `${depth * 16}px` },
     children: [
       jsxs('div', {
-        className: 'flex items-center gap-2 rounded px-2 py-1 hover:bg-(--chrome-action-hover)',
-        onClick: () => onSelect(node),
+        role: 'treeitem',
+        tabIndex: selectedNodeId === node.id || (selectedNodeId == null && depth === 0) ? 0 : -1,
+        'aria-level': depth + 1,
+        'aria-selected': selectedNodeId === node.id,
+        'aria-expanded': hasChildren ? expanded : undefined,
+        className: cn(
+          'flex items-center gap-2 rounded px-2 py-1 hover:bg-(--chrome-action-hover)',
+          selectedNodeId === node.id ? 'bg-(--chrome-action-active)' : '',
+        ),
+        onClick: selectNode,
+        onDoubleClick: () => onInspect(node),
+        onKeyDown: handleKeyDown,
         children: [
           hasChildren
             ? jsx('button', {
@@ -5950,6 +6050,9 @@ function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, o
             : jsx('span', { className: 'w-4' }),
           jsx(HierarchyStatusDot, { node }),
           jsx('span', { className: 'min-w-0 flex-1 truncate', children: node.title }),
+          selectedNodeId === node.id
+            ? jsx('button', { type: 'button', 'aria-label': `Inspect ${node.title}`, onClick: (event) => { event.stopPropagation(); onInspect(node) }, className: 'rounded border border-(--ui-stroke-secondary) px-1.5 text-xs text-(--ui-text-secondary) hover:bg-(--chrome-action-hover)', children: 'Inspect' })
+            : null,
           node.total_count > 0
             ? jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: `${node.done_count}/${node.total_count} done` })
             : null,
@@ -5960,7 +6063,7 @@ function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, o
         : null,
       expanded
         ? children.length > 0
-          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, boardSlug, projectId, onChanged, onSelect }))
+          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, boardSlug, projectId, onChanged, onSelect, selectedNodeId, onInspect }))
           : node?.level === 4
             ? jsx('div', { className: 'pl-8 text-xs text-(--ui-text-tertiary)', children: 'Tasks load when available.' })
             : null
@@ -6267,8 +6370,12 @@ function HierarchyMapPane() {
   const [state, setState] = React.useState({ loading: true, tree: null, error: null })
   const [treeRevision, setTreeRevision] = React.useState(0)
   const [selectedNode, setSelectedNode] = React.useState(null)
+  const [inspectedNode, setInspectedNode] = React.useState(null)
   const { decisions, loading: decisionsLoading, error: decisionsError, refresh: refreshDecisions } = useHierarchyDecisions(projectId)
 
+  React.useEffect(() => {
+    if (inspectedNode && selectedNode && inspectedNode.id === selectedNode.id) setInspectedNode(selectedNode)
+  }, [selectedNode, inspectedNode])
   React.useEffect(() => {
     let active = true
     if (!projectId) {
@@ -6294,13 +6401,28 @@ function HierarchyMapPane() {
   }, [projectId, treeRevision])
 
   const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []
+  const inspectedDecisions = inspectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, inspectedNode.id)) : []
   const content = boardsLoading || state.loading
     ? 'Loading map…'
     : boardsError || state.error
       ? (boardsError || state.error)
       : !state.tree
         ? 'No map yet'
-        : jsx(HierarchyTreeNode, { key: treeRevision, node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })
+        : jsx('div', {
+            role: 'tree',
+            'aria-label': 'Project hierarchy',
+            className: 'flex flex-col gap-1',
+            children: jsx(HierarchyTreeNode, {
+              key: treeRevision,
+              node: state.tree,
+              boardSlug: effectiveBoardSlug,
+              projectId,
+              onChanged: () => setTreeRevision((value) => value + 1),
+              onSelect: setSelectedNode,
+              onInspect: setInspectedNode,
+              selectedNodeId: selectedNode?.id,
+            }),
+          })
   return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
     jsx('div', { className: 'font-medium', children: 'Map' }),
     content,
@@ -6311,6 +6433,17 @@ function HierarchyMapPane() {
       ...attachedDecisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: refreshDecisions })),
       jsx(HierarchyDecisionComposer, { projectId, selectedNode, onPushed: refreshDecisions }),
     ] }) : null,
+    inspectedNode
+      ? jsx(HierarchyNodeInspector, {
+          node: inspectedNode,
+          decisions: inspectedDecisions,
+          decisionsLoading,
+          decisionsError,
+          projectId,
+          onClose: () => setInspectedNode(null),
+          onDecisionChanged: refreshDecisions,
+        })
+      : null,
   ] })
 }
 
