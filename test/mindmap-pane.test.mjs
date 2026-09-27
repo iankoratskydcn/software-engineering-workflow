@@ -11,7 +11,7 @@ assert.doesNotMatch(source, /id: ['"]decision-hud-map-nav['"]/)
 assert.match(source, /host\.request\('cli\.exec', \{ argv: \['decision', 'node', 'tree', '--project', projectId\]/)
 assert.match(source, /function parseHierarchyTreeResponse\(res\)[\s\S]*?parseTrailingJson\(res\.output\)/)
 assert.match(source, /VALID_HIERARCHY_STATUS_COLORS[\s\S]*?grey[\s\S]*?blue[\s\S]*?red[\s\S]*?green/)
-assert.match(source, /No map yet/)
+assert.match(source, /No workflow data yet/)
 assert.match(source, /done_count[\s\S]*?total_count/)
 
 // Wave 4: node-attached decisions must reuse the existing queue/card path.

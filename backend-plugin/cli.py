@@ -24,6 +24,7 @@ try:
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
         _cmd_spec_tree, _cmd_spec_seed_demo,
     )
+    from .cli_workflow_cmds import _cmd_workflow_seed_demo
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -38,6 +39,7 @@ except ImportError:
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
         _cmd_spec_tree, _cmd_spec_seed_demo,
     )
+    from cli_workflow_cmds import _cmd_workflow_seed_demo  # type: ignore[import-not-found]
 
 _TRIAGE_SYSTEM_PROMPT = (
     "You triage raw problem reports into a bounded owner decision for a human "
@@ -425,6 +427,12 @@ def setup(p) -> None:
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--item-id", required=True, dest="item_id")
     v.set_defaults(func=_cmd_planning_delete)
+
+    workflow = verbs.add_parser("workflow", help="Seed the complete Software Engineering Workflow starter data")
+    workflow_verbs = workflow.add_subparsers(dest="workflow_verb", required=True)
+    v = workflow_verbs.add_parser("seed-demo", help="Create idempotent starter data across every workflow surface")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_workflow_seed_demo)
 
     p.set_defaults(func=lambda args: p.print_help())
 

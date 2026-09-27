@@ -6400,6 +6400,20 @@ function HierarchyMapPane() {
     return () => { active = false }
   }, [projectId, treeRevision])
 
+  const [starterBusy, setStarterBusy] = React.useState(false)
+  const generateStarterWorkflow = async () => {
+    if (!projectId || starterBusy) return
+    setStarterBusy(true)
+    try {
+      const res = await host.request('cli.exec', { argv: ['decision', 'workflow', 'seed-demo', '--project-id', projectId], timeout: 30 })
+      if (res && res.code !== 0) throw new Error(res.output || 'Starter workflow generation failed')
+      setTreeRevision((value) => value + 1)
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+    } finally {
+      setStarterBusy(false)
+    }
+  }
   const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []
   const inspectedDecisions = inspectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, inspectedNode.id)) : []
   const content = boardsLoading || state.loading
@@ -6407,7 +6421,11 @@ function HierarchyMapPane() {
     : boardsError || state.error
       ? (boardsError || state.error)
       : !state.tree
-        ? 'No map yet'
+        ? jsx('section', { className: 'flex max-w-xl flex-col gap-3 rounded border border-(--ui-stroke-secondary) p-4', children: [
+            jsx('div', { className: 'font-medium', children: 'No workflow data yet' }),
+            jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Generate the project-scoped starter MindMap, roadmap, flowchart, architecture, risk, tradeoff, and Scrum Planning items.' }),
+            jsx('button', { type: 'button', className: 'w-fit rounded bg-(--ui-accent) px-3 py-2 text-sm font-medium text-white disabled:opacity-60', disabled: starterBusy || !projectId, onClick: generateStarterWorkflow, children: starterBusy ? 'Generating starter workflow…' : 'Generate starter workflow' }),
+          ] })
         : jsx('div', {
             role: 'tree',
             'aria-label': 'Project hierarchy',
