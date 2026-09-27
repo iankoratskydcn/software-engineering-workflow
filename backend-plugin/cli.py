@@ -22,7 +22,7 @@ try:
     from .cli_spec_cmds import (
         _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
-        _cmd_spec_tree,
+        _cmd_spec_tree, _cmd_spec_seed_demo,
     )
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
@@ -36,7 +36,7 @@ except ImportError:
     from cli_spec_cmds import (  # type: ignore[import-not-found]
         _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
-        _cmd_spec_tree,
+        _cmd_spec_tree, _cmd_spec_seed_demo,
     )
 
 _TRIAGE_SYSTEM_PROMPT = (
@@ -233,6 +233,9 @@ def setup(p) -> None:
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--parent-id", default=None, dest="parent_id")
     v.set_defaults(func=_cmd_spec_add_node)
+    v = spec_verbs.add_parser("seed-demo", help="Create the idempotent canonical MindMap demo tree")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_spec_seed_demo)
     v = spec_verbs.add_parser("tree")
     v.add_argument("--project-id", required=True, dest="project_id")
     v.set_defaults(func=_cmd_spec_tree)

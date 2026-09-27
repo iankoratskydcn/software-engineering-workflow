@@ -53,6 +53,96 @@ def _cmd_spec_add_node(args):
     _run(args, action)
 
 
+_DEMO_MINDMAP = {
+    "title": "Software Engineering Workflow",
+    "children": [
+        {
+            "kind": "epic",
+            "title": "Product direction",
+            "children": [
+                {
+                    "kind": "feature",
+                    "title": "Project hierarchy",
+                    "children": [
+                        {
+                            "kind": "story",
+                            "title": "Create and edit nodes",
+                            "criteria": [
+                                "A user can create a node beneath a valid parent.",
+                                "A user can rename a node without changing its identity.",
+                                "Invalid cross-project parents are rejected.",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            "kind": "epic",
+            "title": "Engineering quality",
+            "children": [
+                {
+                    "kind": "feature",
+                    "title": "Verification",
+                    "children": [
+                        {
+                            "kind": "story",
+                            "title": "Attach decisions to requirements",
+                            "criteria": [
+                                "A selected node can display its attached decisions.",
+                                "Decision links remain project-scoped.",
+                                "The node remains authoritative for structure.",
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}
+
+
+def _find_child(conn, project_id, parent_id, kind, title):
+    return conn.execute(
+        "SELECT * FROM spec_nodes WHERE project_id = ? AND parent_id IS ? AND kind = ? AND title = ?",
+        (project_id, parent_id, kind, title),
+    ).fetchone()
+
+
+def _seed_demo_node(db, conn, project_id, spec, parent_id=None, level=0):
+    kind = "theme" if level == 0 else spec["kind"]
+    row = _find_child(conn, project_id, parent_id, kind, spec["title"])
+    if row is None:
+        criteria = spec.get("criteria")
+        row = db.create_spec_node(
+            conn,
+            project_id=project_id,
+            kind=kind,
+            title=spec["title"],
+            parent_id=parent_id,
+            criteria_json=json.dumps(criteria) if criteria is not None else None,
+        )
+    node = dict(row) if not isinstance(row, dict) else row
+    for child in spec.get("children", []):
+        _seed_demo_node(db, conn, project_id, child, node["id"], level + 1)
+    return node
+
+
+def _cmd_spec_seed_demo(args):
+    def action(db, conn):
+        project_id = db._spec_project(args.project_id)
+        existing = conn.execute(
+            "SELECT * FROM spec_nodes WHERE project_id = ? AND parent_id IS NULL",
+            (project_id,),
+        ).fetchall()
+        if existing and not any(row["title"] == _DEMO_MINDMAP["title"] for row in existing):
+            raise db.BoundaryError("conflict", "project already has a different mindmap root")
+        root = _seed_demo_node(db, conn, project_id, _DEMO_MINDMAP)
+        tree = db.get_spec_tree(conn, project_id=project_id)
+        _print({"ok": True, "created_or_reused_root": root["id"], "tree": tree})
+    _run(args, action)
+
+
 def _cmd_spec_tree(args):
     _run(args, lambda db, conn: _print({"ok": True, "tree": db.get_spec_tree(conn, project_id=args.project_id)}))
 
