@@ -89,7 +89,7 @@ assert.ok(findRoute(registrations, '/decision-hud/agent-metrics/snapshot'), 'Age
   assert.ok(findRoute(registrations, comparisonRoutePath), 'comparison route must stay registered for old links/bookmarks')
   const navEntries = registrations.filter((r) => r.area === 'sidebar.nav')
   assert.ok(!navEntries.some((r) => r.data?.path === comparisonRoutePath), 'Cost/Quality/Speed must not be its own sidebar nav entry')
-  assert.ok(navEntries.some((r) => r.data?.label === 'Agent Matrix' && r.data?.path === ROUTE_PATH), 'Agent Matrix must remain the single nav destination')
+  assert.ok(navEntries.some((r) => r.data?.label === 'Retrospective' && r.data?.path === ROUTE_PATH), 'Retrospective must remain the single nav destination')
 }
 
 async function mountPage(readModelResponse, scope = {}) {
@@ -117,7 +117,7 @@ async function mountPage(readModelResponse, scope = {}) {
   const mounted = await mountPage(validSnapshot)
   const rendered = text(mounted.container)
   assert.match(rendered, /Dashboard/)
-  assert.match(rendered, /Agent Matrix/)
+  assert.match(rendered, /Retrospective/)
   assert.match(rendered, /token_burn_rate/i)
   assert.match(rendered, /Heatmap/i)
   assert.equal(mounted.errors.length, 0)

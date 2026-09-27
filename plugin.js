@@ -1241,7 +1241,7 @@ function AgentDashboardCombinedPage({ rest }) {
       jsxs('div', {
         'data-dashboard-section': 'agent-matrix',
         children: [
-          jsx('div', { className: 'font-medium', children: 'Agent Matrix' }),
+          jsx('div', { className: 'font-medium', children: 'Retrospective' }),
           widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics Widgets', children: jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }) }),
         ],
       }),
@@ -4265,7 +4265,7 @@ function PanePlacementControls() {
         children: 'Docked pins the pane beside chat; session tab adds it next to SESSIONS/BOTS instead.',
       }),
       row('decisionHud', 'Decision HUD'),
-      row('agentDashboard', 'Agent Matrix'),
+      row('agentDashboard', 'Retrospective'),
       jsx('div', { className: 'text-[0.7rem] text-(--ui-text-tertiary)', children: 'Task List remains docked beside chat.' }),
       jsx(Button, {
         variant: 'outline',
@@ -5159,7 +5159,7 @@ function SettingsFullscreen({ isOpen, onClose, layout, onGridChange, sidebarSett
                       jsx(GridLayoutControls, { layout, onChange: onGridChange }),
                       jsx(SidebarPositionControls, { settings: sidebarSettings, onChange: onSidebarChange }),
                       jsx(Separator, {}),
-                      jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children: 'Decision HUD and Agent Matrix open as full workspace pages. Task List remains docked beside chat.' }),
+                      jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children: 'Decision HUD and Retrospective open as full workspace pages. Task List remains docked beside chat.' }),
                     ],
                   }),
             }),
@@ -6943,14 +6943,14 @@ export default {
         id: 'agent-dashboard-nav',
         area: SIDEBAR_NAV_AREA,
         order: 44,
-        data: { codicon: 'pulse', label: 'Agent Matrix', path: AGENT_DASHBOARD_ROUTE_PATH },
+        data: { codicon: 'pulse', label: 'Retrospective', path: AGENT_DASHBOARD_ROUTE_PATH },
       },
       {
         id: 'agent-dashboard-open',
         area: PALETTE_AREA,
         data: {
           id: 'decision-hud.agent-dashboard',
-          label: 'Agent Matrix: Open page',
+          label: 'Retrospective: Open page',
           keywords: ['agent', 'dashboard', 'metrics', 'matrix', 'heatmap', 'charts'],
           run: () => host.navigate(AGENT_DASHBOARD_ROUTE_PATH),
         },
