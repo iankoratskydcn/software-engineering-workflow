@@ -1,0 +1,15 @@
+{
+  "reviewed_sha": "e147b9641368e2f49ac439b3730f4a42826f4a88",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "worktree": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "status": "pass",
+  "migration_target": 13,
+  "migration_paths": ["fresh", "v11_to_v12_to_v13", "v12_to_v13", "idempotent rerun", "partial-schema refusal", "rollback/no-mutation"],
+  "backend_plugin": {"passed": 162, "skipped": 1},
+  "backend_postgresql_integration": {"passed": 69, "warnings": 1},
+  "frontend": {"passed": 48, "failed": 0},
+  "focused_hostile_migration": {"passed": 38, "failed": 0},
+  "checks": {"compileall": "pass", "py_compile": "pass", "node_check": "pass", "git_diff_check": "pass", "manifest_json": "pass"},
+  "known_nonblocking": ["One backend-plugin test skipped by delegated context", "React test output includes existing non-failing structural warnings and intentional error-boundary traces"],
+  "unresolved_findings": []
+}
