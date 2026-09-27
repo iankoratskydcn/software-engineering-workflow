@@ -307,3 +307,199 @@ def test_invalid_legacy_tradeoff_kind_refuses_migration_without_mutation(tmp_pat
     assert "\n".join(conn.iterdump()) == before_dump
     assert conn.execute("SELECT kind FROM tradeoffs WHERE id='legacy'").fetchone()[0] == "invalid"
     conn.close()
+
+
+def _legacy_v8_conn(monkeypatch, tmp_path, *, rows=(), legacy_risks=False, include_tradeoffs=True, risk_rows=()):
+    monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(
+        """
+        PRAGMA user_version = 8;
+        CREATE TABLE decisions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            choices_json TEXT NOT NULL,
+            recommended TEXT,
+            urgency TEXT NOT NULL DEFAULT 'normal',
+            created_at REAL NOT NULL,
+            resolved_choice TEXT,
+            resolved_at REAL
+        );
+        """
+    )
+    if legacy_risks:
+        conn.execute(
+            """
+            CREATE TABLE risks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                decision_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+    if include_tradeoffs:
+        conn.execute(
+            """
+            CREATE TABLE tradeoffs (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                decision_id TEXT,
+                title TEXT NOT NULL,
+                option_a TEXT NOT NULL,
+                option_b TEXT NOT NULL,
+                prioritized_side TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+    if risk_rows:
+        conn.executemany(
+            "INSERT INTO risks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            risk_rows,
+        )
+    if rows:
+        conn.executemany(
+            "INSERT INTO tradeoffs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+    conn.commit()
+    return conn
+
+
+def test_empty_v8_legacy_tradeoffs_upgrade_atomically_to_v13_and_rerun_idempotently(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(monkeypatch, tmp_path, legacy_risks=True)
+    try:
+        db.init_db(conn)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")]
+        assert columns == [
+            "id", "project_id", "decision_id", "kind", "title", "choice",
+            "alt_label", "cost", "gain", "prioritized_side", "created_at", "updated_at",
+        ]
+        risk_sql = "".join(conn.execute("SELECT sql FROM sqlite_master WHERE name='risks'").fetchone()[0].lower().split())
+        assert "check(statusin('open','mitigated','accepted','closed'))" in risk_sql
+        before_rerun = "\n".join(conn.iterdump())
+        db.init_db(conn)
+        assert "\n".join(conn.iterdump()) == before_rerun
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    finally:
+        conn.close()
+
+    reopened = db.connect()
+    try:
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert reopened.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        reopened.close()
+
+
+def test_empty_v8_legacy_tradeoffs_migration_rolls_back_on_late_failure(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(monkeypatch, tmp_path)
+    try:
+        before = ("\n".join(conn.iterdump()), conn.execute("PRAGMA user_version").fetchone()[0])
+        conn.set_authorizer(
+            lambda action, *_: sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_CREATE_INDEX else sqlite3.SQLITE_OK
+        )
+        with pytest.raises(sqlite3.DatabaseError):
+            db._migrate_v8_stage2_risk_tradeoffs(conn)
+        conn.set_authorizer(None)
+        assert ("\n".join(conn.iterdump()), conn.execute("PRAGMA user_version").fetchone()[0]) == before
+        assert [row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")] == [
+            "id", "project_id", "decision_id", "title", "option_a", "option_b",
+            "prioritized_side", "created_at", "updated_at",
+        ]
+    finally:
+        conn.close()
+
+
+def test_nonempty_v8_legacy_tradeoffs_refuse_without_any_mutation(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(
+        monkeypatch,
+        tmp_path,
+        rows=[("legacy", "p1", None, "Legacy", "A", "B", None, 1, 1)],
+    )
+    try:
+        before = ("\n".join(conn.iterdump()), conn.execute("PRAGMA user_version").fetchone()[0])
+        with pytest.raises(db.BoundaryError, match="tradeoff"):
+            db.init_db(conn)
+        assert ("\n".join(conn.iterdump()), conn.execute("PRAGMA user_version").fetchone()[0]) == before
+    finally:
+        conn.close()
+
+
+def test_nonempty_legacy_risks_without_tradeoffs_refuse_without_mutation(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(
+        monkeypatch,
+        tmp_path,
+        legacy_risks=True,
+        include_tradeoffs=False,
+        risk_rows=[("risk-1", "p1", None, "Risk", "desc", "open", 1, 1)],
+    )
+    try:
+        before = "\n".join(conn.iterdump())
+        with pytest.raises(db.BoundaryError, match="migration"):
+            db.init_db(conn)
+        assert "\n".join(conn.iterdump()) == before
+        assert conn.execute("SELECT count(*) FROM risks").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    finally:
+        conn.close()
+
+
+def test_mixed_empty_legacy_and_malformed_canonical_tradeoffs_refuse(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(monkeypatch, tmp_path, legacy_risks=True)
+    try:
+        conn.execute("DROP TABLE tradeoffs")
+        conn.execute(
+            "CREATE TABLE tradeoffs (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT, kind TEXT NOT NULL, title TEXT NOT NULL, choice TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)"
+        )
+        conn.commit()
+        before = "\n".join(conn.iterdump())
+        with pytest.raises(db.BoundaryError, match="canonical constrained schema"):
+            db.init_db(conn)
+        assert "\n".join(conn.iterdump()) == before
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    finally:
+        conn.close()
+
+
+def test_mixed_empty_legacy_tradeoffs_and_malformed_canonical_risks_refuse(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(monkeypatch, tmp_path)
+    try:
+        conn.execute(
+            "CREATE TABLE risks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT, title TEXT NOT NULL, description TEXT, breaks_when TEXT, status TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)"
+        )
+        conn.commit()
+        before = "\n".join(conn.iterdump())
+        with pytest.raises(db.BoundaryError, match="canonical constrained schema"):
+            db.init_db(conn)
+        assert "\n".join(conn.iterdump()) == before
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
+    finally:
+        conn.close()
+
+
+def test_v8_migration_preserves_outer_transaction_on_failure(monkeypatch, tmp_path):
+    conn = _legacy_v8_conn(monkeypatch, tmp_path)
+    try:
+        conn.execute("CREATE TABLE caller_state (value TEXT)")
+        conn.execute("INSERT INTO caller_state VALUES ('keep')")
+        conn.set_authorizer(
+            lambda action, *_: sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_CREATE_INDEX else sqlite3.SQLITE_OK
+        )
+        with pytest.raises(sqlite3.DatabaseError):
+            db._migrate_v8_stage2_risk_tradeoffs(conn)
+        conn.set_authorizer(None)
+        assert conn.execute("SELECT value FROM caller_state").fetchone()[0] == "keep"
+        conn.rollback()
+    finally:
+        conn.close()

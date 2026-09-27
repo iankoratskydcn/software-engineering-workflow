@@ -365,17 +365,36 @@ _RISK_STATUSES = ("open", "mitigated", "accepted", "closed")
 
 def _preflight_risk_tradeoff_legacy(conn: sqlite3.Connection) -> None:
     """Refuse incompatible legacy rows before any migration write."""
-    table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tradeoffs'").fetchone()
-    if table is None:
+    tradeoff_table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tradeoffs'").fetchone()
+    risk_table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='risks'").fetchone()
+    if tradeoff_table is None and risk_table is None:
         return
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")}
-    required = {"id", "project_id", "kind", "title", "choice", "created_at", "updated_at"}
-    if not required.issubset(columns):
-        raise BoundaryError("constraint", "tradeoff migration requires canonical columns")
+
+    legacy_tradeoffs = {"id", "project_id", "decision_id", "title", "option_a", "option_b", "prioritized_side", "created_at", "updated_at"}
+    canonical_tradeoffs = {"id", "project_id", "kind", "title", "choice", "created_at", "updated_at"}
+    legacy_empty_tradeoffs = False
+    if tradeoff_table is not None:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")}
+        if not canonical_tradeoffs.issubset(columns):
+            if columns != legacy_tradeoffs or conn.execute("SELECT 1 FROM tradeoffs LIMIT 1").fetchone() is not None:
+                raise BoundaryError("constraint", "tradeoff migration requires canonical columns")
+            legacy_empty_tradeoffs = True
+
+    legacy_risks = {"id", "project_id", "decision_id", "title", "description", "status", "created_at", "updated_at"}
+    legacy_empty_risks = False
+    if risk_table is not None:
+        risk_columns = {row[1] for row in conn.execute("PRAGMA table_info(risks)")}
+        if risk_columns == legacy_risks and conn.execute("SELECT 1 FROM risks LIMIT 1").fetchone() is None:
+            legacy_empty_risks = True
+
     for name, required_sql in (
         ("risks", ("check(statusin('open','mitigated','accepted','closed'))", "foreignkey(project_id,decision_id)")),
         ("tradeoffs", ("check(kindin('scale','duel','anchor'))", "foreignkey(project_id,decision_id)", "prioritized_side")),
     ):
+        if name == "risks" and legacy_empty_risks:
+            continue
+        if name == "tradeoffs" and legacy_empty_tradeoffs:
+            continue
         row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
         if row is not None:
             sql = "".join((row[0] or "").lower().split())
@@ -384,32 +403,67 @@ def _preflight_risk_tradeoff_legacy(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_v8_stage2_risk_tradeoffs(conn: sqlite3.Connection) -> None:
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_id_unique ON decisions(project_id, id)")
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS risks (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
-            title TEXT NOT NULL, description TEXT, breaks_when TEXT,
-            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','mitigated','accepted','closed')),
-            created_at REAL NOT NULL, updated_at REAL NOT NULL,
-            UNIQUE(project_id, id),
-            FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
-        );
-        CREATE INDEX IF NOT EXISTS idx_risks_project ON risks(project_id, created_at, id);
-        CREATE TABLE IF NOT EXISTS tradeoffs (
-            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
-            kind TEXT NOT NULL CHECK(kind IN ('scale','duel','anchor')),
-            title TEXT NOT NULL, choice TEXT NOT NULL, alt_label TEXT, cost TEXT, gain TEXT,
-            prioritized_side TEXT CHECK(prioritized_side IS NULL OR prioritized_side IN ('a','b')),
-            created_at REAL NOT NULL, updated_at REAL NOT NULL,
-            UNIQUE(project_id, id),
-            FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
-        );
-        CREATE INDEX IF NOT EXISTS idx_tradeoffs_project ON tradeoffs(project_id, created_at, id);
-        """
-    )
-    if conn.execute("PRAGMA user_version").fetchone()[0] < 8:
-        conn.execute("PRAGMA user_version = 8")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")}
+    legacy = {"id", "project_id", "decision_id", "title", "option_a", "option_b", "prioritized_side", "created_at", "updated_at"}
+    risk_row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='risks'").fetchone()
+    risk_columns = {row[1] for row in conn.execute("PRAGMA table_info(risks)")} if risk_row else set()
+    legacy_risks = {"id", "project_id", "decision_id", "title", "description", "status", "created_at", "updated_at"}
+    rebuilding_legacy = columns == legacy
+    rebuilding_legacy_risks = risk_columns == legacy_risks
+    outer_transaction = conn.in_transaction
+    savepoint = "stage2_v8_risk_tradeoffs"
+    try:
+        if outer_transaction:
+            conn.execute(f"SAVEPOINT {savepoint}")
+        else:
+            conn.execute("BEGIN IMMEDIATE")
+        if rebuilding_legacy:
+            conn.execute("DROP INDEX IF EXISTS idx_tradeoffs_project")
+            conn.execute("DROP TABLE tradeoffs")
+        if rebuilding_legacy_risks:
+            conn.execute("DROP INDEX IF EXISTS idx_risks_project")
+            conn.execute("DROP TABLE risks")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_id_unique ON decisions(project_id, id)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS risks (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+                title TEXT NOT NULL, description TEXT, breaks_when TEXT,
+                status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','mitigated','accepted','closed')),
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id),
+                FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_risks_project ON risks(project_id, created_at, id)")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tradeoffs (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+                kind TEXT NOT NULL CHECK(kind IN ('scale','duel','anchor')),
+                title TEXT NOT NULL, choice TEXT NOT NULL, alt_label TEXT, cost TEXT, gain TEXT,
+                prioritized_side TEXT CHECK(prioritized_side IS NULL OR prioritized_side IN ('a','b')),
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id),
+                FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tradeoffs_project ON tradeoffs(project_id, created_at, id)")
+        if conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+            conn.execute("PRAGMA user_version = 8")
+        if outer_transaction:
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        else:
+            conn.commit()
+    except Exception:
+        if outer_transaction:
+            conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+            conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+        else:
+            conn.rollback()
+        raise
 
 
 def _migrate_v9_flowcharts(conn: sqlite3.Connection) -> None:
