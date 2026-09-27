@@ -1,0 +1,13 @@
+{
+  "surface": "roadmap-ui",
+  "source_sha": "91ff8b800fac5b058cfb66c43557b635c233c0b3",
+  "implementation_sha": "48ce64b6178057e2bade20601308bcc33fb10491",
+  "canonical_parent_sha": "5ee4ba161ac616046139836212f3b2520ae9713a",
+  "reviewed_sha": "48ce64b6178057e2bade20601308bcc33fb10491",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "focused_tests": {"command": "node --test test/roadmap-route.test.mjs", "result": "10 passed"},
+  "frontend_full": {"command": "npm test", "result": "48 passed, 0 failed"},
+  "review": {"verdict": "PASS", "reviewer": "independent exact-SHA worker", "findings": []},
+  "contract_checks": ["route/sidebar registration", "project-scoped list", "stale response suppression", "add/update command parity", "relationship preservation", "failed draft preservation", "newline list parsing", "canonical roadmap list usage"],
+  "verification": {"node_check": "passed", "diff_check": "passed", "clean_tree": "passed"}
+}

@@ -21,7 +21,7 @@ for (const badValue of ['null', '42', '"left"', '[]', 'false']) {
   localStorage.setItem('decision-hud:sidebar-settings', badValue)
 
   const regs = collectRegistrations()
-  const paneReg = findRegistration(regs, 'panes', 'decision-hud:pane')
+  const paneReg = findRegistration(regs, 'routes', 'decision-hud-page')
   const { errors, unmount } = mount(paneReg.render)
 
   await flush()

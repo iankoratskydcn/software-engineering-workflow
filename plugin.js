@@ -28,6 +28,20 @@ import { Badge, Button, cn, Codicon, haptic, host, PALETTE_AREA, ROUTES_AREA, SI
 import { jsx, jsxs } from 'react/jsx-runtime'
 import * as React from 'react'
 
+// Spec Digest read boundary: persisted criteria may be corrupt or wrong-shaped.
+function parseSpecCriteria(criteria_json) {
+  if (!criteria_json) return { items: [], error: null }
+  try {
+    const parsed = JSON.parse(criteria_json)
+    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {
+      return { items: [], error: 'malformed criteria' }
+    }
+    return { items: parsed, error: null }
+  } catch {
+    return { items: [], error: 'malformed criteria' }
+  }
+}
+
 const PLUGIN_ID = 'decision-hud'
 const POLL_MS = 4000
 
@@ -1220,7 +1234,7 @@ function AgentDashboardCombinedPage({ rest }) {
         'data-dashboard-section': 'read-model',
         children: [
           jsx('div', { className: 'font-medium', children: 'Dashboard' }),
-          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }),
+          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics', children: jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }) }),
         ],
       }),
       jsx(Separator, {}),
@@ -1228,7 +1242,7 @@ function AgentDashboardCombinedPage({ rest }) {
         'data-dashboard-section': 'agent-matrix',
         children: [
           jsx('div', { className: 'font-medium', children: 'Agent Matrix' }),
-          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }),
+          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics Widgets', children: jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }) }),
         ],
       }),
       jsx(Separator, {}),
@@ -5804,6 +5818,613 @@ function MetricsSidebar({ agentHealth, side, widthPx, availableMetrics, projectI
 }
 
 
+const VALID_HIERARCHY_STATUS_COLORS = {
+  pending: 'grey',
+  in_progress: 'blue',
+  blocked: 'red',
+  done: 'green',
+}
+
+function parseHierarchyTreeResponse(res) {
+  if (!res || typeof res.output !== 'string') throw new Error('hierarchy tree output unavailable')
+  const payload = parseTrailingJson(res.output)
+  return payload && payload.tree ? payload.tree : payload
+}
+
+function hierarchyNodeStatus(node) {
+  if (node && VALID_HIERARCHY_STATUS_COLORS[node.status]) return node.status
+  if (!node || !node.total_count) return 'pending'
+  if (node.done_count === node.total_count) return 'done'
+  if (node.done_count > 0) return 'in_progress'
+  return 'blocked'
+}
+
+function HierarchyStatusDot({ node }) {
+  const status = hierarchyNodeStatus(node)
+  return jsx('span', {
+    className: 'inline-block h-2 w-2 shrink-0 rounded-full',
+    style: { backgroundColor: VALID_HIERARCHY_STATUS_COLORS[status] },
+    title: status,
+    'aria-label': `${status} status`,
+  })
+}
+
+function hierarchyDecisionMatchesNode(decision, nodeId) {
+  if (!decision || !nodeId) return false
+  const payload = decision.card_payload
+  const parsed = typeof payload === 'string' ? (() => { try { return JSON.parse(payload) } catch { return null } })() : payload
+  return !!parsed && parsed._hierarchy_node_id === nodeId
+}
+
+function useHierarchyDecisions(projectId) {
+  const [state, setState] = React.useState({ decisions: [], loading: true, error: null })
+  const refresh = React.useCallback(async () => {
+    if (!projectId) {
+      setState({ decisions: [], loading: false, error: null })
+      return
+    }
+    try {
+      const result = await cliExec(['decision', 'list', '--limit', String(DASHBOARD_MAX_ROWS), '--project-id', projectId])
+      setState({ decisions: Array.isArray(result?.decisions) ? result.decisions : [], loading: false, error: null })
+    } catch (error) {
+      setState((current) => ({ ...current, loading: false, error: String(error.message || error) }))
+    }
+  }, [projectId])
+  React.useEffect(() => {
+    refresh()
+    const id = setInterval(refresh, POLL_MS)
+    return () => clearInterval(id)
+  }, [refresh])
+  return { ...state, refresh }
+}
+
+function HierarchyKanbanLink({ node, boardSlug, onChanged }) {
+  const [taskIdInput, setTaskIdInput] = React.useState('')
+  const [task, setTask] = React.useState(null)
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState(null)
+
+  React.useEffect(() => {
+    let active = true
+    if (!node.kanban_task_id || !boardSlug) {
+      setTask(null)
+      return () => { active = false }
+    }
+    cliExec(['kanban', '--board', boardSlug, 'show', node.kanban_task_id, '--json'])
+      .then((value) => active && setTask(value && value.task ? value.task : value))
+      .catch((e) => active && setError(String(e.message || e)))
+    return () => { active = false }
+  }, [boardSlug, node.kanban_task_id])
+
+  const link = async () => {
+    const taskId = taskIdInput.trim()
+    if (!taskId || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const value = await cliExec(['kanban', '--board', boardSlug, 'show', taskId, '--json'])
+      if (!value || value.ok === false) throw new Error((value && value.error) || 'Kanban card not found')
+      await cliExec(['decision', 'node', 'link-kanban', node.id, taskId])
+      setTaskIdInput('')
+      onChanged()
+    } catch (e) {
+      setError(String(e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const unlink = async () => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await cliExec(['decision', 'node', 'update', node.id, '--kanban-task', ''])
+      onChanged()
+    } catch (e) {
+      setError(String(e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (node.kanban_task_id) {
+    return jsxs('div', {
+      className: 'ml-6 flex flex-wrap items-center gap-2 text-xs text-(--ui-text-secondary)',
+      children: [
+        jsx('span', { children: task ? `${task.title || node.kanban_task_id} (${task.status || 'unknown'})` : node.kanban_task_id }),
+        jsx('button', { type: 'button', disabled: busy, onClick: unlink, className: 'underline disabled:opacity-50', children: 'Unlink' }),
+        error ? jsx('span', { className: 'text-(--ui-danger,#e5484d)', children: error }) : null,
+      ],
+    })
+  }
+
+  return jsxs('div', {
+    className: 'ml-6 flex flex-wrap items-center gap-2',
+    children: [
+      jsx('input', {
+        value: taskIdInput,
+        onChange: (event) => setTaskIdInput(event.target.value),
+        onKeyDown: (event) => { if (event.key === 'Enter') link() },
+        placeholder: 'Kanban task ID',
+        'aria-label': `Link ${node.title} to Kanban card`,
+        className: 'h-6 w-36 rounded border border-(--ui-stroke-secondary) bg-transparent px-1.5 text-xs',
+        disabled: busy || !boardSlug,
+      }),
+      jsx('button', { type: 'button', disabled: busy || !taskIdInput.trim() || !boardSlug, onClick: link, className: 'h-6 rounded border border-(--ui-stroke-secondary) px-2 text-xs disabled:opacity-50', children: busy ? 'Linking…' : 'Link to Kanban card' }),
+      error ? jsx('span', { className: 'text-xs text-(--ui-danger,#e5484d)', children: error }) : null,
+    ],
+  })
+}
+
+function HierarchyTreeNode({ node, depth = 0, boardSlug, projectId, onChanged, onSelect }) {
+  const [expanded, setExpanded] = React.useState(depth < 2)
+  const [loadedChildren, setLoadedChildren] = React.useState(Array.isArray(node?.children) ? node.children : [])
+  const children = loadedChildren
+  const hasChildren = children.length > 0 || node?.level === 4
+  const toggleExpanded = async (event) => {
+    event.stopPropagation()
+    if (!expanded && node?.level === 4 && children.length === 0 && projectId) {
+      try {
+        const result = await cliExec(['decision', 'node', 'list', '--project', projectId, '--parent', node.id])
+        setLoadedChildren(Array.isArray(result?.nodes) ? result.nodes : [])
+      } catch (error) {
+        host.notify({ kind: 'error', message: String(error.message || error) })
+      }
+    }
+    setExpanded((value) => !value)
+  }
+  return jsxs('div', {
+    className: 'flex flex-col gap-1',
+    style: { marginLeft: `${depth * 16}px` },
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2 rounded px-2 py-1 hover:bg-(--chrome-action-hover)',
+        onClick: () => onSelect(node),
+        children: [
+          hasChildren
+            ? jsx('button', {
+                type: 'button',
+                className: 'w-4 text-(--ui-text-secondary)',
+                'aria-label': expanded ? `Collapse ${node.title}` : `Expand ${node.title}`,
+                onClick: toggleExpanded,
+                children: expanded ? '▾' : '▸',
+              })
+            : jsx('span', { className: 'w-4' }),
+          jsx(HierarchyStatusDot, { node }),
+          jsx('span', { className: 'min-w-0 flex-1 truncate', children: node.title }),
+          node.total_count > 0
+            ? jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: `${node.done_count}/${node.total_count} done` })
+            : null,
+        ],
+      }),
+      node?.level >= 4 && node?.level <= 5
+        ? jsx(HierarchyKanbanLink, { node, boardSlug, onChanged })
+        : null,
+      expanded
+        ? children.length > 0
+          ? children.map((child) => jsx(HierarchyTreeNode, { key: child.id, node: child, depth: depth + 1, boardSlug, projectId, onChanged, onSelect }))
+          : node?.level === 4
+            ? jsx('div', { className: 'pl-8 text-xs text-(--ui-text-tertiary)', children: 'Tasks load when available.' })
+            : null
+        : null,
+    ],
+  })
+}
+
+function HierarchyDecisionComposer({ projectId, selectedNode, onPushed }) {
+  const [question, setQuestion] = React.useState('')
+  const [choices, setChoices] = React.useState(['', ''])
+  const [pending, setPending] = React.useState(false)
+  const push = async () => {
+    const cleanQuestion = question.trim()
+    const cleanChoices = choices.map((choice) => choice.trim()).filter(Boolean)
+    if (!projectId || !selectedNode || !cleanQuestion || cleanChoices.length < 2 || pending) return
+    setPending(true)
+    try {
+      await cliExec([
+        'decision', 'push', '--project-id', projectId, '--question', cleanQuestion,
+        ...cleanChoices.flatMap((choice) => ['--choice', choice]),
+        '--card-payload', JSON.stringify({ _hierarchy_node_id: selectedNode.id }),
+      ])
+      setQuestion('')
+      setChoices(['', ''])
+      await onPushed()
+      host.notify({ kind: 'success', message: 'Decision attached' })
+    } catch (error) {
+      host.notify({ kind: 'error', message: String(error.message || error) })
+    } finally {
+      setPending(false)
+    }
+  }
+  return jsxs('div', { className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+    jsx('div', { className: 'font-medium', children: `Attach decision to ${selectedNode.title}` }),
+    jsx('input', { value: question, placeholder: 'Question', onChange: (event) => setQuestion(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+    ...choices.map((choice, index) => jsx('input', { key: index, value: choice, placeholder: `Choice ${index + 1}`, onChange: (event) => setChoices((current) => current.map((item, i) => i === index ? event.target.value : item)), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' })),
+    jsx('button', { type: 'button', disabled: pending, onClick: push, className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: pending ? 'Attaching…' : 'Attach decision' }),
+  ] })
+}
+
+function HierarchyAttachedDecision({ decision, onChanged }) {
+  const [resolving, setResolving] = React.useState(false)
+  const resolve = async (id, choice, payload) => {
+    setResolving(true)
+    try {
+      const actorToken = await getActorToken()
+      const argv = ['decision', 'resolve', id, choice, '--actor-token', actorToken]
+      if (payload) argv.push('--payload', JSON.stringify(payload))
+      await cliExec(argv)
+      await onChanged()
+    } catch (error) {
+      host.notify({ kind: 'error', message: String(error.message || error) })
+    } finally {
+      setResolving(false)
+    }
+  }
+  const defer = async (id) => {
+    setResolving(true)
+    try {
+      await cliExec(['decision', 'defer', id])
+      await onChanged()
+    } catch (error) {
+      host.notify({ kind: 'error', message: String(error.message || error) })
+    } finally {
+      setResolving(false)
+    }
+  }
+  const dismiss = async (id) => resolve(id, DISMISS_SENTINEL_CHOICE)
+  return jsx(DecisionCard, {
+    decision,
+    onResolve: resolve,
+    onDefer: defer,
+    onDiscuss: () => {},
+    onDismiss: dismiss,
+    resolving,
+  })
+}
+
+function parseFlowResponse(res) {
+  if (!res || typeof res.output !== 'string') throw new Error('flow output unavailable')
+  const payload = parseTrailingJson(res.output)
+  if (!payload || payload.ok !== true) {
+    const error = payload?.error
+    const message = error && typeof error === 'object' ? error.message : error
+    throw new Error(message || 'flow request failed')
+  }
+  return payload
+}
+
+function deriveFlowLayout(steps) {
+  const rows = Array.isArray(steps) ? steps : []
+  const byId = new Map(rows.map((step) => [step.id, step]))
+  const depths = new Map()
+  const visit = (id, depth, path = new Set()) => {
+    if (path.has(id)) return
+    depths.set(id, Math.max(depths.get(id) || 0, depth))
+    const next = byId.get(id)?.next || []
+    next.forEach((child) => visit(child, depth + 1, new Set([...path, id])))
+  }
+  if (rows[0]) visit(rows[0].id, 0)
+  rows.forEach((step) => { if (!depths.has(step.id)) depths.set(step.id, 0) })
+  return rows.map((step, index) => ({ ...step, x: (depths.get(step.id) || 0) * 180, y: index * 72 }))
+}
+
+function FlowchartsPane() {
+  const [boardSlug] = React.useState(loadSelectedBoardSlug)
+  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
+  const effectiveBoardSlug = boardSlug || pickDefaultBoardSlug(boards)
+  const projectId = React.useMemo(() => boards.find((item) => item?.slug === effectiveBoardSlug)?.project_id || null, [boards, effectiveBoardSlug])
+  const [state, setState] = React.useState({ loading: true, flows: [], error: null })
+  const [selectedId, setSelectedId] = React.useState(null)
+  const [revision, setRevision] = React.useState(0)
+  const [newName, setNewName] = React.useState(() => '')
+  const [rename, setRename] = React.useState('')
+  const [stepsText, setStepsText] = React.useState('[]')
+  const [mutationLoading, setMutationLoading] = React.useState(false)
+
+  const runFlowCommand = async (argv) => {
+    if (mutationLoading) return false
+    setMutationLoading(true)
+    try {
+      const response = await host.request('cli.exec', { argv, timeout: 30 })
+      parseFlowResponse(response)
+      setState((current) => ({ ...current, error: null }))
+      setRevision((value) => value + 1)
+      return true
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+      return false
+    } finally {
+      /* mutationLoading false after every mutation */
+      setMutationLoading(false)
+    }
+  }
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) { setState((current) => ({ ...current, loading: false, flows: [], error: null })); return () => { active = false } }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    host.request('cli.exec', { argv: ['decision', 'flow', 'list', '--project', projectId], timeout: 30 })
+      .then((res) => { if (!active) return; try { setState((current) => ({ ...current, loading: false, flows: parseFlowResponse(res).flows || [], error: null })) } catch (error) { setState((current) => ({ ...current, loading: false, error: String(error.message || error) })) } })
+      .catch((error) => active && setState((current) => ({ ...current, loading: false, error: String(error.message || error) })))
+    return () => { active = false }
+  }, [projectId, revision])
+
+  const selected = state.flows.find((flow) => flow.id === selectedId) || state.flows[0]
+  // Preserve selected identity across refreshes: [selected?.id]
+  React.useEffect(() => { setStepsText(selected?.steps_json || '[]'); setRename(selected?.name || '') }, [selected?.id, selected?.steps_json, selected?.name])
+  let steps = []
+  let malformed = false
+  if (selected) { try { steps = JSON.parse(selected.steps_json); if (!Array.isArray(steps)) malformed = true } catch { malformed = true } }
+  const layout = malformed ? [] : deriveFlowLayout(steps)
+  const content = boardsLoading || state.loading ? 'Loading flowcharts…' : boardsError || state.error ? (boardsError || state.error) : !selected ? 'No flowcharts yet' : malformed ? 'Malformed graph' : steps.length === 0 ? 'No flow steps yet' : layout.map((step) => jsx('div', { key: step.id, className: 'rounded border border-(--ui-stroke-secondary) p-2', style: { marginLeft: `${step.x}px` }, children: `${step.label} (${(step.next || []).join(', ') || 'end'})` }))
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Flowcharts' }),
+    state.flows.length > 0 ? jsx('select', { value: selected?.id || '', onChange: (event) => setSelectedId(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent p-1', children: state.flows.map((flow) => jsx('option', { value: flow.id, children: flow.name }, flow.id)) }) : null,
+    selected ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: rename, placeholder: 'Flow name', 'aria-label': 'Flow name', onChange: (event) => setRename(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !rename.trim(), onClick: () => runFlowCommand(['decision', 'flow', 'update', '--project', projectId, selected.id, '--name', rename]), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Rename flow' }),
+    ] }) : null,
+    selected ? jsx('textarea', { value: stepsText, onChange: (event) => setStepsText(event.target.value), 'aria-label': 'Flow steps JSON', className: 'min-h-24 rounded border border-(--ui-stroke-secondary) bg-transparent p-2 font-mono text-xs' }) : null,
+    selected ? jsx('button', { type: 'button', disabled: mutationLoading, onClick: () => runFlowCommand(['decision', 'flow', 'set-steps', '--project', projectId, selected.id, '--steps', stepsText]), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Save steps' }) : null,
+    projectId ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: newName, placeholder: 'New flow name', onChange: (event) => setNewName(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !newName.trim(), onClick: async () => { if (await runFlowCommand(['decision', 'flow', 'add', '--project', projectId, '--name', newName])) setNewName('') }, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Add' }),
+    ] }) : null,
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+    selected && projectId ? jsx('button', { type: 'button', onClick: () => setRevision((value) => value + 1), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Refresh' }) : null,
+  ] })
+}
+
+function RoadmapPane() {
+  const { projectId, loading: scopeLoading, error: scopeError } = useProjectDashboardScope()
+  const [state, setState] = React.useState({ loading: true, lanes: [], items: [], error: null })
+  const [revision, setRevision] = React.useState(0)
+  const [mutationLoading, setMutationLoading] = React.useState(false)
+  const [laneDraft, setLaneDraft] = React.useState('')
+  const [itemDraft, setItemDraft] = React.useState({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })
+  const [drafts, setDrafts] = React.useState({})
+  const setError = (error) => setState((current) => ({ ...current, loading: false, error: String(error.message || error) }))
+  const setLoading = (value) => setMutationLoading(value)
+
+  const refresh = React.useCallback(() => setRevision((value) => value + 1), [])
+  const reload = refresh
+
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, lanes: [], items: [], error: null })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    const roadmapListCommand = ['roadmap', 'list', '--project-id', projectId]
+    cliExec(roadmapListCommand)
+      .then((res) => {
+        if (!active) return
+        setState({ loading: false, lanes: res?.lanes || [], items: res?.items || [], error: null })
+      })
+      .then(null, (error) => {
+        if (!active) return
+        setError(error)
+      })
+    return () => { active = false }
+  }, [projectId, revision])
+  React.useEffect(() => {}, [projectId])
+
+  // runUpdate('roadmap', 'item', 'update') is the item mutation shape.
+  async function runUpdate(argv) {
+    if (!projectId || mutationLoading) return false
+    setLoading(true)
+    try {
+      return await cliExec(argv).then(() => true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const submit = async (operation, draftKey, argv, onSuccess) => {
+    try {
+      if (await runUpdate(argv)) {
+        setDraft('')
+        setDrafts((current) => ({ ...current, [draftKey]: '' }))
+        setState((current) => ({ ...current, error: null }))
+        refresh()
+        onSuccess?.()
+      }
+    } catch (error) {
+      setError(error)
+    }
+  }
+  const setDraft = (value) => setDrafts((current) => ({ ...current, last: value }))
+
+  const listValues = (value) => value.split('\n').map((entry) => entry.trim()).filter(Boolean)
+  const relationshipArgs = (draft) => {
+    const argv = []
+    if (draft.dependsOn !== null && draft.dependsOn !== undefined) {
+      listValues(draft.dependsOn).forEach((value) => argv.push('--depends-on', value))
+      if (listValues(draft.dependsOn).length === 0) argv.push('--clear-depends-on')
+    }
+    if (draft.links !== null && draft.links !== undefined) {
+      listValues(draft.links).forEach((value) => argv.push('--link', value))
+      if (listValues(draft.links).length === 0) argv.push('--clear-links')
+    }
+    return argv
+  }
+  const content = scopeLoading || state.loading
+    ? 'Loading roadmap…'
+    : scopeError || state.error
+      ? (scopeError || state.error)
+      : state.lanes.length === 0
+        ? 'No roadmap lanes yet'
+        : state.lanes.map((lane) => {
+          const laneItems = state.items.filter((item) => item.lane_id === lane.id)
+          const laneTitle = drafts[`lane:${lane.id}`] ?? lane.title ?? ''
+          return jsxs('section', { key: lane.id, className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+            jsxs('div', { className: 'flex gap-2', children: [
+              jsx('input', { value: laneTitle, 'aria-label': `Lane ${lane.id}`, onChange: (event) => setDrafts((current) => ({ ...current, [`lane:${lane.id}`]: event.target.value })), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+              jsx('button', { type: 'button', disabled: mutationLoading || !laneTitle.trim(), onClick: () => submit('lane', `lane:${lane.id}`, ['roadmap', 'lane', 'update', '--project-id', projectId, '--lane-id', lane.id, '--title', laneTitle, '--sort-order', String(lane.sort_order ?? 0), '--expected-updated-at', String(lane.updated_at ?? '')]), children: 'Save lane' }),
+            ] }),
+            laneItems.map((item) => {
+              const itemId = item.id
+              const updatedAt = item.updated_at
+              const draft = drafts[`item:${itemId}`] || { title: item.title || '', description: item.description || '', status: item.status || 'planned', laneId: item.lane_id, sortOrder: String(item.sort_order ?? 0), dependsOn: null, links: null }
+              const setDraft = (field, value) => setDrafts((current) => ({ ...current, [`item:${item.id}`]: { ...draft, [field]: value } }))
+              const argv = ['roadmap', 'item', 'update', '--project-id', projectId, '--item-id', itemId, '--lane-id', draft.laneId, '--title', draft.title, '--description', draft.description, '--status', draft.status, '--sort-order', String(draft.sortOrder), '--expected-updated-at', String(updatedAt ?? ''), ...relationshipArgs(draft)]
+              return jsxs('div', { key: item.id, className: 'flex flex-col gap-1 border-t border-(--ui-stroke-secondary) pt-2', children: [
+                jsx('input', { value: draft.title, 'aria-label': `Item ${item.id} title`, onChange: (event) => setDraft('title', event.target.value) }),
+                jsx('textarea', { value: draft.description, 'aria-label': `Item ${item.id} description`, onChange: (event) => setDraft('description', event.target.value) }),
+                jsx('input', { value: draft.status, 'aria-label': `Item ${item.id} status`, onChange: (event) => setDraft('status', event.target.value) }),
+                jsx('textarea', { value: draft.dependsOn ?? '', 'aria-label': `Item ${item.id} dependencies`, onChange: (event) => setDraft('dependsOn', event.target.value) }),
+                jsx('textarea', { value: draft.links ?? '', 'aria-label': `Item ${item.id} links`, onChange: (event) => setDraft('links', event.target.value) }),
+                jsx('button', { type: 'button', disabled: mutationLoading || !draft.title.trim(), onClick: () => submit('item', `item:${item.id}`, argv), children: 'Save item' }),
+              ] })
+            }),
+          ] })
+        })
+
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Roadmap' }),
+    projectId ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: laneDraft, placeholder: 'New lane', onChange: (event) => setLaneDraft(event.target.value) }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !laneDraft.trim(), onClick: () => submit('lane', 'new-lane', ['roadmap', 'lane', 'add', '--project-id', projectId, '--title', laneDraft, '--sort-order', '0'], () => setLaneDraft('')), children: 'Add lane' }),
+    ] }) : null,
+    projectId && state.lanes.length > 0 ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('select', { value: itemDraft.laneId || state.lanes[0]?.id || '', onChange: (event) => setItemDraft((current) => ({ ...current, laneId: event.target.value })), children: state.lanes.map((lane) => jsx('option', { value: lane.id, children: lane.title }, lane.id)) }),
+      jsx('input', { value: itemDraft.title, placeholder: 'New item', onChange: (event) => setItemDraft((current) => ({ ...current, title: event.target.value })) }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !itemDraft.title.trim(), onClick: () => submit('item', 'new-item', ['roadmap', 'item', 'add', '--project-id', projectId, '--lane-id', itemDraft.laneId || state.lanes[0]?.id || '', '--title', itemDraft.title, '--description', itemDraft.description, '--status', itemDraft.status, '--sort-order', itemDraft.sortOrder, ...listValues(itemDraft.dependsOn).flatMap((value) => ['--depends-on', value]), ...listValues(itemDraft.links).flatMap((value) => ['--link', value])], () => setItemDraft({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })), children: 'Add item' }),
+    ] }) : null,
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+    projectId ? jsx('button', { type: 'button', onClick: reload, children: 'Refresh' }) : null,
+  ] })
+}
+
+function HierarchyMapPane() {
+  const [boardSlug] = React.useState(loadSelectedBoardSlug)
+  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
+  const effectiveBoardSlug = boardSlug || pickDefaultBoardSlug(boards)
+  const projectId = React.useMemo(() => {
+    const board = boards.find((item) => item && item.slug === effectiveBoardSlug)
+    return board ? board.project_id || null : null
+  }, [boards, effectiveBoardSlug])
+  const [state, setState] = React.useState({ loading: true, tree: null, error: null })
+  const [treeRevision, setTreeRevision] = React.useState(0)
+  const [selectedNode, setSelectedNode] = React.useState(null)
+  const { decisions, loading: decisionsLoading, error: decisionsError, refresh: refreshDecisions } = useHierarchyDecisions(projectId)
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, tree: null, error: null })
+      return () => { active = false }
+    }
+    setState({ loading: true, tree: null, error: null })
+    host.request('cli.exec', { argv: ['decision', 'node', 'tree', '--project', projectId], timeout: 30 })
+      .then((res) => {
+        if (!active) return
+        if (res && res.code !== 0 && /no hierarchy root/i.test(res.output || '')) {
+          setState({ loading: false, tree: null, error: null })
+          return
+        }
+        try {
+          setState({ loading: false, tree: parseHierarchyTreeResponse(res), error: null })
+        } catch (error) {
+          setState({ loading: false, tree: null, error: String(error.message || error) })
+        }
+      })
+      .catch((error) => active && setState({ loading: false, tree: null, error: String(error.message || error) }))
+    return () => { active = false }
+  }, [projectId, treeRevision])
+
+  const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []
+  const content = boardsLoading || state.loading
+    ? 'Loading map…'
+    : boardsError || state.error
+      ? (boardsError || state.error)
+      : !state.tree
+        ? 'No map yet'
+        : jsx(HierarchyTreeNode, { key: treeRevision, node: state.tree, boardSlug: effectiveBoardSlug, projectId, onChanged: () => setTreeRevision((value) => value + 1), onSelect: setSelectedNode })
+  return jsx('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Map' }),
+    content,
+    selectedNode ? jsxs('section', { className: 'flex flex-col gap-2 border-t border-(--ui-stroke-secondary) pt-3', children: [
+      jsx('div', { className: 'font-medium', children: `Decisions for ${selectedNode.title}` }),
+      decisionsLoading ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Loading decisions…' }) : null,
+      decisionsError ? jsx('div', { className: 'text-(--ui-danger,#e5484d)', children: decisionsError }) : null,
+      ...attachedDecisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: refreshDecisions })),
+      jsx(HierarchyDecisionComposer, { projectId, selectedNode, onPushed: refreshDecisions }),
+    ] }) : null,
+  ] })
+}
+
+const SCRUM_PLANNING_STATUSES = ["backlog", "ready", "in_progress", "done", "cancelled"]
+const SCRUM_PLANNING_ESTIMATES = [1, 2, 3, 5, 8, 13]
+
+function ScrumPlanningPane() {
+  const { projectId, loading: scopeLoading, error: scopeError } = useProjectDashboardScope()
+  const [state, setState] = React.useState({ loading: true, items: [], error: null })
+  const [busy, setBusy] = React.useState(false)
+  const [revision, setRevision] = React.useState(0)
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, items: [], error: null })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    cliExec(['scrum', 'plan', 'list', '--project-id', projectId]).then((result) => {
+      if (active) setState({ loading: false, items: Array.isArray(result?.planning_items) ? result.planning_items : [], error: null })
+    }).catch((error) => {
+      if (active) setState({ loading: false, items: [], error: String(error.message || error) })
+    })
+    return () => { active = false }
+  }, [projectId, revision])
+
+  const mutate = async (argv) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cliExec(argv)
+      setRevision((value) => value + 1)
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const add = async () => {
+    const specNodeId = window.prompt('Spec node ID')
+    const title = window.prompt('Planning item title')
+    const sprint = window.prompt('Sprint number', '1')
+    if (!projectId || !specNodeId?.trim() || !title?.trim() || !sprint?.trim()) return
+    await mutate(['scrum', 'plan', 'add', '--project-id', projectId, '--spec-node-id', specNodeId.trim(), '--title', title.trim(), '--status', 'backlog', '--estimate', '1', '--sprint', sprint.trim()])
+  }
+
+  const content = scopeLoading ? 'Loading Scrum Planning…'
+    : scopeError || state.error ? (scopeError || state.error)
+      : !projectId ? 'Select a board in Decision HUD.'
+        : state.loading ? 'Loading Scrum Planning…'
+          : state.items.length === 0 ? 'No planning items yet.'
+            : state.items.map((item) => jsxs('div', { className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+              jsx('div', { className: 'font-medium', children: item.title }),
+              jsx('div', { className: 'text-(--ui-text-tertiary)', children: item.spec_node_id }),
+              jsxs('div', { className: 'flex gap-2', children: [
+                jsx('select', { value: item.status, disabled: busy, 'aria-label': `Status for ${item.id}`, onChange: (event) => mutate(['scrum', 'plan', 'update', '--project-id', projectId, '--item-id', item.id, '--status', event.target.value]) , children: SCRUM_PLANNING_STATUSES.map((status) => jsx('option', { value: status, children: status }, status)) }),
+                jsx('select', { value: String(item.estimate), disabled: busy, 'aria-label': `Estimate for ${item.id}`, onChange: (event) => mutate(['scrum', 'plan', 'update', '--project-id', projectId, '--item-id', item.id, '--estimate', event.target.value]), children: SCRUM_PLANNING_ESTIMATES.map((estimate) => jsx('option', { value: String(estimate), children: `${estimate} points` }, estimate)) }),
+                jsx('button', { type: 'button', disabled: busy, onClick: () => mutate(['scrum', 'plan', 'delete', '--project-id', projectId, '--item-id', item.id]), children: 'Delete' }),
+              ] }),
+            ] }, item.id))
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsxs('div', { className: 'flex items-center justify-between', children: [
+      jsx('div', { className: 'font-medium', children: 'Scrum Planning' }),
+      jsx('button', { type: 'button', disabled: busy || !projectId, onClick: add, children: 'Add planning item' }),
+    ] }),
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+  ] })
+}
+
 function DecisionHudPane({ rest }) {
   // The selected board is the sole project scope: boards and projects are
   // intentionally one-to-one.
@@ -6178,7 +6799,52 @@ function startNewDecisionToastWatcher() {
   }
 
   tick()
-  setInterval(tick, POLL_MS)
+  const interval = setInterval(tick, POLL_MS)
+  // Tests and short-lived host sessions must not stay alive solely for a
+  // background toast poll; browsers do not expose unref, so guard it.
+  if (typeof interval?.unref === 'function') interval.unref()
+}
+
+// Criteria persist as strings, so duplicate entries have no durable identity.
+// Occurrence suffix keeps keys unique; distinct entries keep identity across reorder/insert.
+function stableSpecCriteriaKey(item, index, items) {
+  const occurrence = items.slice(0, index).filter((candidate) => candidate === item).length
+  return `spec-criterion:${JSON.stringify(item)}:${occurrence}`
+}
+
+function SpecDigest({ projectId }) {
+  const [nodes, setNodes] = React.useState([])
+  const [selectedNode, setSelectedNode] = React.useState(null)
+  React.useEffect(() => {
+    if (!projectId) return
+    host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
+      try {
+        const parsed = JSON.parse(output?.output || output?.stdout || '[]')
+        setNodes(Array.isArray(parsed) ? parsed : [])
+      } catch {
+        setNodes([])
+      }
+    }).catch(() => setNodes([]))
+  }, [projectId])
+  const criteria = parseSpecCriteria(selectedNode?.criteria_json)
+  return jsxs('div', { className: 'flex flex-col gap-3 p-4', children: [
+    jsx('h2', { children: 'Spec Digest' }, 'title'),
+    jsx('div', { className: 'flex flex-col gap-1', children: nodes.map((node) => jsx('button', {
+      type: 'button', onClick: () => setSelectedNode(node), className: 'text-left',
+      children: `${node.kind}: ${node.title}`,
+    }, node.id)) }, 'nodes'),
+    selectedNode && jsx('section', { children: [
+      jsx('h3', { children: selectedNode.title }, 'selected-title'),
+      criteria.error
+        ? jsx('p', { role: 'alert', children: 'malformed criteria' }, 'criteria-error')
+        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items))) }, 'criteria-items'),
+    ] }, 'selected-node'),
+  ] })
+}
+
+function SpecDigestRoute({ projectId: overrideProjectId } = {}) {
+  const { projectId } = useProjectDashboardScope()
+  return jsx(SpecDigest, { projectId: overrideProjectId || projectId })
 }
 
 export default {
@@ -6200,6 +6866,66 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 40,
         data: { codicon: 'checklist', label: 'Decision HUD', path: '/decision-hud' },
+      },
+      {
+        id: 'spec-digest-route',
+        area: ROUTES_AREA,
+        data: { path: '/spec-digest' },
+        render: (props = {}) => jsx(SpecDigestRoute, props),
+      },
+      {
+        id: 'spec-digest-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 41,
+        data: { codicon: 'file-tree', label: 'Spec Digest', path: '/spec-digest' },
+      },
+      {
+        id: 'decision-hud-map-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/map' },
+        render: () => jsx(HierarchyMapPane, {}),
+      },
+      {
+        id: 'decision-hud-map-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 42,
+        data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },
+      },
+      {
+        id: 'decision-hud-flowcharts-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/flowcharts' },
+        render: () => jsx(FlowchartsPane, {}),
+      },
+      {
+        id: 'decision-hud-flowcharts-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 43,
+        data: { codicon: 'graph', label: 'Flowcharts', path: '/decision-hud/flowcharts' },
+      },
+      {
+        id: 'roadmap-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/roadmap' },
+        render: () => jsx(RoadmapPane, {}),
+      },
+      {
+        id: 'roadmap-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 44,
+        data: { codicon: 'milestone', label: 'Roadmap', path: '/decision-hud/roadmap' },
+      },
+      {
+        id: 'scrum-planning-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/planning' },
+        render: () => jsx(ScrumPlanningPane, {}),
+      },
+      {
+        id: 'scrum-planning-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 43,
+        data: { codicon: 'calendar', label: 'Scrum Planning', path: '/decision-hud/planning' }
       },
       {
         id: 'agent-dashboard-route',

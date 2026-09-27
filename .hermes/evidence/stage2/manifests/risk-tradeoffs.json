@@ -1,0 +1,21 @@
+{
+  "surface": "risk_tradeoffs",
+  "source_sha": "723514d",
+  "remediation_sha": "0d8216ddee152c172300c3140526e7785e697dc2",
+  "canonical_parent_sha": "1c6731e60c342eedd1320205fffb9b7fe47d1523",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "worktree_path": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "reviewed_sha": "0d8216ddee152c172300c3140526e7785e697dc2",
+  "reviewer_report": ".hermes/evidence/stage2/reviews/stage2-risk-review-0d8216d.json",
+  "reviewer_verdict": "PASS",
+  "focused_tests": {
+    "command": "uv run --python 3.14 --with pytest python3 -m pytest -q backend-plugin/tests/test_risk_tradeoff_canonical.py backend-plugin/tests/test_risk_tradeoff_cli_canonical.py",
+    "result": "31 passed"
+  },
+  "full_backend_plugin_tests": {
+    "command": "uv run --python 3.14 --with pytest python3 -m pytest -q backend-plugin/tests",
+    "result": "94 passed"
+  },
+  "syntax_and_diff": "passed",
+  "known_environment_gap": "Repository-wide pytest collection requires unavailable agent_telemetry package and PostgreSQL integration requires DASHBOARD_TEST_DATABASE_URL; these remain separate baseline/environment gates."
+}

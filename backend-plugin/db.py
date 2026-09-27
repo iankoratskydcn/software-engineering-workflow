@@ -121,6 +121,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import secrets
 import sqlite3
@@ -130,6 +131,109 @@ from pathlib import Path
 from typing import Any, Optional
 
 _VALID_URGENCY = ("low", "normal", "high")
+
+_MAX_FLOW_STEPS = 512
+_MAX_FLOW_EDGES = 32
+_MAX_FLOW_GRAPH_BYTES = 256 * 1024
+
+TEXT_LIMIT = 4096
+ID_LIMIT = 128
+LIST_LIMIT = 256
+LIST_VALUE_LIMIT = 512
+JSON_LIMIT = 256 * 1024
+JSON_DEPTH_LIMIT = 8
+COORDINATE_MIN = -100000
+COORDINATE_MAX = 100000
+
+
+class BoundaryError(ValueError):
+    """Safe, machine-readable rejection at a trust boundary."""
+
+    def __init__(self, code: str, message: str = "request rejected") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class _RoadmapMigrationConflict(BoundaryError, sqlite3.OperationalError):
+    """Roadmap preflight error compatible with legacy DDL-conflict callers."""
+
+
+def validate_text(value: Any, *, field: str, max_chars: int = TEXT_LIMIT,
+                  allow_empty: bool = False) -> str:
+    if not isinstance(value, str):
+        raise BoundaryError("invalid_input", f"{field} must be a string")
+    result = value.strip()
+    if not result and not allow_empty:
+        raise BoundaryError("invalid_input", f"{field} is required")
+    if len(result) > max_chars:
+        raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
+    return result
+
+
+def validate_list(value: Any, *, field: str, max_items: int = LIST_LIMIT,
+                  max_value_chars: int = LIST_VALUE_LIMIT) -> list[str]:
+    if not isinstance(value, list):
+        raise BoundaryError("invalid_input", f"{field} must be a list")
+    if len(value) > max_items:
+        raise BoundaryError("invalid_input", f"{field} has too many items")
+    result: list[str] = []
+    for item in value:
+        result.append(validate_text(item, field=f"{field} item", max_chars=max_value_chars))
+    return result
+
+
+def _validate_json_value(value: Any, *, field: str, depth: int,
+                         max_items: int, max_value_chars: int) -> None:
+    if depth > JSON_DEPTH_LIMIT:
+        raise BoundaryError("invalid_input", f"{field} is too deeply nested")
+    if isinstance(value, dict):
+        if len(value) > max_items:
+            raise BoundaryError("invalid_input", f"{field} has too many object keys")
+        for key, child in value.items():
+            validate_text(key, field=f"{field} key", max_chars=max_value_chars)
+            _validate_json_value(child, field=field, depth=depth + 1,
+                                 max_items=max_items, max_value_chars=max_value_chars)
+    elif isinstance(value, list):
+        if len(value) > max_items:
+            raise BoundaryError("invalid_input", f"{field} has too many items")
+        for child in value:
+            _validate_json_value(child, field=field, depth=depth + 1,
+                                 max_items=max_items, max_value_chars=max_value_chars)
+    elif isinstance(value, str) and len(value) > max_value_chars:
+        raise BoundaryError("invalid_input", f"{field} contains an oversized string")
+
+
+def validate_json_text(value: Any, *, field: str, max_bytes: int = JSON_LIMIT,
+                       max_items: int = LIST_LIMIT,
+                       max_value_chars: int = LIST_VALUE_LIMIT) -> Any:
+    if not isinstance(value, str):
+        raise BoundaryError("invalid_input", f"{field} must be JSON text")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
+    try:
+        decoded = json.loads(value, parse_constant=lambda token: (_ for _ in ()).throw(ValueError(f"non-standard JSON constant: {token}")))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise BoundaryError("invalid_input", f"{field} must be valid JSON") from exc
+    _validate_json_value(decoded, field=field, depth=0, max_items=max_items,
+                         max_value_chars=max_value_chars)
+    return decoded
+
+
+def validate_coordinate(value: Any, *, field: str,
+                        minimum: float = COORDINATE_MIN,
+                        maximum: float = COORDINATE_MAX) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise BoundaryError("invalid_input", f"{field} must be a finite number")
+    if value < minimum or value > maximum:
+        raise BoundaryError("invalid_input", f"{field} is outside its allowed range")
+    return value
+
+
+def require_project_scope(conn: Optional[sqlite3.Connection], *, project_id: str,
+                          row_project_id: Optional[str]) -> None:
+    del conn
+    if row_project_id is None or row_project_id != project_id:
+        raise BoundaryError("not_found", "resource not found")
 
 # --- delegated-child detection --------------------------------------------
 #
@@ -149,6 +253,15 @@ def _is_delegated_child_process_context() -> bool:
     """True in this process or any subprocess spawned by a delegate_task child
     (mirrors hermes-agent's env-var signal; see module comment above)."""
     return bool(os.environ.get(_DELEGATED_CHILD_ENV_MARKER))
+
+
+def _connect_sqlite(path: Path | str, **kwargs: Any) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(path), **kwargs)
+    conn.execute("PRAGMA foreign_keys=ON")
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        conn.close()
+        raise RuntimeError("SQLite foreign-key enforcement could not be enabled")
+    return conn
 
 
 def _resolve_project(project_id: str) -> dict[str, str]:
@@ -175,7 +288,7 @@ def _resolve_project(project_id: str) -> dict[str, str]:
         raise ValueError(
             f"project_id {project_id!r} could not be validated: no projects.db found at "
             f"{projects_db_path} — create the project first with `hermes project create`")
-    conn = sqlite3.connect(str(projects_db_path))
+    conn = _connect_sqlite(projects_db_path)
     try:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
@@ -209,16 +322,891 @@ def db_path() -> Path:
 
 
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path()), timeout=30)
+    conn = _connect_sqlite(db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     init_db(conn)
     return conn
 
 
+def _migrate_v7_hierarchy(conn: sqlite3.Connection) -> None:
+    """Create the persisted Project-to-Task hierarchy tables idempotently."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS hierarchy_nodes (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            parent_id TEXT,
+            level INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            kanban_task_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            archived INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_hierarchy_parent ON hierarchy_nodes(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_hierarchy_project ON hierarchy_nodes(project_id, level);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_hierarchy_one_root_per_project
+            ON hierarchy_nodes(project_id) WHERE level = 0;
+        """
+    )
+    current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current_version < 7:
+        conn.execute("PRAGMA user_version = 7")
+    conn.commit()
+
+
+_RISK_TRADEOFF_KINDS = ("scale", "duel", "anchor")
+_RISK_STATUSES = ("open", "mitigated", "accepted", "closed")
+
+
+def _preflight_risk_tradeoff_legacy(conn: sqlite3.Connection) -> None:
+    """Refuse incompatible legacy rows before any migration write."""
+    table = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tradeoffs'").fetchone()
+    if table is None:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")}
+    required = {"id", "project_id", "kind", "title", "choice", "created_at", "updated_at"}
+    if not required.issubset(columns):
+        raise BoundaryError("constraint", "tradeoff migration requires canonical columns")
+    for name, required_sql in (
+        ("risks", ("check(statusin('open','mitigated','accepted','closed'))", "foreignkey(project_id,decision_id)")),
+        ("tradeoffs", ("check(kindin('scale','duel','anchor'))", "foreignkey(project_id,decision_id)", "prioritized_side")),
+    ):
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+        if row is not None:
+            sql = "".join((row[0] or "").lower().split())
+            if any(fragment not in sql for fragment in required_sql):
+                raise BoundaryError("constraint", f"{name} migration requires canonical constrained schema")
+
+
+def _migrate_v8_stage2_risk_tradeoffs(conn: sqlite3.Connection) -> None:
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_id_unique ON decisions(project_id, id)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS risks (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+            title TEXT NOT NULL, description TEXT, breaks_when TEXT,
+            status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','mitigated','accepted','closed')),
+            created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_risks_project ON risks(project_id, created_at, id);
+        CREATE TABLE IF NOT EXISTS tradeoffs (
+            id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_id TEXT,
+            kind TEXT NOT NULL CHECK(kind IN ('scale','duel','anchor')),
+            title TEXT NOT NULL, choice TEXT NOT NULL, alt_label TEXT, cost TEXT, gain TEXT,
+            prioritized_side TEXT CHECK(prioritized_side IS NULL OR prioritized_side IN ('a','b')),
+            created_at REAL NOT NULL, updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id,decision_id) REFERENCES decisions(project_id,id) ON DELETE RESTRICT ON UPDATE RESTRICT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tradeoffs_project ON tradeoffs(project_id, created_at, id);
+        """
+    )
+    if conn.execute("PRAGMA user_version").fetchone()[0] < 8:
+        conn.execute("PRAGMA user_version = 8")
+
+
+def _migrate_v9_flowcharts(conn: sqlite3.Connection) -> None:
+    """Add canonical project-owned flowcharts after the v8 risk migration."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS flows (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            steps_json TEXT NOT NULL DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(project_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_flows_project ON flows(project_id, updated_at, id);
+        """
+    )
+    if conn.execute("PRAGMA user_version").fetchone()[0] < 9:
+        conn.execute("PRAGMA user_version = 9")
+
+
+def _migrate_v10_architecture(conn: sqlite3.Connection) -> None:
+    """Create the architecture surface as one atomic, idempotent migration."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+    ).fetchone()
+    if version == 10 and table is None:
+        raise BoundaryError("constraint", "partial v10 architecture migration is unsupported")
+    if version > 10:
+        return
+
+    if table is not None:
+        _preflight_architecture_legacy(conn, version=version)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS architecture_diagrams (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                nodes_json TEXT NOT NULL,
+                edges_json TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(project_id, id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_architecture_diagrams_project "
+            "ON architecture_diagrams(project_id, updated_at, id)"
+        )
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+_ROADMAP_STATUSES = ("planned", "todo", "in_progress", "blocked", "done", "cancelled")
+
+
+_ROADMAP_TABLES = {"roadmap_lanes", "roadmap_items"}
+_ROADMAP_COLUMNS = {
+    "roadmap_lanes": (
+        ("id", "TEXT", 0, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("sort_order", "INTEGER", 1, "0", 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ),
+    "roadmap_items": (
+        ("id", "TEXT", 0, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("lane_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("description", "TEXT", 0, None, 0),
+        ("status", "TEXT", 1, "'planned'", 0),
+        ("sort_order", "INTEGER", 1, "0", 0),
+        ("depends_on_json", "TEXT", 1, "'[]'", 0),
+        ("links_json", "TEXT", 1, "'[]'", 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ),
+}
+
+
+def _roadmap_constraint(message: str) -> BoundaryError:
+    return BoundaryError("constraint", message)
+
+
+def _preflight_roadmap(conn: sqlite3.Connection, *, version: int) -> None:
+    objects = {
+        row[0]: row[1]
+        for row in conn.execute(
+            "SELECT name, type FROM sqlite_master WHERE name IN ('roadmap_lanes','roadmap_items')"
+        )
+    }
+    names = set(objects)
+    if names and (names != _ROADMAP_TABLES or any(objects[n] != "table" for n in names)):
+        error = _RoadmapMigrationConflict("roadmap migration requires both canonical tables")
+        error.code = "constraint"
+        raise error
+    if not names:
+        return
+
+    for table, expected in _ROADMAP_COLUMNS.items():
+        actual = tuple(
+            (row[1], row[2].upper(), row[3], row[4], row[5])
+            for row in conn.execute(f"PRAGMA table_info({table})")
+        )
+        if actual != expected:
+            raise _roadmap_constraint(f"{table} has non-canonical columns")
+
+    unique = {}
+    for table in _ROADMAP_TABLES:
+        for row in conn.execute(f"PRAGMA index_list({table})"):
+            if row[2]:
+                cols = tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
+                unique.setdefault(table, set()).add(cols)
+    if unique.get("roadmap_lanes", set()) != {("id",), ("project_id", "id")}:
+        raise _roadmap_constraint("roadmap_lanes unique constraints are non-canonical")
+    if unique.get("roadmap_items", set()) != {("id",), ("project_id", "id")}:
+        raise _roadmap_constraint("roadmap_items unique constraints are non-canonical")
+
+    table_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'roadmap_items'"
+    ).fetchone()[0]
+    normalized_sql = "".join((table_sql or "").lower().split())
+    required_status_check = (
+        "check(statusin('planned','todo','in_progress','blocked','done','cancelled'))"
+    )
+    if required_status_check not in normalized_sql:
+        raise _roadmap_constraint("roadmap_items status constraint is non-canonical")
+
+    for row in conn.execute("SELECT depends_on_json, links_json FROM roadmap_items"):
+        for column, field in (
+            (row["depends_on_json"], "depends_on"),
+            (row["links_json"], "links"),
+        ):
+            decoded = validate_json_text(column, field=f"roadmap {field}")
+            _roadmap_lists(decoded, field)
+
+    indexes = {
+        row[1]: tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
+        for row in conn.execute("PRAGMA index_list(roadmap_lanes)")
+    }
+    if indexes.get("idx_roadmap_lanes_project") != ("project_id", "sort_order", "id"):
+        raise _roadmap_constraint("roadmap_lanes project index is missing")
+    indexes = {
+        row[1]: tuple(r[2] for r in conn.execute(f"PRAGMA index_info({row[1]})"))
+        for row in conn.execute("PRAGMA index_list(roadmap_items)")
+    }
+    if indexes.get("idx_roadmap_items_project") != ("project_id", "lane_id", "sort_order", "id"):
+        raise _roadmap_constraint("roadmap_items project index is missing")
+
+    foreign_keys = {
+        (row[2], row[3], row[4], row[5], row[6], row[7])
+        for row in conn.execute("PRAGMA foreign_key_list(roadmap_items)")
+    }
+    expected_fk = {
+        ("roadmap_lanes", "project_id", "project_id", "RESTRICT", "RESTRICT", "NONE"),
+        ("roadmap_lanes", "lane_id", "id", "RESTRICT", "RESTRICT", "NONE"),
+    }
+    if foreign_keys != expected_fk:
+        raise _roadmap_constraint("roadmap_items foreign keys are non-canonical")
+
+
+def _migrate_v11_roadmap(conn: sqlite3.Connection) -> None:
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    _preflight_roadmap(conn, version=version)
+    if version >= 11:
+        return
+    roadmap_objects = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('roadmap_lanes','roadmap_items')"
+        )
+    }
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if roadmap_objects:
+            conn.execute("PRAGMA user_version = 11")
+            conn.commit()
+            return
+        conn.execute("""
+            CREATE TABLE roadmap_lanes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id)
+            )
+        """)
+        conn.execute("CREATE INDEX idx_roadmap_lanes_project ON roadmap_lanes(project_id, sort_order, id)")
+        conn.execute("""
+            CREATE TABLE roadmap_items (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL, lane_id TEXT NOT NULL, title TEXT NOT NULL,
+                description TEXT, status TEXT NOT NULL DEFAULT 'planned' CHECK(status IN ('planned','todo','in_progress','blocked','done','cancelled')),
+                sort_order INTEGER NOT NULL DEFAULT 0, depends_on_json TEXT NOT NULL DEFAULT '[]',
+                links_json TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id), FOREIGN KEY(project_id, lane_id) REFERENCES roadmap_lanes(project_id, id)
+                    ON DELETE RESTRICT ON UPDATE RESTRICT
+            )
+        """)
+        conn.execute("CREATE INDEX idx_roadmap_items_project ON roadmap_items(project_id, lane_id, sort_order, id)")
+        conn.execute("PRAGMA user_version = 11")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _roadmap_project(project_id):
+    return _resolve_project(validate_text(project_id, field="project_id", max_chars=ID_LIMIT))["id"]
+
+
+def _roadmap_id(value, field):
+    return validate_text(value, field=field, max_chars=ID_LIMIT)
+
+
+def _roadmap_lists(value, field):
+    values = [] if value is None else validate_list(value, field=field, max_value_chars=LIST_VALUE_LIMIT - 1)
+    encoded = json.dumps(values, separators=(",", ":"), ensure_ascii=False)
+    if len(encoded.encode("utf-8")) > JSON_LIMIT:
+        raise BoundaryError("invalid_input", f"{field} exceeds its size limit")
+    return values, encoded
+
+
+def _roadmap_row(row):
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    result = dict(row)
+    result["depends_on"] = json.loads(result.pop("depends_on_json", "[]")) if "depends_on_json" in result else []
+    result["links"] = json.loads(result.pop("links_json", "[]")) if "links_json" in result else []
+    return result
+
+
+def create_roadmap_lane(conn, *, project_id, title, sort_order=0):
+    project_id = _roadmap_project(project_id); title = validate_text(title, field="title")
+    now = time.time(); lane_id = "rml_" + secrets.token_hex(6)
+    conn.execute("INSERT INTO roadmap_lanes VALUES (?, ?, ?, ?, ?, ?)", (lane_id, project_id, title, sort_order, now, now)); conn.commit()
+    return dict(conn.execute("SELECT * FROM roadmap_lanes WHERE id = ?", (lane_id,)).fetchone())
+
+
+def list_roadmap_lanes(conn, *, project_id):
+    project_id = _roadmap_project(project_id)
+    return [dict(r) for r in conn.execute("SELECT * FROM roadmap_lanes WHERE project_id = ? ORDER BY sort_order, id", (project_id,))]
+
+
+def update_roadmap_lane(conn, *, project_id, lane_id, title=None, sort_order=None, expected_updated_at=None):
+    project_id = _roadmap_project(project_id); lane_id = _roadmap_id(lane_id, "lane_id")
+    row = conn.execute("SELECT * FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone()
+    if row is None: raise BoundaryError("not_found", "resource not found")
+    if expected_updated_at is not None and row["updated_at"] != expected_updated_at: raise BoundaryError("conflict", "stale or conflicting request")
+    updates, values = [], []
+    if title is not None: updates += ["title = ?"]; values += [validate_text(title, field="title")]
+    if sort_order is not None: updates += ["sort_order = ?"]; values += [sort_order]
+    if not updates: return dict(row)
+    updates += ["updated_at = ?"]; values += [time.time(), lane_id, project_id]
+    conn.execute(f"UPDATE roadmap_lanes SET {', '.join(updates)} WHERE id = ? AND project_id = ?", values); conn.commit()
+    return dict(conn.execute("SELECT * FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone())
+
+
+def _roadmap_item_target_check(conn, project_id, values):
+    for target in values:
+        row = conn.execute("SELECT project_id FROM roadmap_items WHERE id = ?", (target,)).fetchone()
+        if row is not None and row[0] != project_id:
+            raise BoundaryError("not_found", "resource not found")
+        if row is None:
+            raise BoundaryError("not_found", "resource not found")
+
+
+def create_roadmap_item(conn, *, project_id, lane_id, title, description=None, status="planned", sort_order=0, depends_on=None, links=None):
+    project_id = _roadmap_project(project_id); lane_id = _roadmap_id(lane_id, "lane_id")
+    title = validate_text(title, field="title")
+    description = None if description is None else validate_text(description, field="description", allow_empty=True)
+    if status not in _ROADMAP_STATUSES: raise BoundaryError("invalid_input", "invalid roadmap status")
+    depends, depends_json = _roadmap_lists(depends_on, "depends_on"); _, links_json = _roadmap_lists(links, "links")
+    _roadmap_item_target_check(conn, project_id, depends)
+    if conn.execute("SELECT 1 FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone() is None: raise BoundaryError("not_found", "resource not found")
+    now = time.time(); item_id = "rmi_" + secrets.token_hex(6)
+    conn.execute("INSERT INTO roadmap_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (item_id, project_id, lane_id, title, description, status, sort_order, depends_json, links_json, now, now)); conn.commit()
+    return _roadmap_row(conn.execute("SELECT * FROM roadmap_items WHERE id = ?", (item_id,)).fetchone())
+
+
+def list_roadmap_items(conn, *, project_id, lane_id=None):
+    project_id = _roadmap_project(project_id)
+    if lane_id is None: rows = conn.execute("SELECT * FROM roadmap_items WHERE project_id = ? ORDER BY sort_order, id", (project_id,))
+    else: rows = conn.execute("SELECT * FROM roadmap_items WHERE project_id = ? AND lane_id = ? ORDER BY sort_order, id", (project_id, _roadmap_id(lane_id, "lane_id")))
+    return [_roadmap_row(r) for r in rows]
+
+
+def get_roadmap_item(conn, *, project_id, item_id):
+    project_id = _roadmap_project(project_id); item_id = _roadmap_id(item_id, "item_id")
+    return _roadmap_row(conn.execute("SELECT * FROM roadmap_items WHERE id = ? AND project_id = ?", (item_id, project_id)).fetchone())
+
+
+def update_roadmap_item(conn, *, project_id, item_id, lane_id=None, title=None, description=None, status=None, sort_order=None, depends_on=None, links=None, clear_depends_on=False, clear_links=False, expected_updated_at=None):
+    project_id = _roadmap_project(project_id); item_id = _roadmap_id(item_id, "item_id")
+    row = conn.execute("SELECT * FROM roadmap_items WHERE id = ? AND project_id = ?", (item_id, project_id)).fetchone()
+    if row is None: raise BoundaryError("not_found", "resource not found")
+    if expected_updated_at is not None and row["updated_at"] != expected_updated_at: raise BoundaryError("conflict", "stale or conflicting request")
+    updates, values = [], []
+    if lane_id is not None:
+        lane_id = _roadmap_id(lane_id, "lane_id")
+        if conn.execute("SELECT 1 FROM roadmap_lanes WHERE id = ? AND project_id = ?", (lane_id, project_id)).fetchone() is None: raise BoundaryError("not_found", "resource not found")
+        updates += ["lane_id = ?"]; values += [lane_id]
+    if title is not None: updates += ["title = ?"]; values += [validate_text(title, field="title")]
+    if description is not None: updates += ["description = ?"]; values += [validate_text(description, field="description", allow_empty=True)]
+    if status is not None:
+        if status not in _ROADMAP_STATUSES: raise BoundaryError("invalid_input", "invalid roadmap status")
+        updates += ["status = ?"]; values += [status]
+    if sort_order is not None: updates += ["sort_order = ?"]; values += [sort_order]
+    if clear_depends_on: depends_on = []
+    if depends_on is not None:
+        depends, encoded = _roadmap_lists(depends_on, "depends_on"); _roadmap_item_target_check(conn, project_id, depends); updates += ["depends_on_json = ?"]; values += [encoded]
+    if clear_links: links = []
+    if links is not None:
+        _, encoded = _roadmap_lists(links, "links"); updates += ["links_json = ?"]; values += [encoded]
+    if not updates: return _roadmap_row(row)
+    updates += ["updated_at = ?"]; values += [time.time(), item_id, project_id]
+    conn.execute(f"UPDATE roadmap_items SET {', '.join(updates)} WHERE id = ? AND project_id = ?", values); conn.commit()
+    return get_roadmap_item(conn, project_id=project_id, item_id=item_id)
+
+
+def _preflight_architecture_legacy(conn: sqlite3.Connection, *, version: int | None = None) -> None:
+    """Validate legacy architecture state before any migration can write."""
+    if version is None:
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+    ).fetchone()
+    if table is None:
+        return
+    assert version is not None
+
+    columns = [tuple(row) for row in conn.execute("PRAGMA table_info(architecture_diagrams)")]
+    expected = [
+        ("id", "TEXT", 0, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("nodes_json", "TEXT", 1, None, 0),
+        ("edges_json", "TEXT", 1, None, 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ]
+    actual = [(row[1], row[2], row[3], row[4], row[5]) for row in columns]
+    if actual != expected:
+        raise BoundaryError("constraint", "architecture migration requires canonical table definition")
+
+    rows = conn.execute("SELECT * FROM architecture_diagrams").fetchall()
+    known = {(row["project_id"], row["id"]) for row in rows}
+    for row in rows:
+        try:
+            nodes = json.loads(row["nodes_json"])
+            edges = json.loads(row["edges_json"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise BoundaryError("constraint", "architecture migration found invalid JSON") from exc
+        _validate_architecture_payload(
+            row["title"], nodes, edges,
+            drill_targets=known,
+            project_id=row["project_id"],
+        )
+    if version < 10:
+        raise BoundaryError(
+            "constraint",
+            "architecture migration refuses a preexisting architecture table in a v9 database",
+        )
+
+    indexes = {
+        row[1]: (row[2], row[3])
+        for row in conn.execute("PRAGMA index_list(architecture_diagrams)")
+    }
+    unique_columns = {
+        tuple(info[2] for info in conn.execute(f"PRAGMA index_info({name!r})"))
+        for name, (unique, _origin) in indexes.items()
+        if unique
+    }
+    if ("project_id", "id") not in unique_columns:
+        raise BoundaryError("constraint", "architecture migration requires UNIQUE(project_id, id)")
+    project_index = indexes.get("idx_architecture_diagrams_project")
+    if project_index is None or project_index[0] != 0:
+        raise BoundaryError("constraint", "architecture migration requires canonical project index")
+    project_index_columns = tuple(
+        info[2] for info in conn.execute(
+            "PRAGMA index_info('idx_architecture_diagrams_project')"
+        )
+    )
+    if project_index_columns != ("project_id", "updated_at", "id"):
+        raise BoundaryError("constraint", "architecture migration requires canonical project index")
+
+
+def _validate_architecture_payload(title, nodes, edges, *, drill_targets, project_id):
+    title = validate_text(title, field="title", max_chars=TEXT_LIMIT)
+    if not isinstance(nodes, list) or len(nodes) > 512:
+        raise BoundaryError("invalid_input", "nodes must be an array of at most 512 items")
+    if not isinstance(edges, list) or len(edges) > 1024:
+        raise BoundaryError("invalid_input", "edges must be an array of at most 1024 items")
+    node_ids = set()
+    clean_nodes = []
+    for node in nodes:
+        if not isinstance(node, dict) or set(node) not in ({"id", "label", "x", "y"}, {"id", "label", "x", "y", "drill_to_diagram_id"}):
+            raise BoundaryError("invalid_input", "each node must have only id, label, x, y, and optional drill target")
+        node_id = validate_text(node["id"], field="node id", max_chars=ID_LIMIT)
+        if node_id in node_ids:
+            raise BoundaryError("invalid_input", "duplicate node id")
+        node_ids.add(node_id)
+        clean = {"id": node_id, "label": validate_text(node["label"], field="node label", max_chars=TEXT_LIMIT, allow_empty=True), "x": validate_coordinate(node["x"], field="node x"), "y": validate_coordinate(node["y"], field="node y")}
+        if "drill_to_diagram_id" in node:
+            target = validate_text(node["drill_to_diagram_id"], field="drill target", max_chars=ID_LIMIT)
+            if (project_id, target) not in drill_targets:
+                raise BoundaryError("not_found", "resource not found")
+            clean["drill_to_diagram_id"] = target
+        clean_nodes.append(clean)
+    clean_edges = []
+    for edge in edges:
+        if not isinstance(edge, dict) or set(edge) not in ({"source", "target"}, {"source", "target", "label"}):
+            raise BoundaryError("invalid_input", "each edge must have only source, target, and optional label")
+        source = validate_text(edge["source"], field="edge source", max_chars=ID_LIMIT)
+        target = validate_text(edge["target"], field="edge target", max_chars=ID_LIMIT)
+        if source not in node_ids or target not in node_ids:
+            raise BoundaryError("invalid_input", "edge references missing node")
+        clean = {"source": source, "target": target}
+        if "label" in edge:
+            clean["label"] = validate_text(edge["label"], field="edge label", max_chars=TEXT_LIMIT, allow_empty=True)
+        clean_edges.append(clean)
+    node_json = json.dumps(clean_nodes, separators=(",", ":"), ensure_ascii=False)
+    edge_json = json.dumps(clean_edges, separators=(",", ":"), ensure_ascii=False)
+    if len((node_json + edge_json).encode("utf-8")) > JSON_LIMIT:
+        raise BoundaryError("invalid_input", "architecture JSON exceeds its size limit")
+    return title, clean_nodes, clean_edges
+
+
+def _architecture_row(row):
+    return dict(row)
+
+
+def _architecture_for_project(conn, project_id, diagram_id):
+    project = _resolve_project(project_id)
+    row = conn.execute("SELECT * FROM architecture_diagrams WHERE id = ? AND project_id = ?", (diagram_id, project["id"])).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    return row
+
+
+def add_diagram(conn, project_id, title, nodes, edges):
+    project = _resolve_project(project_id)
+    known = {(row["project_id"], row["id"]) for row in conn.execute("SELECT project_id, id FROM architecture_diagrams")}
+    title, clean_nodes, clean_edges = _validate_architecture_payload(title, nodes, edges, drill_targets=known, project_id=project["id"])
+    diagram_id = "arch_" + secrets.token_hex(6)
+    now = time.time()
+    conn.execute("INSERT INTO architecture_diagrams (id, project_id, title, nodes_json, edges_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (diagram_id, project["id"], title, json.dumps(clean_nodes, separators=(",", ":"), ensure_ascii=False), json.dumps(clean_edges, separators=(",", ":"), ensure_ascii=False), now, now))
+    conn.commit()
+    return _architecture_row(_architecture_for_project(conn, project["id"], diagram_id))
+
+
+def list_diagrams(conn, project_id):
+    project = _resolve_project(project_id)
+    return [_architecture_row(row) for row in conn.execute("SELECT * FROM architecture_diagrams WHERE project_id = ? ORDER BY updated_at DESC, id", (project["id"],)).fetchall()]
+
+
+def get_diagram(conn, project_id, diagram_id):
+    return _architecture_row(_architecture_for_project(conn, project_id, diagram_id))
+
+
+def set_diagram(conn, project_id, diagram_id, title=None, nodes=None, edges=None):
+    row = _architecture_for_project(conn, project_id, diagram_id)
+    new_title = row["title"] if title is None else title
+    new_nodes = json.loads(row["nodes_json"]) if nodes is None else nodes
+    new_edges = json.loads(row["edges_json"]) if edges is None else edges
+    known = {(item["project_id"], item["id"]) for item in conn.execute("SELECT project_id, id FROM architecture_diagrams")}
+    new_title, clean_nodes, clean_edges = _validate_architecture_payload(new_title, new_nodes, new_edges, drill_targets=known, project_id=row["project_id"])
+    conn.execute("UPDATE architecture_diagrams SET title = ?, nodes_json = ?, edges_json = ?, updated_at = ? WHERE id = ? AND project_id = ?", (new_title, json.dumps(clean_nodes, separators=(",", ":"), ensure_ascii=False), json.dumps(clean_edges, separators=(",", ":"), ensure_ascii=False), time.time(), diagram_id, row["project_id"]))
+    conn.commit()
+    return _architecture_row(_architecture_for_project(conn, project_id, diagram_id))
+
+
+def _migrate_v12_mindmap(conn: sqlite3.Connection) -> None:
+    """Make spec_nodes authoritative and import legacy hierarchy rows once."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    spec_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='spec_nodes'"
+    ).fetchone() is not None
+    if not spec_exists:
+        return
+
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(spec_nodes)")}
+    required = {"level", "description", "rationale", "metadata_json"}
+    if version >= 12 and not required.issubset(columns):
+        raise BoundaryError("constraint", "partial v12 mindmap migration is unsupported")
+    if version < 12:
+        # Preflight before any DDL: invalid legacy data must leave schema,
+        # rows, and version untouched.
+        legacy = conn.execute(
+                "SELECT id, project_id, parent_id, level, title, sort_order, kanban_task_id, "
+                "created_at, updated_at, archived FROM hierarchy_nodes ORDER BY project_id, level, sort_order, created_at, id"
+        ).fetchall()
+        by_id = {row["id"]: row for row in legacy}
+        seen_ids = set()
+        for row in legacy:
+            if row["id"] in seen_ids:
+                raise BoundaryError("constraint", f"duplicate hierarchy node {row['id']!r}")
+            seen_ids.add(row["id"])
+            parent_id = row["parent_id"]
+            if parent_id is not None:
+                parent = by_id.get(parent_id)
+                if parent is None:
+                    raise BoundaryError("constraint", f"orphan hierarchy node {row['id']!r}")
+                if parent["project_id"] != row["project_id"]:
+                    raise BoundaryError("constraint", f"cross-project hierarchy parent {row['id']!r}")
+                if int(row["level"]) != int(parent["level"]) + 1:
+                    raise BoundaryError("constraint", f"invalid hierarchy level for {row['id']!r}")
+            elif int(row["level"]) != 0:
+                raise BoundaryError("constraint", f"non-root hierarchy node {row['id']!r}")
+            chain = set()
+            current = row["id"]
+            while current is not None:
+                if current in chain:
+                    raise BoundaryError("constraint", f"cycle in hierarchy node {row['id']!r}")
+                chain.add(current)
+                current = by_id[current]["parent_id"] if current in by_id else None
+            existing = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (row["id"],)).fetchone()
+            if existing is not None:
+                if existing["project_id"] != row["project_id"]:
+                    raise BoundaryError("constraint", f"spec node collision for {row['id']!r}")
+                if existing["parent_id"] != parent_id or existing["title"] != row["title"] or int(existing["level"] or 0) != int(row["level"]):
+                    raise BoundaryError("constraint", f"spec node collision for {row['id']!r}")
+                if existing["decision_id"] is not None:
+                    raise BoundaryError("constraint", f"decision mismatch for {row['id']!r}")
+
+        planning_rows = None
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='planning_items'"
+        ).fetchone() is not None:
+            # Rebuild child table after spec_nodes so ALTER TABLE does not
+            # retarget its foreign key to spec_nodes_v11.
+            _preflight_planning(conn, require_sprint_check=conn.execute("PRAGMA user_version").fetchone()[0] >= 13)
+            planning_rows = conn.execute(
+                "SELECT id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at "
+                "FROM planning_items"
+            ).fetchall()
+
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if planning_rows is not None:
+                conn.execute("DROP INDEX IF EXISTS idx_planning_items_project")
+                conn.execute("DROP TABLE planning_items")
+            conn.execute("ALTER TABLE spec_nodes RENAME TO spec_nodes_v11")
+            conn.execute("""CREATE TABLE spec_nodes (
+                id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),
+                parent_id TEXT, level INTEGER NOT NULL DEFAULT 0,
+                title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+                note TEXT, description TEXT, rationale TEXT, criteria_json TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}', decision_id TEXT,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL,
+                UNIQUE(project_id, id),
+                FOREIGN KEY(project_id, parent_id) REFERENCES spec_nodes(project_id, id),
+                FOREIGN KEY(project_id, decision_id) REFERENCES decisions(project_id, id)
+            )""")
+            old = {r["name"] for r in conn.execute("PRAGMA table_info(spec_nodes_v11)")}
+            def col(name, default):
+                return name if name in old else default
+            conn.execute(f"""INSERT INTO spec_nodes
+                (id, project_id, kind, parent_id, level, title, status, note,
+                 description, rationale, criteria_json, metadata_json, decision_id,
+                 created_at, updated_at)
+                SELECT id, project_id, kind, parent_id, {col('level','0')}, title,
+                 status, {col('note','NULL')}, {col('description','NULL')},
+                 {col('rationale','NULL')}, {col('criteria_json','NULL')},
+                 COALESCE({col('metadata_json',"'{}'" )}, '{{}}'), {col('decision_id','NULL')},
+                 created_at, updated_at FROM spec_nodes_v11""")
+            conn.execute("DROP TABLE spec_nodes_v11")
+            for row in legacy:
+                parent_id = row["parent_id"]
+                # Legacy hierarchy allowed deeper task levels.  v12 has no
+                # task-level spec kinds, so collapse every level >= 3 to the
+                # canonical story level while preserving the legacy parent
+                # links and row identity.
+                normalized_level = min(max(int(row["level"]), 0), 3)
+                kind = ("theme", "epic", "feature", "story")[normalized_level]
+                if conn.execute("SELECT 1 FROM spec_nodes WHERE id = ?", (row["id"],)).fetchone() is None:
+                    conn.execute(
+                    "INSERT INTO spec_nodes "
+                    "(id, project_id, kind, parent_id, level, title, status, description, rationale, "
+                    "metadata_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)",
+                    (row["id"], row["project_id"], kind, parent_id, normalized_level, row["title"],
+                     "draft", None, None, row["created_at"], row["updated_at"]),
+                    )
+
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_project_id_unique ON spec_nodes(project_id, id)")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_one_root_per_project ON spec_nodes(project_id) WHERE level = 0 AND parent_id IS NULL")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)")
+            if planning_rows is not None:
+                conn.execute(
+                    """
+                    CREATE TABLE planning_items (
+                        id TEXT PRIMARY KEY,
+                        project_id TEXT NOT NULL,
+                        spec_node_id TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+                        estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+                        sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        UNIQUE(project_id, id),
+                        FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                            ON DELETE RESTRICT ON UPDATE CASCADE
+                    ) STRICT
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO planning_items "
+                    "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    planning_rows,
+                )
+                conn.execute(
+                    "CREATE INDEX idx_planning_items_project "
+                    "ON planning_items(project_id, sprint, status, created_at, id)"
+                )
+            conn.execute("PRAGMA user_version = 12")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+
+_PLANNING_STATUSES = ("backlog", "ready", "in_progress", "done", "cancelled")
+_PLANNING_ESTIMATES = (1, 2, 3, 5, 8, 13)
+
+
+def _planning_constraint(message: str) -> BoundaryError:
+    return BoundaryError("constraint", message)
+
+
+def _preflight_planning(conn: sqlite3.Connection, *, require_sprint_check: bool = False) -> None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
+    ).fetchone()
+    if row is None:
+        return
+    columns = [tuple(item) for item in conn.execute("PRAGMA table_info(planning_items)")]
+    expected = [
+        ("id", "TEXT", 1, None, 1),
+        ("project_id", "TEXT", 1, None, 0),
+        ("spec_node_id", "TEXT", 1, None, 0),
+        ("title", "TEXT", 1, None, 0),
+        ("status", "TEXT", 1, None, 0),
+        ("estimate", "INTEGER", 1, None, 0),
+        ("sprint", "INTEGER", 1, None, 0),
+        ("created_at", "REAL", 1, None, 0),
+        ("updated_at", "REAL", 1, None, 0),
+    ]
+    actual = [(item[1], item[2].upper(), item[3], item[4], item[5]) for item in columns]
+    if actual != expected:
+        raise _planning_constraint("planning_items has non-canonical columns")
+    table_sql = "".join((row[0] or "").lower().split())
+    canonical_sqls = tuple(
+        "".join(
+            """
+            CREATE TABLE planning_items (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                spec_node_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+                estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+                {sprint_definition}
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(project_id, id),
+                FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                    ON DELETE RESTRICT ON UPDATE CASCADE
+            ) STRICT
+            """.format(sprint_definition=sprint_definition).lower().split()
+        )
+        for sprint_definition in (
+            "sprint INTEGER NOT NULL,",
+            "sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),",
+        )
+    )
+    if table_sql not in canonical_sqls[1 if require_sprint_check else 0:]:
+        raise _planning_constraint("planning_items constraints are non-canonical")
+    foreign_keys = {
+        (item[2], item[3], item[4], item[5], item[6], item[7])
+        for item in conn.execute("PRAGMA foreign_key_list(planning_items)")
+    }
+    expected_fk = {("spec_nodes", "project_id", "project_id", "CASCADE", "RESTRICT", "NONE"),
+                   ("spec_nodes", "spec_node_id", "id", "CASCADE", "RESTRICT", "NONE")}
+    if foreign_keys != expected_fk:
+        raise _planning_constraint("planning_items foreign key is non-canonical")
+    for item in conn.execute("SELECT * FROM planning_items"):
+        if item["status"] not in _PLANNING_STATUSES:
+            raise _planning_constraint("planning_items contains an invalid status")
+        if type(item["estimate"]) is not int or item["estimate"] not in _PLANNING_ESTIMATES:
+            raise _planning_constraint("planning_items contains an invalid estimate")
+        if type(item["sprint"]) is not int or not 1 <= item["sprint"] <= 100000:
+            raise _planning_constraint("planning_items contains an invalid sprint")
+        node = conn.execute(
+            "SELECT 1 FROM spec_nodes WHERE project_id = ? AND id = ?",
+            (item["project_id"], item["spec_node_id"]),
+        ).fetchone()
+        if node is None:
+            raise _planning_constraint("planning_items contains an orphan or cross-project spec node")
+
+
+def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
+    """Create or repair the strict, project-scoped Scrum Planning table."""
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    _preflight_planning(conn, require_sprint_check=version >= 13)
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
+    ).fetchone()
+    if version >= 13 and exists is None:
+        raise _planning_constraint("partial v13 Scrum Planning migration is unsupported")
+    table_sql = ""
+    if exists is not None:
+        table_sql = "".join(
+            (conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'planning_items'"
+            ).fetchone()[0] or "").lower().split()
+        )
+    needs_rebuild = exists is not None and "check(sprintbetween1and100000)" not in table_sql
+    if version >= 13 and not needs_rebuild:
+        _preflight_planning(conn, require_sprint_check=True)
+        return
+    planning_rows = None
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if needs_rebuild:
+            planning_rows = conn.execute(
+                "SELECT id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at "
+                "FROM planning_items"
+            ).fetchall()
+            conn.execute("DROP INDEX IF EXISTS idx_planning_items_project")
+            conn.execute("DROP TABLE planning_items")
+        if exists is None or needs_rebuild:
+            conn.execute(
+                """
+                CREATE TABLE planning_items (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    spec_node_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')),
+                    estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)),
+                    sprint INTEGER NOT NULL CHECK(sprint BETWEEN 1 AND 100000),
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(project_id, id),
+                    FOREIGN KEY(project_id, spec_node_id) REFERENCES spec_nodes(project_id, id)
+                        ON DELETE RESTRICT ON UPDATE CASCADE
+                ) STRICT
+                """
+            )
+            if planning_rows is not None:
+                conn.executemany(
+                    "INSERT INTO planning_items "
+                    "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    planning_rows,
+                )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_planning_items_project "
+            "ON planning_items(project_id, sprint, status, created_at, id)"
+        )
+        conn.execute("PRAGMA user_version = 13")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA foreign_keys=ON")
+    if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        raise RuntimeError("SQLite foreign-key enforcement is required")
+    initial_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    _preflight_roadmap(conn, version=initial_version)
+    _preflight_planning(conn, require_sprint_check=initial_version >= 13)
+    if initial_version == 10:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='architecture_diagrams'"
+        ).fetchone()
+        if exists is None:
+            raise BoundaryError("constraint", "partial v10 architecture migration is unsupported")
+    _preflight_architecture_legacy(conn)
+    _preflight_risk_tradeoff_legacy(conn)
     _migrate_v6_project_id(conn)  # must run BEFORE CREATE TABLE IF NOT EXISTS below:
+    _migrate_v7_hierarchy(conn)
     # a pre-v6 db already has a `decisions` table (old `project` schema), so
     # IF NOT EXISTS would otherwise leave it untouched forever. This drops it
     # first when found, so the CREATE TABLE below always lands the current
@@ -272,12 +1260,47 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_reports_pending ON problem_reports(status, created_at)")
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS spec_nodes (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('theme','epic','feature','story')),
+            parent_id TEXT,
+            level INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',
+            note TEXT,
+            description TEXT,
+            rationale TEXT,
+            criteria_json TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            decision_id TEXT,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(project_id, id),
+            FOREIGN KEY(project_id, parent_id) REFERENCES spec_nodes(project_id, id),
+            FOREIGN KEY(project_id, decision_id) REFERENCES decisions(project_id, id)
+        )
+        """
+    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_decisions_project_id_unique ON decisions(project_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_project ON spec_nodes(project_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_parent ON spec_nodes(project_id, parent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_kind ON spec_nodes(project_id, kind)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_project_id_unique ON spec_nodes(project_id, id)")
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS hud_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )
         """
     )
+    _migrate_v8_stage2_risk_tradeoffs(conn)
+    _migrate_v9_flowcharts(conn)
+    _migrate_v10_architecture(conn)
+    _migrate_v11_roadmap(conn)
+    _migrate_v12_mindmap(conn)
+    _migrate_v13_scrum_planning(conn)
     conn.commit()
 
 
@@ -740,9 +1763,9 @@ def parse_json_kwarg(raw: Optional[str], field_name: str) -> Optional[dict]:
     if not raw:
         return None
     try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise ValueError(f"{field_name} is not valid JSON: {exc}") from exc
+        return validate_json_text(raw, field=field_name)
+    except BoundaryError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _verify_card_type(card_type: Optional[str], bucket: Optional[str], answers: Optional[dict]) -> None:
@@ -804,11 +1827,11 @@ def push_decision(
     _verify_card_type() above.
     """
     proj = _resolve_project(project_id)
-    if not question or not question.strip():
-        raise ValueError("question is required")
-    choices = [c for c in (choices or []) if isinstance(c, str) and c.strip()]
+    question = validate_text(question, field="question")
+    choices = validate_list(choices or [], field="choices", max_items=4,
+                            max_value_chars=LIST_VALUE_LIMIT)
     if not (2 <= len(choices) <= 4):
-        raise ValueError("choices must have between 2 and 4 non-empty entries")
+        raise BoundaryError("invalid_input", "choices must have between 2 and 4 entries")
     if recommended is not None and recommended not in choices:
         raise ValueError("recommended must be one of choices")
     if card_type is not None:
@@ -1328,3 +2351,674 @@ def mark_report_failed(conn: sqlite3.Connection, report_id: str, error: str) -> 
         (error, time.time(), report_id),
     )
     conn.commit()
+
+
+def _planning_project(conn: sqlite3.Connection, project_id: str) -> str:
+    del conn
+    return _resolve_project(validate_text(project_id, field="project_id", max_chars=ID_LIMIT))["id"]
+
+
+def _planning_values(*, title: str, status: str, estimate: int, sprint: int) -> tuple[str, str, int, int]:
+    title = validate_text(title, field="title", max_chars=TEXT_LIMIT)
+    if status not in _PLANNING_STATUSES:
+        raise BoundaryError("invalid_input", "invalid planning status")
+    if type(estimate) is not int or estimate not in _PLANNING_ESTIMATES:
+        raise BoundaryError("invalid_input", "estimate must be one of 1, 2, 3, 5, 8, or 13")
+    if type(sprint) is not int or isinstance(sprint, bool) or sprint < 1 or sprint > 100000:
+        raise BoundaryError("invalid_input", "sprint must be an integer from 1 through 100000")
+    return title, status, estimate, sprint
+
+
+def _planning_node(conn: sqlite3.Connection, project_id: str, spec_node_id: str) -> str:
+    spec_node_id = validate_text(spec_node_id, field="spec_node_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT project_id FROM spec_nodes WHERE id = ?", (spec_node_id,)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    if row["project_id"] != project_id:
+        raise BoundaryError("not_found", "resource not found")
+    return spec_node_id
+
+
+def create_planning_item(conn: sqlite3.Connection, *, project_id: str, spec_node_id: str,
+                         title: str, status: str = "backlog", estimate: int = 1,
+                         sprint: int = 1) -> dict[str, Any]:
+    project = _planning_project(conn, project_id)
+    spec_node = _planning_node(conn, project, spec_node_id)
+    title, status, estimate, sprint = _planning_values(
+        title=title, status=status, estimate=estimate, sprint=sprint
+    )
+    item_id = "pi_" + secrets.token_hex(6)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO planning_items "
+        "(id, project_id, spec_node_id, title, status, estimate, sprint, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (item_id, project, spec_node, title, status, estimate, sprint, now, now),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM planning_items WHERE id = ?", (item_id,)).fetchone())
+
+
+def list_planning_items(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _planning_project(conn, project_id)
+    rows = conn.execute(
+        "SELECT planning_items.* "
+        "FROM planning_items "
+        "WHERE planning_items.project_id = ? ORDER BY sprint, created_at, id",
+        (project,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_planning_item(conn: sqlite3.Connection, *, project_id: str, item_id: str,
+                         title: str | None = None, status: str | None = None,
+                         estimate: int | None = None, sprint: int | None = None) -> dict[str, Any]:
+    project = _planning_project(conn, project_id)
+    item_id = validate_text(item_id, field="item_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT * FROM planning_items WHERE id = ? AND project_id = ?", (item_id, project)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    next_title = row["title"] if title is None else title
+    next_status = row["status"] if status is None else status
+    next_estimate = row["estimate"] if estimate is None else estimate
+    next_sprint = row["sprint"] if sprint is None else sprint
+    next_title, next_status, next_estimate, next_sprint = _planning_values(
+        title=next_title, status=next_status, estimate=next_estimate, sprint=next_sprint
+    )
+    conn.execute(
+        "UPDATE planning_items SET title = ?, status = ?, estimate = ?, sprint = ?, updated_at = ? "
+        "WHERE id = ? AND project_id = ?",
+        (next_title, next_status, next_estimate, next_sprint, time.time(), item_id, project),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM planning_items WHERE id = ?", (item_id,)).fetchone())
+
+
+def delete_planning_item(conn: sqlite3.Connection, *, project_id: str, item_id: str) -> dict[str, Any]:
+    project = _planning_project(conn, project_id)
+    item_id = validate_text(item_id, field="item_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT * FROM planning_items WHERE id = ? AND project_id = ?", (item_id, project)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    conn.execute("DELETE FROM planning_items WHERE id = ? AND project_id = ?", (item_id, project))
+    conn.commit()
+    return dict(row)
+
+
+_SPEC_KINDS = ("theme", "epic", "feature", "story")
+_SPEC_STATUSES = ("draft", "ready", "converted")
+
+
+def _spec_validate_parent(conn: sqlite3.Connection, *, project_id: str,
+                           parent_id: str | None, level: int) -> None:
+    if level == 0:
+        if parent_id is not None:
+            raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
+        return
+    if parent_id is None:
+        raise BoundaryError("invalid_input", "non-root nodes require a parent")
+    parent = conn.execute(
+        "SELECT project_id, kind, level FROM spec_nodes WHERE id = ?", (parent_id,)
+    ).fetchone()
+    if parent is None:
+        raise BoundaryError("not_found", "parent node not found")
+    if parent["project_id"] != project_id:
+        raise BoundaryError("not_found", "parent node belongs to another project")
+    expected_kind = _SPEC_KINDS[level - 1]
+    if parent["level"] != level - 1 or parent["kind"] != expected_kind:
+        raise BoundaryError("invalid_input", "parent must be exactly one level above and have the compatible kind")
+
+
+def _spec_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    result = dict(row)
+    try:
+        result["metadata"] = json.loads(result.pop("metadata_json"))
+    except (TypeError, json.JSONDecodeError):
+        raise ValueError(f"invalid metadata_json for spec node {result.get('id')!r}")
+    return result
+
+
+def _spec_project(project_id: str) -> str:
+    return _resolve_project(validate_text(project_id, field="project_id", max_chars=ID_LIMIT))["id"]
+
+
+def _spec_validate_decision(conn: sqlite3.Connection, project_id: str, decision_id: str | None) -> None:
+    if decision_id is None:
+        return
+    row = conn.execute("SELECT project_id FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+    if row is None or row["project_id"] != project_id:
+        raise BoundaryError("not_found", "decision does not belong to project")
+
+
+def create_spec_node(
+    conn: sqlite3.Connection, *, project_id: str, kind: str, title: str,
+    parent_id: str | None = None, level: int | None = None, status: str = "draft",
+    note: str | None = None, description: str | None = None, rationale: str | None = None,
+    criteria_json: str | None = None, metadata_json: str = "{}", decision_id: str | None = None,
+) -> dict[str, Any]:
+    project_id = _spec_project(project_id)
+    kind = validate_text(kind, field="kind", max_chars=16)
+    if kind not in _SPEC_KINDS:
+        raise BoundaryError("invalid_input", "invalid spec node kind")
+    title = validate_text(title, field="title")
+    status = validate_text(status, field="status", max_chars=16)
+    if status not in _SPEC_STATUSES:
+        raise BoundaryError("invalid_input", "invalid spec node status")
+    if level is None:
+        level = _SPEC_KINDS.index(kind)
+    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 3:
+        raise BoundaryError("invalid_input", "level must be an integer from 0 through 3")
+    if level != _SPEC_KINDS.index(kind):
+        raise BoundaryError("invalid_input", "kind and level must match")
+
+    note = None if note is None else validate_text(note, field="note", allow_empty=True)
+    description = None if description is None else validate_text(description, field="description", allow_empty=True)
+    rationale = None if rationale is None else validate_text(rationale, field="rationale", allow_empty=True)
+    metadata = validate_json_text(metadata_json, field="metadata_json")
+    if not isinstance(metadata, dict):
+        raise BoundaryError("invalid_input", "metadata_json must be an object")
+    if criteria_json is not None:
+        validate_json_text(criteria_json, field="criteria_json")
+    _spec_validate_decision(conn, project_id, decision_id)
+    node_id = "sn_" + secrets.token_hex(6)
+    now = time.time()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        _spec_validate_parent(conn, project_id=project_id, parent_id=parent_id, level=level)
+        conn.execute(
+            "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (node_id, project_id, kind, parent_id, level, title, status, note, description, rationale,
+             criteria_json, json.dumps(metadata, separators=(",", ":"), ensure_ascii=False), decision_id, now, now),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, **fields: Any) -> dict[str, Any]:
+    allowed = {"title", "status", "note", "description", "rationale", "criteria_json", "metadata_json", "parent_id", "level", "kind", "decision_id"}
+    unknown = set(fields) - allowed
+    if unknown:
+        raise BoundaryError("invalid_input", f"immutable or unsupported node fields: {sorted(unknown)}")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None or (project_id is not None and row["project_id"] != _spec_project(project_id)):
+            raise BoundaryError("not_found", "resource not found")
+        if "kind" in fields and fields["kind"] not in _SPEC_KINDS:
+            raise BoundaryError("invalid_input", "invalid spec node kind")
+        if "status" in fields and fields["status"] not in _SPEC_STATUSES:
+            raise BoundaryError("invalid_input", "invalid spec node status")
+        if "title" in fields:
+            fields["title"] = validate_text(fields["title"], field="title")
+        for name in ("note", "description", "rationale"):
+            if name in fields and fields[name] is not None:
+                fields[name] = validate_text(fields[name], field=name, allow_empty=True)
+        if "metadata_json" in fields:
+            value = validate_json_text(fields["metadata_json"], field="metadata_json")
+            if not isinstance(value, dict):
+                raise BoundaryError("invalid_input", "metadata_json must be an object")
+            fields["metadata_json"] = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        if "criteria_json" in fields:
+            validate_json_text(fields["criteria_json"], field="criteria_json")
+        if "level" in fields and (isinstance(fields["level"], bool) or not isinstance(fields["level"], int) or not 0 <= fields["level"] <= 3):
+            raise BoundaryError("invalid_input", "level must be an integer from 0 through 3")
+        if "decision_id" in fields:
+            _spec_validate_decision(conn, row["project_id"], fields["decision_id"])
+        effective_kind = fields.get("kind", row["kind"])
+        effective_level = fields.get("level", row["level"])
+        if effective_level != _SPEC_KINDS.index(effective_kind):
+            raise BoundaryError("invalid_input", "kind and level must match")
+        effective_parent = fields.get("parent_id", row["parent_id"])
+        _spec_validate_parent(
+            conn,
+            project_id=row["project_id"],
+            parent_id=effective_parent,
+            level=effective_level,
+        )
+        if "parent_id" in fields and fields["parent_id"] is not None:
+            current = fields["parent_id"]
+            seen = set()
+            while current is not None:
+                if current in seen or current == node_id:
+                    raise BoundaryError("constraint", "cycle in spec tree")
+                seen.add(current)
+                parent_row = conn.execute("SELECT parent_id FROM spec_nodes WHERE id = ?", (current,)).fetchone()
+                current = parent_row["parent_id"] if parent_row else None
+        if fields:
+            assignments = ", ".join(f"{key} = ?" for key in fields)
+            conn.execute(f"UPDATE spec_nodes SET {assignments}, updated_at = ? WHERE id = ?", (*fields.values(), time.time(), node_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def get_spec_tree(conn: sqlite3.Connection, *, project_id: str) -> dict[str, Any] | None:
+    project_id = _spec_project(project_id)
+    rows = conn.execute("SELECT * FROM spec_nodes WHERE project_id = ? ORDER BY level, created_at, id", (project_id,)).fetchall()
+    by_id = {row["id"]: row for row in rows}
+    for row in rows:
+        parent_id = row["parent_id"]
+        if parent_id is not None and parent_id not in by_id:
+            raise ValueError(f"orphan spec node {row['id']!r}")
+        seen = set()
+        current = row["id"]
+        while current is not None:
+            if current in seen:
+                raise ValueError(f"cycle in spec tree at {row['id']!r}")
+            seen.add(current)
+            current = by_id[current]["parent_id"] if current in by_id else None
+    roots = [row for row in rows if row["level"] == 0 and row["parent_id"] is None]
+    if len(roots) > 1:
+        raise ValueError(f"project {project_id!r} has multiple spec roots")
+    if not roots:
+        return None
+    children: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        if row["parent_id"] is not None:
+            children.setdefault(row["parent_id"], []).append(row)
+    def build(row: sqlite3.Row) -> dict[str, Any]:
+        result = _spec_row(row)
+        result["children"] = [build(child) for child in children.get(row["id"], [])]
+        return result
+    return build(roots[0])
+
+
+def _hierarchy_row(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+
+def _hierarchy_project(project_id: str) -> dict[str, str]:
+    return _resolve_project(project_id)
+
+
+def create_node(
+    conn: sqlite3.Connection, *, project_id: str, parent_id: Optional[str], level: int,
+    title: str, sort_order: int = 0, kanban_task_id: Optional[str] = None,
+) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
+    """Create one hierarchy node, enforcing the fixed parent-depth tree."""
+    proj = _hierarchy_project(project_id)
+    if not isinstance(level, int) or isinstance(level, bool) or not 0 <= level <= 5:
+        raise ValueError("level must be an integer from 0 through 5")
+    if not title or not title.strip():
+        raise ValueError("title is required")
+    if level == 0:
+        if parent_id is not None:
+            raise ValueError("level 0 root cannot have a parent")
+    else:
+        if not parent_id:
+            raise ValueError("non-root nodes require a parent")
+        parent = conn.execute(
+            "SELECT project_id, level, archived FROM hierarchy_nodes WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent is None or parent["archived"]:
+            raise ValueError("parent node does not exist or is archived")
+        if parent["project_id"] != proj["id"] or parent["level"] != level - 1:
+            raise ValueError("parent must belong to the project and be exactly one level above the node")
+    if level not in (4, 5) and kanban_task_id is not None:
+        raise ValueError("kanban_task_id is only valid for Story or Task nodes")
+    node_id = "n_" + secrets.token_hex(4)
+    now = int(time.time())
+    try:
+        conn.execute(
+            "INSERT INTO hierarchy_nodes "
+            "(id, project_id, parent_id, level, title, sort_order, kanban_task_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (node_id, proj["id"], parent_id, level, title.strip(), int(sort_order), kanban_task_id, now, now),
+        )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        if level == 0:
+            raise ValueError(f"project {proj['id']!r} already has a hierarchy root") from exc
+        raise
+    return _hierarchy_row(conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def list_nodes(conn: sqlite3.Connection, *, project_id: str, parent_id: Optional[str] = None) -> list[dict[str, Any]]:
+    proj = _hierarchy_project(project_id)
+    rows = conn.execute(
+        "SELECT * FROM hierarchy_nodes WHERE project_id = ? AND archived = 0 "
+        "AND parent_id IS ? ORDER BY sort_order, created_at, id",
+        (proj["id"], parent_id),
+    ).fetchall()
+    return [_hierarchy_row(row) for row in rows]
+
+
+def _kanban_statuses(task_ids: set[str]) -> dict[str, str]:
+    if not task_ids:
+        return {}
+    path = os.environ.get("HERMES_KANBAN_DB", "").strip()
+    kanban_path = Path(path) if path else _hermes_home() / "kanban.db"
+    if not kanban_path.exists():
+        return {}
+    kconn: Optional[sqlite3.Connection] = None
+    try:
+        kconn = _connect_sqlite(kanban_path)
+        rows = kconn.execute(
+            f"SELECT id, status FROM tasks WHERE id IN ({','.join('?' for _ in task_ids)})",
+            tuple(task_ids),
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+    except sqlite3.Error:
+        return {}
+    finally:
+        if kconn is not None:
+            kconn.close()
+
+
+def get_subtree(
+    conn: sqlite3.Connection, project_id: str, *, include_tasks: bool = False,
+) -> dict[str, Any]:
+    """Return the active tree from its level-0 root, with Story roll-ups."""
+    proj = _hierarchy_project(project_id)
+    rows = conn.execute(
+        "SELECT * FROM hierarchy_nodes WHERE project_id = ? AND archived = 0 ORDER BY level, sort_order, created_at, id",
+        (proj["id"],),
+    ).fetchall()
+    if not rows:
+        raise ValueError(f"project {proj['id']!r} has no hierarchy root")
+    by_parent: dict[Optional[str], list[sqlite3.Row]] = {}
+    for row in rows:
+        by_parent.setdefault(row["parent_id"], []).append(row)
+    roots = [row for row in rows if row["level"] == 0 and row["parent_id"] is None]
+    if not roots:
+        raise ValueError(f"project {proj['id']!r} has no hierarchy root")
+    root = roots[0]
+    story_ids = {row["kanban_task_id"] for row in rows if row["level"] == 4 and row["kanban_task_id"]}
+    statuses = _kanban_statuses(story_ids)
+
+    def build(row: sqlite3.Row) -> dict[str, Any]:
+        children = [child for child in by_parent.get(row["id"], []) if include_tasks or child["level"] < 5]
+        result = _hierarchy_row(row)
+        result["children"] = [build(child) for child in children]
+        done = 1 if row["level"] == 4 and row["kanban_task_id"] else 0
+        total = done
+        if done:
+            done = 1 if statuses.get(row["kanban_task_id"]) == "done" else 0
+        for child in result["children"]:
+            done += child["done_count"]
+            total += child["total_count"]
+        result["done_count"] = done
+        result["total_count"] = total
+        return result
+
+    return build(root)
+
+
+def update_node(conn: sqlite3.Connection, node_id: str, **fields: Any) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
+    allowed = {"title", "sort_order", "kanban_task_id"}
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"immutable or unsupported node fields: {sorted(unknown)}")
+    row = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"node {node_id!r} not found")
+    if "title" in fields and (not fields["title"] or not str(fields["title"]).strip()):
+        raise ValueError("title is required")
+    if "kanban_task_id" in fields and row["level"] not in (4, 5) and fields["kanban_task_id"] is not None:
+        raise ValueError("kanban_task_id is only valid for Story or Task nodes")
+    if "kanban_task_id" in fields and fields["kanban_task_id"]:
+        duplicate = conn.execute(
+            "SELECT id FROM hierarchy_nodes WHERE kanban_task_id = ? AND id != ? AND archived = 0",
+            (fields["kanban_task_id"], node_id),
+        ).fetchone()
+        if duplicate:
+            raise ValueError(f"kanban task {fields['kanban_task_id']!r} is already linked to another node")
+    if fields:
+        assignments = ", ".join(f"{key} = ?" for key in fields)
+        values = [str(value).strip() if key == "title" else value for key, value in fields.items()]
+        conn.execute(
+            f"UPDATE hierarchy_nodes SET {assignments}, updated_at = ? WHERE id = ?",
+            (*values, int(time.time()), node_id),
+        )
+        conn.commit()
+    return _hierarchy_row(conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def archive_node(conn: sqlite3.Connection, node_id: str, *, cascade: bool = True) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
+    row = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"node {node_id!r} not found")
+    ids = [node_id]
+    if cascade:
+        pending = [node_id]
+        while pending:
+            children = conn.execute(
+                "SELECT id FROM hierarchy_nodes WHERE parent_id IN ({})".format(",".join("?" for _ in pending)),
+                pending,
+            ).fetchall()
+            pending = [child["id"] for child in children]
+            ids.extend(pending)
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(
+        f"UPDATE hierarchy_nodes SET archived = 1, updated_at = ? WHERE id IN ({placeholders})",
+        (int(time.time()), *ids),
+    )
+    conn.commit()
+    return _hierarchy_row(conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def link_node_to_kanban(conn: sqlite3.Connection, node_id: str, kanban_task_id: str) -> dict[str, Any]:
+    raise BoundaryError("constraint", "hierarchy_nodes is read-only after v12; use spec nodes")
+    if not kanban_task_id or not kanban_task_id.strip():
+        raise ValueError("kanban_task_id is required")
+    row = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"node {node_id!r} not found")
+    if row["level"] not in (4, 5):
+        raise ValueError("only Story or Task nodes may link to Kanban tasks")
+    duplicate = conn.execute(
+        "SELECT id FROM hierarchy_nodes WHERE kanban_task_id = ? AND id != ? AND archived = 0",
+        (kanban_task_id.strip(), node_id),
+    ).fetchone()
+    if duplicate:
+        raise ValueError(f"kanban task {kanban_task_id!r} is already linked to another node")
+    conn.execute(
+        "UPDATE hierarchy_nodes SET kanban_task_id = ?, updated_at = ? WHERE id = ?",
+        (kanban_task_id.strip(), int(time.time()), node_id),
+    )
+    conn.commit()
+    return _hierarchy_row(conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
+def _flow_row(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
+
+
+def _flow_for_project(conn: sqlite3.Connection, flow_id: str, project_id: str) -> sqlite3.Row:
+    project = _resolve_project(project_id)
+    row = conn.execute("SELECT * FROM flows WHERE id = ? AND project_id = ?", (flow_id, project["id"])).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "flow not found")
+    return row
+
+
+def create_flow(conn: sqlite3.Connection, *, project_id: str, name: str) -> dict[str, Any]:
+    project = _resolve_project(project_id)
+    name = validate_text(name, field="name", max_chars=TEXT_LIMIT)
+    flow_id = "flow_" + secrets.token_hex(4)
+    now = int(time.time())
+    conn.execute(
+        "INSERT INTO flows (id, project_id, name, steps_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (flow_id, project["id"], name, "[]", now, now),
+    )
+    conn.commit()
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def list_flows(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _resolve_project(project_id)
+    return [_flow_row(row) for row in conn.execute(
+        "SELECT * FROM flows WHERE project_id = ? ORDER BY updated_at DESC, id", (project["id"],)
+    ).fetchall()]
+
+
+def get_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str) -> dict[str, Any]:
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def update_flow(conn: sqlite3.Connection, flow_id: str, *, project_id: str, name: str) -> dict[str, Any]:
+    _flow_for_project(conn, flow_id, project_id)
+    name = validate_text(name, field="name", max_chars=TEXT_LIMIT)
+    conn.execute("UPDATE flows SET name = ?, updated_at = ? WHERE id = ?", (name, int(time.time()), flow_id))
+    conn.commit()
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def _validate_flow_steps(steps: Any) -> list[dict[str, Any]]:
+    if not isinstance(steps, list):
+        raise BoundaryError("invalid_input", "steps must be an array")
+    if len(steps) > _MAX_FLOW_STEPS:
+        raise BoundaryError("invalid_input", "steps exceeds its size limit")
+    ids: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    edge_count = 0
+    for step in steps:
+        if not isinstance(step, dict) or set(step) != {"id", "label", "next"}:
+            raise BoundaryError("invalid_input", "each step must have only id, label, and next")
+        step_id = validate_text(step["id"], field="step id", max_chars=ID_LIMIT)
+        label = validate_text(step["label"], field="step label", max_chars=TEXT_LIMIT, allow_empty=True)
+        if step_id in ids:
+            raise BoundaryError("invalid_input", "duplicate step id")
+        ids.add(step_id)
+        targets = step["next"]
+        if not isinstance(targets, list):
+            raise BoundaryError("invalid_input", "step next must be an array")
+        if len(targets) > _MAX_FLOW_EDGES:
+            raise BoundaryError("invalid_input", "step has too many outgoing edges")
+        clean_targets = [validate_text(target, field="step target", max_chars=ID_LIMIT) for target in targets]
+        if len(set(clean_targets)) != len(clean_targets):
+            raise BoundaryError("invalid_input", "duplicate step edge")
+        edge_count += len(clean_targets)
+        if edge_count > _MAX_FLOW_EDGES:
+            raise BoundaryError("invalid_input", "graph has too many edges")
+        normalized.append({"id": step_id, "label": label, "next": clean_targets})
+    for step in normalized:
+        if any(target not in ids for target in step["next"]):
+            raise BoundaryError("invalid_input", "step references missing target")
+    encoded = json.dumps(normalized, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(encoded) > _MAX_FLOW_GRAPH_BYTES:
+        raise BoundaryError("invalid_input", "graph exceeds its size limit")
+    return normalized
+
+
+def set_flow_steps(conn: sqlite3.Connection, flow_id: str, *, project_id: str, steps: Any) -> dict[str, Any]:
+    _flow_for_project(conn, flow_id, project_id)
+    normalized = _validate_flow_steps(steps)
+    conn.execute(
+        "UPDATE flows SET steps_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(normalized, separators=(",", ":"), ensure_ascii=False), int(time.time()), flow_id),
+    )
+    conn.commit()
+    return _flow_row(_flow_for_project(conn, flow_id, project_id))
+
+
+def _risk_project(project_id: str) -> dict[str, str]:
+    return _resolve_project(project_id)
+
+
+def _optional_risk_text(value: Any, field: str) -> Optional[str]:
+    if value is None:
+        return None
+    return validate_text(value, field=field, max_chars=TEXT_LIMIT)
+
+
+def _risk_decision_project(conn: sqlite3.Connection, project_id: str,
+                           decision_id: Optional[str]) -> str:
+    project = _risk_project(project_id)["id"]
+    if decision_id is not None:
+        decision = conn.execute("SELECT project_id FROM decisions WHERE id = ?", (decision_id,)).fetchone()
+        if decision is None or decision["project_id"] != project:
+            raise BoundaryError("not_found", "resource not found")
+    return project
+
+
+def add_risk(conn: sqlite3.Connection, *, project_id: str, title: Any,
+             description: Any = None, breaks_when: Any = None,
+             status: str = "open", decision_id: Optional[str] = None) -> dict[str, Any]:
+    project = _risk_decision_project(conn, project_id, decision_id)
+    title = validate_text(title, field="title")
+    description = _optional_risk_text(description, "description")
+    breaks_when = _optional_risk_text(breaks_when, "breaks_when")
+    if not isinstance(status, str) or status not in _RISK_STATUSES:
+        raise BoundaryError("invalid_input", "invalid risk status")
+    risk_id = "risk_" + secrets.token_hex(4)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO risks (id, project_id, decision_id, title, description, breaks_when, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (risk_id, project, decision_id, title, description, breaks_when, status, now, now),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM risks WHERE id = ?", (risk_id,)).fetchone())
+
+
+def list_risks(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _risk_project(project_id)["id"]
+    return [dict(row) for row in conn.execute("SELECT * FROM risks WHERE project_id = ? ORDER BY created_at, id", (project,)).fetchall()]
+
+
+def update_risk_status(conn: sqlite3.Connection, *, project_id: str, risk_id: str, status: str) -> dict[str, Any]:
+    project = _risk_project(project_id)["id"]
+    if not isinstance(status, str) or status not in _RISK_STATUSES:
+        raise BoundaryError("invalid_input", "invalid risk status")
+    row = conn.execute("SELECT * FROM risks WHERE id = ? AND project_id = ?", (risk_id, project)).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    conn.execute("UPDATE risks SET status = ?, updated_at = ? WHERE id = ? AND project_id = ?", (status, time.time(), risk_id, project))
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM risks WHERE id = ?", (risk_id,)).fetchone())
+
+
+def add_tradeoff(conn: sqlite3.Connection, *, project_id: str, kind: str, title: Any, choice: Any,
+                  alt_label: Any = None, cost: Any = None, gain: Any = None,
+                  decision_id: Optional[str] = None) -> dict[str, Any]:
+    project = _risk_decision_project(conn, project_id, decision_id)
+    if not isinstance(kind, str) or kind not in _RISK_TRADEOFF_KINDS:
+        raise BoundaryError("invalid_input", "invalid tradeoff kind")
+    title = validate_text(title, field="title")
+    choice = validate_text(choice, field="choice")
+    alt_label = _optional_risk_text(alt_label, "alt_label")
+    cost = _optional_risk_text(cost, "cost")
+    gain = _optional_risk_text(gain, "gain")
+    tradeoff_id = "tradeoff_" + secrets.token_hex(4)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO tradeoffs (id, project_id, decision_id, kind, title, choice, alt_label, cost, gain, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (tradeoff_id, project, decision_id, kind, title, choice, alt_label, cost, gain, now, now),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM tradeoffs WHERE id = ?", (tradeoff_id,)).fetchone())
+
+
+def list_tradeoffs(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project = _risk_project(project_id)["id"]
+    return [dict(row) for row in conn.execute("SELECT * FROM tradeoffs WHERE project_id = ? ORDER BY created_at, id", (project,)).fetchall()]
+
+
+def set_prioritized_side(conn: sqlite3.Connection, *, project_id: str, tradeoff_id: str, side: Optional[str]) -> dict[str, Any]:
+    project = _risk_project(project_id)["id"]
+    if side is not None and side not in ("a", "b"):
+        raise BoundaryError("invalid_input", "invalid prioritized side")
+    row = conn.execute("SELECT * FROM tradeoffs WHERE id = ? AND project_id = ?", (tradeoff_id, project)).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    conn.execute("UPDATE tradeoffs SET prioritized_side = ?, updated_at = ? WHERE id = ? AND project_id = ?", (side, time.time(), tradeoff_id, project))
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM tradeoffs WHERE id = ?", (tradeoff_id,)).fetchone())

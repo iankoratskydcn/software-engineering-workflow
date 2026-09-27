@@ -204,8 +204,8 @@ def test_cli_push_still_rejects_mismatched_card_type(tmp_path, monkeypatch):
         "--card-type-answers", json.dumps(_SCALAR_ANSWERS),
     ])
     assert result["ok"] is False
-    assert "quad_choice" in result["error"] and "scalar_slider" in result["error"]
-
+    message = result["error"]["message"]
+    assert "quad_choice" in message and "scalar_slider" in message
 
 def test_cli_push_rejects_invalid_answers_json(tmp_path, monkeypatch):
     result = _run_cli_push(tmp_path, monkeypatch, [
@@ -214,4 +214,4 @@ def test_cli_push_rejects_invalid_answers_json(tmp_path, monkeypatch):
         "--card-type-answers", "{not valid json",
     ])
     assert result["ok"] is False
-    assert "--card-type-answers" in result["error"]
+    assert "--card-type-answers" in result["error"]["message"]

@@ -1,0 +1,35 @@
+{
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "current_sha": "444b9436aac33c64ba402978da87f169ead6a8d2",
+  "setup": {
+    "node": "v22.22.1",
+    "react_source": "/home/ian-koratsky/hermes-agent/node_modules",
+    "sdk": "local @hermes/plugin-sdk stub from repository README",
+    "command": "npm test"
+  },
+  "baseline": {
+    "tests": 37,
+    "passed": 29,
+    "failed": 8,
+    "failures": [
+      "test/agent-metrics-section-isolation.test.mjs",
+      "test/board-project-selector-labels.test.mjs",
+      "test/dial-grid-select.test.mjs",
+      "test/discuss-opens-new-session.test.mjs",
+      "test/palette-navigate-safety.test.mjs",
+      "test/sidebar-order-swap.test.mjs",
+      "test/sidebar-settings-crash.test.mjs",
+      "test/sidebar-settings.test.mjs"
+    ]
+  },
+  "current": {
+    "tests": 48,
+    "passed": 48,
+    "failed": 0,
+    "flowcharts_acceptance": "passed",
+    "frontend_cleanup": "passed",
+    "failures": []
+  },
+  "classification": "All eight baseline frontend failures were either corrected as stale test contracts or covered by the minimal Agent Metrics section-boundary fix. No frontend failures remain.",
+  "release_impact": "Frontend npm test is green in the installed local test environment."
+}

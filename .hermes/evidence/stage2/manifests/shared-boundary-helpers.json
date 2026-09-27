@@ -1,0 +1,22 @@
+{
+  "surface": "shared_boundary_helpers",
+  "source_sha": null,
+  "reviewed_sha": "161d57ddbbd37906dc1cf7f86ff07c33435a4605",
+  "canonical_parent_sha": "1fb11d9ffba77283efa9597af20186d3760c2566",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "worktree_path": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "git_status": "clean",
+  "ancestry": "fed6d22 ancestor verified",
+  "diff_check": "passed",
+  "focused_tests": {
+    "command": "uv run --python 3.14 --with pytest python3 -m pytest -q backend-plugin/tests/test_boundary_contracts.py backend-plugin/tests/test_sqlite_foreign_keys_init.py backend-plugin/tests/test_card_type_plumbing_e2e.py",
+    "result": "26 passed"
+  },
+  "full_backend_tests": {
+    "command": "uv run --python 3.14 --with pytest python3 -m pytest -q backend-plugin/tests",
+    "result": "74 passed, 1 skipped"
+  },
+  "reviewer": "independent adversarial reviewer",
+  "report_reference": ".hermes/evidence/stage2/reviews/stage2-boundary-review-3.json",
+  "verdict": "PASS"
+}

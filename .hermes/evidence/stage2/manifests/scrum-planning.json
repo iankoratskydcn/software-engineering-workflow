@@ -1,0 +1,22 @@
+{
+  "surface": "scrum-planning",
+  "source_sha": "a6960b8",
+  "implementation_sha": "552343babe0325ac8811ba9bf69c45f8f9c05511",
+  "canonical_parent_sha": "f0b09c884bc97bfdcc7760de3f1c28b766cf5860",
+  "worktree_path": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "reviewed_sha": "552343babe0325ac8811ba9bf69c45f8f9c05511",
+  "reviewer_verdict": "PASS",
+  "focused_tests": "36 passed across Scrum/MindMap/hierarchy hostile suites",
+  "full_backend": "162 passed, 1 skipped",
+  "full_frontend": "48 passed",
+  "verification": [
+    "Fresh, v11, and v12 migration probes passed",
+    "v13 idempotence and partial-schema refusal passed",
+    "Exact planning_items schema and extra/missing constraint rejection passed",
+    "Sprint/status/estimate database checks passed",
+    "Composite project/spec_node FK and project-scoped CRUD/CLI/UI passed",
+    "py_compile passed",
+    "git diff --check fed6d22..reviewed_sha passed"
+  ],
+  "status": "accepted"
+}

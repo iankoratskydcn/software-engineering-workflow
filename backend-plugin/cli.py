@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,11 @@ from typing import Optional
 
 try:
     from . import db
+    from .cli_spec_cmds import (
+        _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
+        _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
+        _cmd_spec_tree,
+    )
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -27,6 +33,11 @@ except ImportError:
     if _plugin_dir not in _sys.path:
         _sys.path.insert(0, _plugin_dir)
     import db  # type: ignore[import-not-found]
+    from cli_spec_cmds import (  # type: ignore[import-not-found]
+        _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
+        _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
+        _cmd_spec_tree,
+    )
 
 _TRIAGE_SYSTEM_PROMPT = (
     "You triage raw problem reports into a bounded owner decision for a human "
@@ -57,6 +68,43 @@ def _triage_user_prompt(report: dict) -> str:
 
 def _print(obj) -> None:
     print(json.dumps(obj, default=str))
+
+
+def boundary_error(error: BaseException) -> tuple[dict, int]:
+    """Map boundary failures to a stable safe envelope and exit code."""
+    detail = None
+    if isinstance(error, db.BoundaryError):
+        code = error.code if error.code in {"invalid_input", "not_found", "conflict", "busy", "constraint", "internal_error"} else "internal_error"
+        if code == "invalid_input":
+            detail = str(error)[:256]
+    elif isinstance(error, sqlite3.OperationalError) and "locked" in str(error).lower():
+        code = "busy"
+    elif isinstance(error, sqlite3.IntegrityError):
+        code = "constraint"
+    elif isinstance(error, FileNotFoundError):
+        code = "not_found"
+    elif isinstance(error, ValueError):
+        code = "invalid_input"
+        detail = str(error)[:256]
+    else:
+        code = "internal_error"
+    exit_codes = {
+        "invalid_input": 2,
+        "not_found": 3,
+        "conflict": 4,
+        "busy": 5,
+        "constraint": 6,
+        "internal_error": 1,
+    }
+    message = detail if detail and code == "invalid_input" else {
+        "invalid_input": "invalid input",
+        "not_found": "resource not found",
+        "conflict": "stale or conflicting request",
+        "busy": "database is busy",
+        "constraint": "request violates a data constraint",
+        "internal_error": "internal error",
+    }[code]
+    return {"ok": False, "error": {"code": code, "message": message}}, exit_codes[code]
 
 
 def setup(p) -> None:
@@ -177,7 +225,424 @@ def setup(p) -> None:
     v = verbs.add_parser("agent-metrics-snapshot", help="Emit the agent_metrics_snapshot.py JSON (heatmap/scatter/treemap/radar/sankey widgets)")
     v.set_defaults(func=_cmd_agent_metrics_snapshot)
 
+    spec = verbs.add_parser("spec", help="Spec Digest: manage specification tree nodes")
+    spec_verbs = spec.add_subparsers(dest="spec_verb", required=True)
+    v = spec_verbs.add_parser("add-node")
+    v.add_argument("--kind", required=True, choices=["theme", "epic", "feature", "story"])
+    v.add_argument("--title", required=True)
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--parent-id", default=None, dest="parent_id")
+    v.set_defaults(func=_cmd_spec_add_node)
+    v = spec_verbs.add_parser("tree")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_spec_tree)
+    v = spec_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--kind", default=None)
+    v.set_defaults(func=_cmd_spec_list)
+    v = spec_verbs.add_parser("update-node")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.add_argument("--title", default=None)
+    v.add_argument("--status", default=None, choices=["draft", "ready", "converted"])
+    v.add_argument("--note", default=None)
+    v.add_argument("--metadata-json", default=None, dest="metadata_json")
+    v.set_defaults(func=_cmd_spec_update_node)
+    v = spec_verbs.add_parser("set-criteria")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.add_argument("--criteria-json", required=True, dest="criteria_json")
+    v.set_defaults(func=_cmd_spec_set_criteria)
+    v = spec_verbs.add_parser("link-decision")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.add_argument("--decision-id", required=True, dest="decision_id")
+    v.set_defaults(func=_cmd_spec_link_decision)
+    v = spec_verbs.add_parser("delete-node")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.set_defaults(func=_cmd_spec_delete_node)
+
+    node = verbs.add_parser("node", help="Manage mindmap hierarchy nodes")
+    node_verbs = node.add_subparsers(dest="node_verb", required=True)
+
+    v = node_verbs.add_parser("create", help="Create a hierarchy node")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--parent", required=True, dest="parent_id",
+                   help="Parent node id, or 'none' for a root")
+    v.add_argument("--level", required=True, type=int)
+    v.add_argument("--title", required=True)
+    v.add_argument("--kanban-task", default=None, dest="kanban_task_id")
+    v.set_defaults(func=_cmd_node_create)
+
+    v = node_verbs.add_parser("list", help="List active child nodes")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--parent", default=None, dest="parent_id")
+    v.set_defaults(func=_cmd_node_list)
+
+    v = node_verbs.add_parser("tree", help="Print the project hierarchy tree")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_node_tree)
+
+    v = node_verbs.add_parser("link-kanban", help="Link a hierarchy node to a Kanban task")
+    v.add_argument("node_id")
+    v.add_argument("task_id")
+    v.set_defaults(func=_cmd_node_link_kanban)
+
+    v = node_verbs.add_parser("update", help="Update a hierarchy node")
+    v.add_argument("node_id")
+    v.add_argument("--title")
+    v.add_argument("--sort-order", type=int, dest="sort_order")
+    v.add_argument("--kanban-task", default=None, dest="kanban_task_id")
+    v.set_defaults(func=_cmd_node_update)
+
+    v = node_verbs.add_parser("archive", help="Archive a hierarchy node and descendants")
+    v.add_argument("node_id")
+    v.set_defaults(func=_cmd_node_archive)
+
+    flow = verbs.add_parser("flow", help="Manage project flowcharts")
+    flow_verbs = flow.add_subparsers(dest="flow_verb", required=True)
+    v = flow_verbs.add_parser("add")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--name", required=True)
+    v.set_defaults(func=_cmd_flow_add)
+    v = flow_verbs.add_parser("list")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_flow_list)
+    v = flow_verbs.add_parser("update")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("flow_id")
+    v.add_argument("--name", required=True)
+    v.set_defaults(func=_cmd_flow_update)
+    v = flow_verbs.add_parser("set-steps")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("flow_id")
+    v.add_argument("--steps", required=True)
+    v.set_defaults(func=_cmd_flow_set_steps)
+
+    arch = verbs.add_parser("arch", help="Manage project architecture diagrams")
+    arch_verbs = arch.add_subparsers(dest="arch_verb", required=True)
+    v = arch_verbs.add_parser("add-diagram")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("--title", required=True)
+    v.add_argument("--nodes", required=True)
+    v.add_argument("--edges", required=True)
+    v.set_defaults(func=_cmd_arch_add_diagram)
+    v = arch_verbs.add_parser("list-diagrams")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_arch_list_diagrams)
+    v = arch_verbs.add_parser("set-diagram")
+    v.add_argument("--project", required=True, dest="project_id")
+    v.add_argument("diagram_id")
+    v.add_argument("--title")
+    v.add_argument("--nodes")
+    v.add_argument("--edges")
+    v.set_defaults(func=_cmd_arch_set_diagram)
+
+    risk = verbs.add_parser("risk", help="Manage project risks")
+    risk_verbs = risk.add_subparsers(dest="risk_verb", required=True)
+    v = risk_verbs.add_parser("add")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--title", required=True)
+    v.add_argument("--description", default=None)
+    v.add_argument("--breaks-when", default=None, dest="breaks_when")
+    v.add_argument("--status", default="open")
+    v.add_argument("--decision-id", default=None, dest="decision_id")
+    v.set_defaults(func=_cmd_risk_add)
+    v = risk_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_risk_list)
+    v = risk_verbs.add_parser("update-status")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("risk_id")
+    v.add_argument("--status", required=True)
+    v.set_defaults(func=_cmd_risk_update_status)
+
+    tradeoff = verbs.add_parser("tradeoff", help="Manage project tradeoffs")
+    tradeoff_verbs = tradeoff.add_subparsers(dest="tradeoff_verb", required=True)
+    v = tradeoff_verbs.add_parser("add")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--kind", required=True, choices=["scale", "duel", "anchor"])
+    v.add_argument("--title", required=True)
+    v.add_argument("--choice", required=True)
+    v.add_argument("--alt-label", default=None, dest="alt_label")
+    v.add_argument("--cost", default=None)
+    v.add_argument("--gain", default=None)
+    v.add_argument("--decision-id", default=None, dest="decision_id")
+    v.set_defaults(func=_cmd_tradeoff_add)
+    v = tradeoff_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_tradeoff_list)
+    v = tradeoff_verbs.add_parser("set-prioritized-side")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("tradeoff_id")
+    v.add_argument("--side", choices=["a", "b"], required=True)
+    v.set_defaults(func=_cmd_tradeoff_set_side)
+
+    roadmap = verbs.add_parser("roadmap", help="Manage project roadmap")
+    roadmap_verbs = roadmap.add_subparsers(dest="roadmap_verb", required=True)
+    v = roadmap_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_roadmap_list)
+    lane = roadmap_verbs.add_parser("lane")
+    lane_verbs = lane.add_subparsers(dest="lane_verb", required=True)
+    v = lane_verbs.add_parser("add"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--title", required=True); v.add_argument("--sort-order", type=int, default=0); v.set_defaults(func=_cmd_roadmap_lane_add)
+    v = lane_verbs.add_parser("list"); v.add_argument("--project-id", required=True, dest="project_id"); v.set_defaults(func=_cmd_roadmap_lane_list)
+    v = lane_verbs.add_parser("update"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", required=True, dest="lane_id"); v.add_argument("--title"); v.add_argument("--sort-order", type=int); v.add_argument("--expected-updated-at", type=float, dest="expected_updated_at"); v.set_defaults(func=_cmd_roadmap_lane_update)
+    item = roadmap_verbs.add_parser("item")
+    item_verbs = item.add_subparsers(dest="item_verb", required=True)
+    v = item_verbs.add_parser("add"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", required=True, dest="lane_id"); v.add_argument("--title", required=True); v.add_argument("--description"); v.add_argument("--status", default="planned"); v.add_argument("--sort-order", type=int, default=0); v.add_argument("--depends-on", action="append", default=None); v.add_argument("--link", action="append", dest="links", default=None); v.set_defaults(func=_cmd_roadmap_item_add)
+    v = item_verbs.add_parser("list"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--lane-id", dest="lane_id"); v.set_defaults(func=_cmd_roadmap_item_list)
+    v = item_verbs.add_parser("update"); v.add_argument("--project-id", required=True, dest="project_id"); v.add_argument("--item-id", required=True, dest="item_id"); v.add_argument("--lane-id"); v.add_argument("--title"); v.add_argument("--description"); v.add_argument("--status"); v.add_argument("--sort-order", type=int); v.add_argument("--depends-on", action="append", default=None); v.add_argument("--link", action="append", dest="links", default=None); v.add_argument("--clear-depends-on", action="store_true"); v.add_argument("--clear-links", action="store_true"); v.add_argument("--expected-updated-at", type=float, dest="expected_updated_at"); v.set_defaults(func=_cmd_roadmap_item_update)
+
+    scrum = verbs.add_parser("scrum", help="Manage Scrum Planning")
+    scrum_verbs = scrum.add_subparsers(dest="scrum_verb", required=True)
+    plan = scrum_verbs.add_parser("plan", help="Manage project-scoped planning items")
+    plan_verbs = plan.add_subparsers(dest="plan_verb", required=True)
+    v = plan_verbs.add_parser("add")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--spec-node-id", required=True, dest="spec_node_id")
+    v.add_argument("--title", required=True)
+    v.add_argument("--status", default="backlog", choices=["backlog", "ready", "in_progress", "done", "cancelled"])
+    v.add_argument("--estimate", required=True, type=int)
+    v.add_argument("--sprint", required=True, type=int)
+    v.set_defaults(func=_cmd_planning_add)
+    v = plan_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_planning_list)
+    v = plan_verbs.add_parser("update")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--item-id", required=True, dest="item_id")
+    v.add_argument("--title")
+    v.add_argument("--status", choices=["backlog", "ready", "in_progress", "done", "cancelled"])
+    v.add_argument("--estimate", type=int)
+    v.add_argument("--sprint", type=int)
+    v.set_defaults(func=_cmd_planning_update)
+    v = plan_verbs.add_parser("delete")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--item-id", required=True, dest="item_id")
+    v.set_defaults(func=_cmd_planning_delete)
+
     p.set_defaults(func=lambda args: p.print_help())
+
+
+def _cmd_roadmap_list(args):
+    _run_node_command(lambda conn, **kw: {"lanes": db.list_roadmap_lanes(conn, **kw), "items": db.list_roadmap_items(conn, **kw)}, "roadmap", project_id=args.project_id)
+
+
+def _cmd_roadmap_lane_add(args):
+    _run_node_command(db.create_roadmap_lane, "lane", project_id=args.project_id, title=args.title, sort_order=args.sort_order)
+
+
+def _cmd_roadmap_lane_list(args):
+    _run_node_command(db.list_roadmap_lanes, "lanes", project_id=args.project_id)
+
+
+def _cmd_roadmap_lane_update(args):
+    _run_node_command(db.update_roadmap_lane, "lane", project_id=args.project_id, lane_id=args.lane_id, title=args.title, sort_order=args.sort_order, expected_updated_at=args.expected_updated_at)
+
+
+def _cmd_roadmap_item_add(args):
+    _run_node_command(db.create_roadmap_item, "item", project_id=args.project_id, lane_id=args.lane_id, title=args.title, description=args.description, status=args.status, sort_order=args.sort_order, depends_on=args.depends_on, links=args.links)
+
+
+def _cmd_roadmap_item_list(args):
+    _run_node_command(db.list_roadmap_items, "items", project_id=args.project_id, lane_id=args.lane_id)
+
+
+def _cmd_roadmap_item_update(args):
+    _run_node_command(db.update_roadmap_item, "item", project_id=args.project_id, item_id=args.item_id, lane_id=args.lane_id, title=args.title, description=args.description, status=args.status, sort_order=args.sort_order, depends_on=args.depends_on, links=args.links, clear_depends_on=args.clear_depends_on, clear_links=args.clear_links, expected_updated_at=args.expected_updated_at)
+
+
+def _cmd_planning_add(args) -> None:
+    _run_node_command(
+        db.create_planning_item, "planning_item", project_id=args.project_id,
+        spec_node_id=args.spec_node_id, title=args.title, status=args.status,
+        estimate=args.estimate, sprint=args.sprint,
+    )
+
+
+def _cmd_planning_list(args) -> None:
+    _run_node_command(db.list_planning_items, "planning_items", project_id=args.project_id)
+
+
+def _cmd_planning_update(args) -> None:
+    _run_node_command(
+        db.update_planning_item, "planning_item", project_id=args.project_id,
+        item_id=args.item_id, title=args.title, status=args.status,
+        estimate=args.estimate, sprint=args.sprint,
+    )
+
+
+def _cmd_planning_delete(args) -> None:
+    _run_node_command(
+        db.delete_planning_item, "planning_item", project_id=args.project_id,
+        item_id=args.item_id,
+    )
+
+
+def _cmd_arch_add_diagram(args) -> None:
+    try:
+        if any(len(value.encode("utf-8")) > db.JSON_LIMIT for value in (args.nodes, args.edges)):
+            raise ValueError("architecture JSON exceeds its size limit")
+        nodes, edges = json.loads(args.nodes), json.loads(args.edges)
+    except (TypeError, json.JSONDecodeError, ValueError) as exc:
+        envelope, exit_code = boundary_error(ValueError(f"architecture JSON must be valid JSON: {exc}"))
+        _print(envelope)
+        raise SystemExit(exit_code)
+    _run_node_command(db.add_diagram, "diagram", project_id=args.project_id, title=args.title, nodes=nodes, edges=edges)
+
+
+def _cmd_arch_list_diagrams(args) -> None:
+    _run_node_command(db.list_diagrams, "diagrams", project_id=args.project_id)
+
+
+def _cmd_arch_set_diagram(args) -> None:
+    parsed = {}
+    try:
+        for name in ("nodes", "edges"):
+            raw = getattr(args, name)
+            if raw is not None:
+                if len(raw.encode("utf-8")) > db.JSON_LIMIT:
+                    raise ValueError("architecture JSON exceeds its size limit")
+                parsed[name] = json.loads(raw)
+    except (TypeError, json.JSONDecodeError, ValueError) as exc:
+        envelope, exit_code = boundary_error(ValueError(f"architecture JSON must be valid JSON: {exc}"))
+        _print(envelope)
+        raise SystemExit(exit_code)
+    _run_node_command(db.set_diagram, "diagram", project_id=args.project_id, diagram_id=args.diagram_id, title=args.title, **parsed)
+
+
+def _run_node_command(operation, output_key: str, **kwargs) -> None:
+    conn = None
+    try:
+        conn = db.connect()
+        result = operation(conn, **kwargs)
+        _print({"ok": True, output_key: result})
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        sys.exit(exit_code)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _cmd_risk_add(args) -> None:
+    _run_node_command(
+        db.add_risk, "risk", project_id=args.project_id, title=args.title,
+        description=args.description, breaks_when=args.breaks_when,
+        status=args.status, decision_id=args.decision_id,
+    )
+
+
+def _cmd_risk_list(args) -> None:
+    _run_node_command(db.list_risks, "risks", project_id=args.project_id)
+
+
+def _cmd_risk_update_status(args) -> None:
+    _run_node_command(
+        db.update_risk_status, "risk", project_id=args.project_id,
+        risk_id=args.risk_id, status=args.status,
+    )
+
+
+def _cmd_tradeoff_add(args) -> None:
+    _run_node_command(
+        db.add_tradeoff, "tradeoff", project_id=args.project_id, kind=args.kind,
+        title=args.title, choice=args.choice, alt_label=args.alt_label,
+        cost=args.cost, gain=args.gain, decision_id=args.decision_id,
+    )
+
+
+def _cmd_tradeoff_list(args) -> None:
+    _run_node_command(db.list_tradeoffs, "tradeoffs", project_id=args.project_id)
+
+
+def _cmd_tradeoff_set_side(args) -> None:
+    _run_node_command(
+        db.set_prioritized_side, "tradeoff", project_id=args.project_id,
+        tradeoff_id=args.tradeoff_id, side=args.side,
+    )
+
+
+def _cmd_node_create(args) -> None:
+    _run_node_command(
+        db.create_node, "node", project_id=args.project_id,
+        parent_id=None if args.parent_id.lower() == "none" else args.parent_id,
+        level=args.level, title=args.title, kanban_task_id=args.kanban_task_id,
+    )
+
+
+def _cmd_node_list(args) -> None:
+    _run_node_command(
+        db.list_nodes, "nodes", project_id=args.project_id, parent_id=args.parent_id,
+    )
+
+
+def _cmd_node_tree(args) -> None:
+    _run_node_command(db.get_subtree, "tree", project_id=args.project_id)
+
+
+def _cmd_node_link_kanban(args) -> None:
+    _run_node_command(
+        db.link_node_to_kanban, "node", node_id=args.node_id,
+        kanban_task_id=args.task_id,
+    )
+
+
+def _cmd_node_update(args) -> None:
+    fields = {}
+    if args.title is not None:
+        fields["title"] = args.title
+    if args.sort_order is not None:
+        fields["sort_order"] = args.sort_order
+    if args.kanban_task_id is not None:
+        fields["kanban_task_id"] = args.kanban_task_id or None
+    _run_node_command(db.update_node, "node", node_id=args.node_id, **fields)
+
+
+def _cmd_node_archive(args) -> None:
+    _run_node_command(db.archive_node, "node", node_id=args.node_id)
+
+
+def _cmd_flow_add(args) -> None:
+    _run_node_command(db.create_flow, "flow", project_id=args.project_id, name=args.name)
+
+
+def _cmd_flow_list(args) -> None:
+    _run_node_command(db.list_flows, "flows", project_id=args.project_id)
+
+
+def _cmd_flow_update(args) -> None:
+    _run_node_command(db.update_flow, "flow", flow_id=args.flow_id, project_id=args.project_id, name=args.name)
+
+
+class _FlowInputExit(SystemExit):
+    def __init__(self, code: int, message: str):
+        super().__init__(code)
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def _cmd_flow_set_steps(args) -> None:
+    raw = args.steps
+    try:
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > db.JSON_LIMIT:
+            raise ValueError("--steps exceeds its size limit")
+        steps = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        error = ValueError(f"--steps must be valid JSON: {exc}")
+        envelope, exit_code = boundary_error(error)
+        _print(envelope)
+        raise _FlowInputExit(exit_code, str(exc)) from exc
+    except ValueError as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        raise _FlowInputExit(exit_code, str(exc)) from exc
+    _run_node_command(db.set_flow_steps, "flow", flow_id=args.flow_id, project_id=args.project_id, steps=steps)
 
 
 def _cmd_list(args) -> None:
@@ -310,9 +775,10 @@ def _cmd_push(args) -> None:
             card_payload = db.parse_json_kwarg(getattr(args, "card_payload", None), "--card-payload")
             card_type_answers = db.parse_json_kwarg(
                 getattr(args, "card_type_answers", None), "--card-type-answers")
-        except ValueError as exc:
-            _print({"ok": False, "error": str(exc)})
-            sys.exit(1)
+        except Exception as exc:
+            envelope, exit_code = boundary_error(exc)
+            _print(envelope)
+            sys.exit(exit_code)
             return
         result = db.push_decision(
             conn, project_id=args.project_id, question=args.question, choices=args.choices,
@@ -322,9 +788,10 @@ def _cmd_push(args) -> None:
             card_type_answers=card_type_answers,
         )
         _print({"ok": True, "decision": result})
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        sys.exit(exit_code)
     finally:
         conn.close()
 

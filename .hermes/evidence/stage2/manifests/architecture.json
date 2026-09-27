@@ -1,0 +1,15 @@
+{
+  "surface": "architecture",
+  "source_sha": "27afff425af9ee8f6681914b128a13bb6db8a6a5",
+  "remediation_sha": "92676fab478302c576780c7d633a36e035061953",
+  "canonical_parent_sha": "59e87cfc4e3dc1772860b94ff7ae7f6deddeb1c6",
+  "reviewed_sha": "92676fab478302c576780c7d633a36e035061953",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "migration": {"from_version": 9, "target_version": 10, "fresh": "passed", "v9_upgrade": "passed", "partial_preexisting_table": "refused_without_mutation", "invalid_legacy_json": "refused_without_mutation", "malformed_legacy_ddl": "refused_without_mutation"},
+  "focused_tests": {"command": "uv run --python 3.14 --with pytest python3 -m pytest -q backend-plugin/tests/test_architecture_acceptance.py", "result": "10 passed"},
+  "backend_plugin_full": {"command": "uv run --python 3.14 --with pytest python3 -m pytest -q backend-plugin/tests", "result": "118 passed, 1 skipped"},
+  "frontend_full": {"command": "npm test", "result": "38 passed, 0 failed"},
+  "review": {"verdict": "PASS", "reviewer": "independent adversarial worker", "findings": []},
+  "review_environment_notes": ["backend/ PostgreSQL integration requires DASHBOARD_TEST_DATABASE_URL", "clean review worktree lacked local frontend dependency setup; canonical worktree frontend suite is green"],
+  "verification": {"ancestry": "passed", "clean_tree": "passed", "compile": "passed", "diff_check": "passed"}
+}
