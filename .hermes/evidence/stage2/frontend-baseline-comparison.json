@@ -1,6 +1,6 @@
 {
   "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
-  "current_sha": "0fbb30ac81919ae8106f7a56c029a059740a9294",
+  "current_sha": "444b9436aac33c64ba402978da87f169ead6a8d2",
   "setup": {
     "node": "v22.22.1",
     "react_source": "/home/ian-koratsky/hermes-agent/node_modules",
@@ -23,8 +23,8 @@
     ]
   },
   "current": {
-    "tests": 38,
-    "passed": 38,
+    "tests": 48,
+    "passed": 48,
     "failed": 0,
     "flowcharts_acceptance": "passed",
     "frontend_cleanup": "passed",
