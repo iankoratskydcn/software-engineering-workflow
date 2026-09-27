@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decision HUD MCP server — the sole write/insert path into the shared
+"""Software Engineering Workflow MCP server — the sole write/insert path into the shared
 decision queue (~/.hermes/decision_hud/queue.db). Any agent (this Hermes
 session, a subagent, a cron job, a different project's tooling) that hits a
 genuine owner-decision blocker calls decision_push here instead of asking
@@ -8,7 +8,7 @@ inline; the desktop pane (Decision HUD plugin) surfaces it as a card.
 Configure in ~/.hermes/config.yaml:
 
     mcp_servers:
-      decision_hud:
+      software_engineering_workflow:
         command: python3
         args: ["/home/ian-koratsky/.hermes/plugins/decision-hud/decision_hud_mcp.py"]
 
@@ -33,7 +33,7 @@ import db  # noqa: E402  (local module: decision-hud/db.py)
 
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 
-mcp = MCPServer("decision-hud")
+mcp = MCPServer("software-engineering-workflow")
 
 
 @mcp.tool()
