@@ -33,9 +33,10 @@
     },
     "scrum": {
       "statuses": ["backlog", "ready", "in_progress", "done", "cancelled"],
-      "estimate": "integer in {1,2,3,5,8,13}",
-      "sprint": "integer 1..100000",
-      "linked_spec_delete": "restrict"
+      "estimate": "integer enum [1, 2, 3, 5, 8, 13] (Fibonacci story points)",
+      "sprint": "integer 1..100000 (ordinal sprint identifier)",
+      "linked_spec_delete": "restrict",
+      "rationale": "The accepted v13 implementation and exact-SHA review enforce bounded Fibonacci estimates and ordinal integer sprints. Blocked is operational state not currently modeled; cancelled is terminal lifecycle state. Any change requires a new migration and review cycle."
     },
     "mindmap_root": "at-most-one per project for level=0 and parent_id IS NULL",
     "legacy_rows": "fail migration with report; preserve database and rows",
@@ -95,7 +96,7 @@
     },
     "planning_items": {
       "ddl": "CREATE TABLE planning_items (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, spec_node_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('backlog','ready','in_progress','done','cancelled')), estimate INTEGER NOT NULL CHECK(estimate IN (1,2,3,5,8,13)), sprint INTEGER NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(project_id,id), FOREIGN KEY(project_id,spec_node_id) REFERENCES spec_nodes(project_id,id) ON DELETE RESTRICT ON UPDATE CASCADE) STRICT",
-      "limits": ["title", "sprint 1..100000"],
+      "limits": ["title", "sprint integer 1..100000"],
       "writers": ["create_planning_item(project_id)", "update_planning_item(project_id,id)"]
     },
     "spec_nodes_mindmap": {
