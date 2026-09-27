@@ -6,7 +6,8 @@ const source = await readFile(resolve('plugin.js'), 'utf8')
 
 assert.match(source, /Flowcharts/)
 assert.match(source, /decision-hud-flowcharts-route[\s\S]*?path:\s*['"]\/decision-hud\/flowcharts['"]/)
-assert.match(source, /decision-hud-flowcharts-nav[\s\S]*?label:\s*['"]Flowcharts['"]/)
+assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Flowcharts'/)
+
 
 const pane = source.match(/function FlowchartsPane\(\)[\s\S]*?(?=\nfunction |\nconst |\nexport )/)?.[0]
 assert.ok(pane, 'FlowchartsPane must exist as an independently testable surface')

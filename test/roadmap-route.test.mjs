@@ -13,14 +13,13 @@ function roadmapSource() {
   return match[0]
 }
 
-test('Roadmap registers route and sidebar navigation entry', () => {
+test('Roadmap registers a route and is surfaced inside Software Engineering tabs', () => {
   const registrations = collectRegistrations()
   const route = findRegistration(registrations, 'routes', 'roadmap-route')
-  const nav = findRegistration(registrations, 'sidebar.nav', 'roadmap-nav')
   assert.equal(route.data?.path, '/decision-hud/roadmap')
-  assert.equal(nav.data?.path, '/decision-hud/roadmap')
-  assert.equal(nav.data?.label, 'Roadmap')
   assert.equal(typeof route.render, 'function')
+  assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Roadmap'/)
+  assert.doesNotMatch(source, /id:\s*'roadmap-nav'/)
 })
 
 test('Roadmap loads project-scoped data and ignores delayed stale responses', () => {

@@ -6382,6 +6382,16 @@ function ScrumPlanningPane() {
   ] })
 }
 
+const ENGINEERING_TABS = [
+  { id: 'decision', label: 'Decision HUD', codicon: 'checklist' },
+  { id: 'spec', label: 'Spec Digest', codicon: 'file-tree' },
+  { id: 'map', label: 'Map', codicon: 'type-hierarchy-sub' },
+  { id: 'flowcharts', label: 'Flowcharts', codicon: 'graph' },
+  { id: 'planning', label: 'Scrum Planning', codicon: 'calendar' },
+  { id: 'roadmap', label: 'Roadmap', codicon: 'milestone' },
+  { id: 'retrospective', label: 'Retrospective', codicon: 'pulse' },
+]
+
 function DecisionHudPane({ rest }) {
   // The selected board is the sole project scope: boards and projects are
   // intentionally one-to-one.
@@ -6391,6 +6401,7 @@ function DecisionHudPane({ rest }) {
   // separate registered panes with no shared React tree, so localStorage
   // plus a same-origin 'storage' listener is the cross-pane channel.
   const [selectedBoard, setSelectedBoardState] = React.useState(loadSelectedBoardSlug)
+  const [activeTab, setActiveTab] = React.useState('decision')
   const setSelectedBoard = React.useCallback((slug) => {
     setSelectedBoardState(slug)
     saveSelectedBoardSlug(slug)
@@ -6636,31 +6647,32 @@ function DecisionHudPane({ rest }) {
         ? jsx('div', { className: 'text-[0.75rem] text-(--ui-danger,#e5484d)', children: error })
         : null,
       jsx('div', {
-        className: 'flex flex-1 flex-col overflow-y-auto',
-        children:
-          decisions.length === 0
+        role: 'tablist',
+        'aria-label': 'Software Engineering sections',
+        className: 'flex shrink-0 gap-1 overflow-x-auto border-b border-(--ui-stroke-secondary) pb-1',
+        children: ENGINEERING_TABS.map((tab) => jsx('button', {
+          type: 'button',
+          role: 'tab',
+          'aria-selected': activeTab === tab.id,
+          onClick: () => setActiveTab(tab.id),
+          className: cn(
+            'flex shrink-0 items-center gap-1 rounded px-2.5 py-1.5 text-[0.78rem] transition-colors',
+            activeTab === tab.id
+              ? 'bg-(--chrome-action-active) text-(--ui-text-primary)'
+              : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover)',
+          ),
+          children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
+        }, tab.id)),
+      }),
+      jsx('div', {
+        className: 'flex min-h-0 flex-1 flex-col overflow-y-auto',
+        children: activeTab === 'decision'
+          ? (decisions.length === 0
             ? jsx('div', {
                 className: 'flex h-full items-center justify-center text-(--ui-text-tertiary)',
                 children: loading ? 'Loading…' : 'Queue clear.',
               })
             : jsx('div', {
-                // Static NxM grid, 1-3 cols x 1-3 rows (user-adjustable via
-                // GridLayoutControls above, persisted to localStorage) —
-                // "static" means a fixed cell count, not drag-resizable
-                // panes. Shows up to cols*rows cards; anything beyond
-                // that count stays in the queue and appears once a slot
-                // frees up on the next poll/resolve.
-                //
-                // gridAutoFlow: 'column' makes placement follow the
-                // `decisions` array in column-major order (index 0..rows-1
-                // fills col 1 top-to-bottom, rows..2*rows-1 fills col 2,
-                // etc). Once a card resolves it drops out of `decisions`
-                // and every later card's array index shifts down by one,
-                // which the browser then re-lays-out along that same
-                // column-major path — so cards below the resolved one
-                // slide up within their column, and the first card of the
-                // next column slides into the freed bottom slot, instead
-                // of the whole grid re-flowing row-by-row.
                 className: 'grid gap-3',
                 style: {
                   gridTemplateColumns: `repeat(${gridLayout.cols}, minmax(0, 1fr))`,
@@ -6672,7 +6684,18 @@ function DecisionHudPane({ rest }) {
                   .map((d) =>
                     jsx(DecisionCard, { key: d.id, decision: d, onResolve: handleResolve, onDefer: handleDefer, onDiscuss: handleDiscuss, onDismiss: handleDismiss, resolving })
                   ),
-              }),
+              }))
+          : activeTab === 'spec'
+            ? jsx(SpecDigest, { projectId: selectedBoardProjectId })
+            : activeTab === 'map'
+              ? jsx(HierarchyMapPane, {})
+              : activeTab === 'flowcharts'
+                ? jsx(FlowchartsPane, {})
+                : activeTab === 'planning'
+                  ? jsx(ScrumPlanningPane, {})
+                  : activeTab === 'roadmap'
+                    ? jsx(RoadmapPane, {})
+                    : jsx(AgentDashboardCombinedPage, { rest }),
       }),
       jsx(SettingsFullscreen, {
         isOpen: settingsFullscreenOpen,
@@ -6831,22 +6854,10 @@ export default {
         render: (props = {}) => jsx(SpecDigestRoute, props),
       },
       {
-        id: 'spec-digest-nav',
-        area: SIDEBAR_NAV_AREA,
-        order: 41,
-        data: { codicon: 'file-tree', label: 'Spec Digest', path: '/spec-digest' },
-      },
-      {
         id: 'decision-hud-map-route',
         area: ROUTES_AREA,
         data: { path: '/decision-hud/map' },
         render: () => jsx(HierarchyMapPane, {}),
-      },
-      {
-        id: 'decision-hud-map-nav',
-        area: SIDEBAR_NAV_AREA,
-        order: 42,
-        data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },
       },
       {
         id: 'decision-hud-flowcharts-route',
@@ -6855,22 +6866,10 @@ export default {
         render: () => jsx(FlowchartsPane, {}),
       },
       {
-        id: 'decision-hud-flowcharts-nav',
-        area: SIDEBAR_NAV_AREA,
-        order: 43,
-        data: { codicon: 'graph', label: 'Flowcharts', path: '/decision-hud/flowcharts' },
-      },
-      {
         id: 'roadmap-route',
         area: ROUTES_AREA,
         data: { path: '/decision-hud/roadmap' },
         render: () => jsx(RoadmapPane, {}),
-      },
-      {
-        id: 'roadmap-nav',
-        area: SIDEBAR_NAV_AREA,
-        order: 44,
-        data: { codicon: 'milestone', label: 'Roadmap', path: '/decision-hud/roadmap' },
       },
       {
         id: 'scrum-planning-route',
@@ -6879,28 +6878,10 @@ export default {
         render: () => jsx(ScrumPlanningPane, {}),
       },
       {
-        id: 'scrum-planning-nav',
-        area: SIDEBAR_NAV_AREA,
-        order: 43,
-        data: { codicon: 'calendar', label: 'Scrum Planning', path: '/decision-hud/planning' }
-      },
-      {
         id: 'agent-dashboard-route',
         area: ROUTES_AREA,
         data: { path: AGENT_DASHBOARD_ROUTE_PATH },
         render: () => jsx(AgentDashboardCombinedPage, { rest: ctx.rest }),
-      },
-      {
-        // Wave 3 consolidation: the combined page (dashboard metrics +
-        // all six matrix widgets, stacked) is the ONLY visible Agent
-        // Dashboard/Matrix nav destination — the owner explicitly does not
-        // want separate "Agent Dashboard" and "Agent Matrix" nav entries
-        // when one page already contains everything the other did. Named
-        // "Agent Matrix" per owner preference, not "Agent Dashboard".
-        id: 'agent-dashboard-nav',
-        area: SIDEBAR_NAV_AREA,
-        order: 44,
-        data: { codicon: 'pulse', label: 'Retrospective', path: AGENT_DASHBOARD_ROUTE_PATH },
       },
       {
         id: 'agent-dashboard-open',

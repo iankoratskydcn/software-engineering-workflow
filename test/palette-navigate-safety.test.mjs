@@ -23,7 +23,11 @@ assert.doesNotMatch(
 // permanently right-docked operational queue in its separate plugin.
 assert.match(source, /area:\s*SIDEBAR_NAV_AREA/)
 assert.match(source, /label:\s*'Software Engineering',\s*path:\s*'\/decision-hud'/)
-assert.match(source, /label:\s*'Retrospective',\s*path:\s*AGENT_DASHBOARD_ROUTE_PATH/)
+assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Spec Digest'/)
+assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Retrospective'/)
+assert.doesNotMatch(source, /id:\s*'spec-digest-nav'/)
+assert.doesNotMatch(source, /id:\s*'decision-hud-flowcharts-nav'/)
+assert.doesNotMatch(source, /id:\s*'roadmap-nav'/)
 
 assert.match(
   source,
