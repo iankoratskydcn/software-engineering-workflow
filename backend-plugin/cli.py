@@ -889,6 +889,7 @@ def _validate_board_project(board: str, project_id: str) -> None:
         )
 
 
+
 def _cmd_triage_blocked(args) -> None:
     try:
         diagnostics = _rows(_triage_json(args.diagnostics, "diagnostics"), ("diagnostics", "items", "rows"))
