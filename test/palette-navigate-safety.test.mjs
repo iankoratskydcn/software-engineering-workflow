@@ -22,7 +22,7 @@ assert.doesNotMatch(
 // page pattern. Task List is deliberately excluded because it remains a
 // permanently right-docked operational queue in its separate plugin.
 assert.match(source, /area:\s*SIDEBAR_NAV_AREA/)
-assert.match(source, /label:\s*'Decision HUD',\s*path:\s*'\/decision-hud'/)
+assert.match(source, /label:\s*'Software Engineering',\s*path:\s*'\/decision-hud'/)
 assert.match(source, /label:\s*'Retrospective',\s*path:\s*AGENT_DASHBOARD_ROUTE_PATH/)
 
 assert.match(

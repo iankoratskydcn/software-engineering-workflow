@@ -78,18 +78,13 @@ assert.ok(findRoute(registrations, ROUTE_PATH), `expected a ${ROUTE_PATH} route 
 assert.ok(findRoute(registrations, '/decision-hud/agent-metrics'), 'legacy Agent Metrics route must still exist (retirement is Wave 2b)')
 assert.ok(findRoute(registrations, '/decision-hud/agent-metrics/snapshot'), 'Agent Matrix route must still exist')
 
-// Wave 4: Cost/Quality/Speed is a focus WITHIN Agent Matrix, not a sibling
-// nav destination. The comparison route stays registered (old links keep
-// working, matching this codebase's established retirement pattern) but
-// the standalone sidebar nav entry for it must be gone — Agent Matrix is
-// the only visible nav destination that leads to comparison data, same as
-// the owner's Wave 3 "one page, not two nav entries" precedent.
+// The combined page exposes Dashboard and Retrospective only; the retired
+// comparison surface must not reappear as a route or visible section.
 {
   const comparisonRoutePath = '/decision-hud/agent-dashboard/comparison'
-  assert.ok(findRoute(registrations, comparisonRoutePath), 'comparison route must stay registered for old links/bookmarks')
+  assert.ok(!findRoute(registrations, comparisonRoutePath), 'retired comparison route must not be registered')
   const navEntries = registrations.filter((r) => r.area === 'sidebar.nav')
-  assert.ok(!navEntries.some((r) => r.data?.path === comparisonRoutePath), 'Cost/Quality/Speed must not be its own sidebar nav entry')
-  assert.ok(navEntries.some((r) => r.data?.label === 'Retrospective' && r.data?.path === ROUTE_PATH), 'Retrospective must remain the single nav destination')
+  assert.ok(!navEntries.some((r) => r.data?.path === comparisonRoutePath), 'retired comparison route must not be navigable')
 }
 
 async function mountPage(readModelResponse, scope = {}) {
@@ -121,15 +116,6 @@ async function mountPage(readModelResponse, scope = {}) {
   assert.match(rendered, /token_burn_rate/i)
   assert.match(rendered, /Heatmap/i)
   assert.equal(mounted.errors.length, 0)
-  await mounted.unmount()
-}
-
-// Wave 4: Cost/Quality/Speed is folded in as a third section of the same
-// Agent Matrix page — not a separate page reached via its own nav entry.
-{
-  const mounted = await mountPage(validSnapshot)
-  const rendered = text(mounted.container)
-  assert.match(rendered, /Cost\/Quality\/Speed/i, 'comparison section must render inside the combined Agent Matrix page')
   await mounted.unmount()
 }
 
