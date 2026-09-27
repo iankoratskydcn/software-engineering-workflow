@@ -6962,7 +6962,7 @@ function SpecDigestRoute({ projectId: overrideProjectId } = {}) {
 
 export default {
   id: PLUGIN_ID,
-  name: 'Decision HUD',
+  name: 'Software Engineering Workflow',
   register(ctx) {
     startNewDecisionToastWatcher()
     // Full-page surfaces, matching the Kanban board: route navigation owns
