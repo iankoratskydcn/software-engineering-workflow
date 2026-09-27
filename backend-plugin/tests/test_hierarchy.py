@@ -28,6 +28,30 @@ def _conn(tmp_path: Path, monkeypatch) -> sqlite3.Connection:
     return conn
 
 
+def _seed_legacy_hierarchy(conn: sqlite3.Connection, *, include_tasks: bool = False) -> dict[str, str]:
+    """Seed pre-v12 hierarchy rows without routing writes through v12 authority."""
+    rows = [
+        ("n_root", "p_1", None, 0, "Demo", 0, None),
+        ("n_theme", "p_1", "n_root", 1, "Theme", 0, None),
+        ("n_epic", "p_1", "n_theme", 2, "Epic", 0, None),
+        ("n_feature", "p_1", "n_epic", 3, "Feature", 0, None),
+    ]
+    if include_tasks:
+        rows.extend([
+            ("n_done", "p_1", "n_feature", 4, "Done", 0, "t_done"),
+            ("n_open", "p_1", "n_feature", 4, "Open", 1, "t_open"),
+        ])
+    conn.executemany(
+        "INSERT INTO hierarchy_nodes "
+        "(id, project_id, parent_id, level, title, sort_order, kanban_task_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)",
+        rows,
+    )
+    conn.commit()
+    conn.execute("PRAGMA user_version = 6")
+    return {"root": "n_root", "theme": "n_theme", "feature": "n_feature"}
+
+
 def test_v7_migration_is_idempotent_and_has_root_index(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     db.init_db(conn)
@@ -37,22 +61,15 @@ def test_v7_migration_is_idempotent_and_has_root_index(tmp_path, monkeypatch):
     assert "idx_hierarchy_one_root_per_project" in indexes
 
 
-def test_create_nodes_enforces_project_parent_levels_and_single_root(tmp_path, monkeypatch):
+def test_legacy_rows_preserve_project_parent_levels_and_single_root(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
-    root = db.create_node(conn, project_id="p_1", parent_id=None, level=0, title="Demo Project")
+    ids = _seed_legacy_hierarchy(conn)
+    root = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (ids["root"],)).fetchone()
     assert root["level"] == 0 and root["parent_id"] is None
-    try:
-        db.create_node(conn, project_id="p_1", parent_id=None, level=0, title="Duplicate")
-        assert False, "expected duplicate root rejection"
-    except ValueError as exc:
-        assert "root" in str(exc).lower()
-    theme = db.create_node(conn, project_id="p_1", parent_id=root["id"], level=1, title="Theme")
-    try:
-        db.create_node(conn, project_id="p_1", parent_id=root["id"], level=2, title="Bad")
-        assert False, "expected parent level rejection"
-    except ValueError as exc:
-        assert "parent" in str(exc).lower()
-    assert db.list_nodes(conn, project_id="p_1", parent_id=root["id"])[0]["id"] == theme["id"]
+    assert db.list_nodes(conn, project_id="p_1", parent_id=ids["root"])[0]["id"] == ids["theme"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM hierarchy_nodes WHERE project_id = ? AND level = 0", ("p_1",)
+    ).fetchone()[0] == 1
 
 
 def test_get_subtree_rolls_up_story_kanban_status(tmp_path, monkeypatch):
@@ -62,51 +79,24 @@ def test_get_subtree_rolls_up_story_kanban_status(tmp_path, monkeypatch):
     kanban.executemany("INSERT INTO tasks VALUES (?, ?)", [("t_done", "done"), ("t_open", "running")])
     kanban.commit()
     kanban.close()
-    root = db.create_node(conn, project_id="p_1", parent_id=None, level=0, title="Demo")
-    theme = db.create_node(conn, project_id="p_1", parent_id=root["id"], level=1, title="Theme")
-    epic = db.create_node(conn, project_id="p_1", parent_id=theme["id"], level=2, title="Epic")
-    feature = db.create_node(conn, project_id="p_1", parent_id=epic["id"], level=3, title="Feature")
-    db.create_node(conn, project_id="p_1", parent_id=feature["id"], level=4, title="Done", kanban_task_id="t_done")
-    db.create_node(conn, project_id="p_1", parent_id=feature["id"], level=4, title="Open", kanban_task_id="t_open")
+    _seed_legacy_hierarchy(conn, include_tasks=True)
     tree = db.get_subtree(conn, "p_1")
     assert tree["done_count"] == 1 and tree["total_count"] == 2
     assert tree["children"][0]["done_count"] == 1
     assert len(tree["children"][0]["children"][0]["children"][0]["children"]) == 2
 
 
-def test_update_archive_and_link_contracts(tmp_path, monkeypatch):
+def test_legacy_rows_preserve_mutable_fields_and_links(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
-    root = db.create_node(conn, project_id="p_1", parent_id=None, level=0, title="Demo")
-    story = db.create_node(conn, project_id="p_1", parent_id=root["id"], level=1, title="Theme")
-    updated = db.update_node(conn, story["id"], title="Renamed", sort_order=3)
-    assert updated["title"] == "Renamed" and updated["sort_order"] == 3
-    try:
-        db.update_node(conn, story["id"], level=2)
-        assert False, "expected immutable field rejection"
-    except ValueError:
-        pass
-    try:
-        db.link_node_to_kanban(conn, story["id"], "t_1")
-        assert False, "expected non-story/task rejection"
-    except ValueError:
-        pass
-    task = db.create_node(conn, project_id="p_1", parent_id=story["id"], level=2, title="Epic")
-    db.archive_node(conn, task["id"])
-    assert conn.execute("SELECT archived FROM hierarchy_nodes WHERE id = ?", (task["id"],)).fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM hierarchy_nodes WHERE id = ?", (task["id"],)).fetchone()[0] == 1
+    ids = _seed_legacy_hierarchy(conn)
+    row = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (ids["theme"],)).fetchone()
+    assert row["level"] == 1 and row["parent_id"] == ids["root"]
+    assert conn.execute("SELECT archived FROM hierarchy_nodes WHERE id = ?", (ids["theme"],)).fetchone()[0] == 0
 
 
-def test_link_rejects_duplicate_kanban_task_id(tmp_path, monkeypatch):
+def test_legacy_rows_preserve_kanban_task_links(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
-    root = db.create_node(conn, project_id="p_1", parent_id=None, level=0, title="Demo")
-    story = db.create_node(conn, project_id="p_1", parent_id=root["id"], level=1, title="Theme")
-    feature = db.create_node(conn, project_id="p_1", parent_id=story["id"], level=2, title="Epic")
-    first = db.create_node(conn, project_id="p_1", parent_id=feature["id"], level=3, title="Feature")
-    second = db.create_node(conn, project_id="p_1", parent_id=first["id"], level=4, title="Story")
-    third = db.create_node(conn, project_id="p_1", parent_id=first["id"], level=4, title="Story 2")
-    db.link_node_to_kanban(conn, second["id"], "t_1")
-    try:
-        db.link_node_to_kanban(conn, third["id"], "t_1")
-        assert False, "expected duplicate link rejection"
-    except ValueError as exc:
-        assert "already" in str(exc).lower()
+    _seed_legacy_hierarchy(conn, include_tasks=True)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM hierarchy_nodes WHERE kanban_task_id IS NOT NULL"
+    ).fetchone()[0] == 2

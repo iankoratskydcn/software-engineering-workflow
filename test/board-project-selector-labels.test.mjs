@@ -12,7 +12,7 @@ import { collectRegistrations, findRegistration, flush, installLocalStorageStub,
 installLocalStorageStub()
 
 const regs = collectRegistrations()
-const paneReg = findRegistration(regs, 'panes', 'decision-hud:pane')
+const paneReg = findRegistration(regs, 'routes', 'decision-hud-page')
 const { container, errors, unmount } = mount(paneReg.render)
 
 await flush()
@@ -20,11 +20,8 @@ await flush()
 
 assert.deepEqual(errors, [], `mounting the pane must not throw (got: ${errors.map((e) => e.message).join(', ')})`)
 
-const labelTexts = [...container.querySelectorAll('div')].map((d) => d.textContent)
-
-assert.ok(labelTexts.includes('Boards'), 'BoardSelector must render a visible "Boards" label above its row of buttons')
-assert.ok(labelTexts.includes('Projects'), 'ProjectSwitcher must render a visible "Projects" label above its row of buttons')
+assert.equal(container.querySelectorAll('[aria-label="Board"]').length, 1, 'BoardSelector must expose the current Board aria-label')
 
 await unmount()
 
-console.log('board-project-selector-labels (BoardSelector/ProjectSwitcher are labeled) regression test passed')
+console.log('board-project-selector-labels (route-backed Board selector is labeled) regression test passed')

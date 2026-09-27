@@ -41,7 +41,7 @@ assert.match(
 // does, and pass side/width through, and the row of children must place
 // MetricsSidebar on the side the setting says (left is the append-order
 // default -- 'right' means MetricsSidebar renders AFTER the main column).
-const paneMatch = source.match(/function DecisionHudPane\(\) \{[\s\S]*?\n\}\n/)
+const paneMatch = source.match(/function DecisionHudPane\(\{ rest \}\) \{[\s\S]*?\n\}\n/)
 assert.ok(paneMatch, 'DecisionHudPane function must exist')
 const pane = paneMatch[0]
 assert.match(

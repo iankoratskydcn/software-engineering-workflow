@@ -1,0 +1,8 @@
+{
+  "reviewed_sha": "161d57ddbbd37906dc1cf7f86ff07c33435a4605",
+  "worktree": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "verdict": "PASS",
+  "summary": "Nested CLI error envelope verified at exact SHA. Focused boundary/card/FK tests passed 26/26; full backend suite passed 74 passed, 1 skipped. Direct malformed-payload probe emitted {ok:false,error:{code,message}}, produced exit 2, caused no decision mutation, preserved FK enforcement, and unknown error codes mapped safely to internal_error without secret leakage. Worktree clean.",
+  "findings": [],
+  "report_path": "/home/ian-koratsky/.hermes/cache/scratch/stage2-boundary-review-3.json"
+}

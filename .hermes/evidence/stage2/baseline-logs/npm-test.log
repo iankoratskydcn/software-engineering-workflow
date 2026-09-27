@@ -1,0 +1,1103 @@
+
+> test
+> node --test test/*.test.mjs
+
+TAP version 13
+# action-row-order-and-sizing regression test passed
+# Subtest: test/action-row-order-and-sizing.test.mjs
+ok 1 - test/action-row-order-and-sizing.test.mjs
+  ---
+  duration_ms: 371.026897
+  type: 'test'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-dashboard-combined-page.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/agent-dashboard-combined-page.test.mjs
+not ok 2 - test/agent-dashboard-combined-page.test.mjs
+  ---
+  duration_ms: 550.84781
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-dashboard-combined-page.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# agent-health structural test passed
+# Subtest: test/agent-health.test.mjs
+ok 3 - test/agent-health.test.mjs
+  ---
+  duration_ms: 567.243342
+  type: 'test'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-fullpage.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/agent-metrics-fullpage.test.mjs
+not ok 4 - test/agent-metrics-fullpage.test.mjs
+  ---
+  duration_ms: 572.79774
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-fullpage.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-section-isolation.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/agent-metrics-section-isolation.test.mjs
+not ok 5 - test/agent-metrics-section-isolation.test.mjs
+  ---
+  duration_ms: 395.571527
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-section-isolation.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-widgets-crossfilter.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/agent-metrics-widgets-crossfilter.test.mjs
+not ok 6 - test/agent-metrics-widgets-crossfilter.test.mjs
+  ---
+  duration_ms: 468.794833
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-widgets-crossfilter.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-widgets.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/agent-metrics-widgets.test.mjs
+not ok 7 - test/agent-metrics-widgets.test.mjs
+  ---
+  duration_ms: 420.489009
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/agent-metrics-widgets.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/dom-harness.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/board-project-selector-labels.test.mjs
+not ok 8 - test/board-project-selector-labels.test.mjs
+  ---
+  duration_ms: 509.071557
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/board-project-selector-labels.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# board-selector-pending-sort structural test passed
+# Subtest: test/board-selector-pending-sort.test.mjs
+ok 9 - test/board-selector-pending-sort.test.mjs
+  ---
+  duration_ms: 436.075499
+  type: 'test'
+  ...
+# board-selector-truncates-long-names regression test passed
+# Subtest: test/board-selector-truncates-long-names.test.mjs
+ok 10 - test/board-selector-truncates-long-names.test.mjs
+  ---
+  duration_ms: 412.5697
+  type: 'test'
+  ...
+# card-header-actions-layout regression test passed
+# Subtest: test/card-header-actions-layout.test.mjs
+ok 11 - test/card-header-actions-layout.test.mjs
+  ---
+  duration_ms: 592.067356
+  type: 'test'
+  ...
+# card-type-badge regression test passed
+# Subtest: test/card-type-badge.test.mjs
+ok 12 - test/card-type-badge.test.mjs
+  ---
+  duration_ms: 591.109759
+  type: 'test'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/comparison-panel.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/comparison-panel.test.mjs
+not ok 13 - test/comparison-panel.test.mjs
+  ---
+  duration_ms: 598.530124
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/comparison-panel.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# confirm-button-and-comments regression test passed
+# Subtest: test/confirm-button-and-comments.test.mjs
+ok 14 - test/confirm-button-and-comments.test.mjs
+  ---
+  duration_ms: 595.254602
+  type: 'test'
+  ...
+# node:internal/modules/run_main:123
+#     triggerUncaughtException(
+#     ^
+# AssertionError [ERR_ASSERTION]: MetricsSidebar must apply a CSS grid with dialCols columns to the dials
+#     at file:///home/ian-koratsky/GitHub/decision-hud-stage2/test/dial-grid-select.test.mjs:35:8 {
+#   generatedMessage: false,
+#   code: 'ERR_ASSERTION',
+#   actual: 'function MetricsSidebar({ agentHealth, side, widthPx, availableMetrics, projectId, rest }) {\\n' +
+#     "  const borderClass = side === 'right' ? 'border-l pl-3' : 'border-r pr-3'\\n" +
+#     "  return jsx('div', {\\n" +
+#     '    className: `flex shrink-0 flex-col gap-3 overflow-y-auto border-(--ui-stroke-secondary) ${borderClass}`,\\n' +
+#     '    style: { width: `${widthPx}px`, maxWidth: `${widthPx}px` },\\n' +
+#     '    children: jsx(AgentHealthList, { health: agentHealth, availableMetrics, projectId, rest }),\\n' +
+#     '  })\\n' +
+#     '}\\n',
+#   expected: /gridTemplateColumns:\\s*`repeat\\(\\$\\{.*dialCols.*\\},/,
+#   operator: 'match',
+#   diff: 'simple'
+# }
+# Node.js v22.22.1
+# Subtest: test/dial-grid-select.test.mjs
+not ok 15 - test/dial-grid-select.test.mjs
+  ---
+  duration_ms: 617.423571
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/dial-grid-select.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# dial-size regression test passed
+# Subtest: test/dial-size.test.mjs
+ok 16 - test/dial-size.test.mjs
+  ---
+  duration_ms: 599.806636
+  type: 'test'
+  ...
+# node:internal/modules/run_main:123
+#     triggerUncaughtException(
+#     ^
+# AssertionError [ERR_ASSERTION]: host.navigate must never be called from plugin.js
+#     at file:///home/ian-koratsky/GitHub/decision-hud-stage2/test/discuss-opens-new-session.test.mjs:43:8 {
+#   generatedMessage: false,
+#   code: 'ERR_ASSERTION',
+#   actual: '/**\\n' +
+#     ' * Decision HUD desktop plugin — card-stack pane for the cross-project\\n' +
+#     ' * decision queue (backend: ~/.hermes/plugins/decision-hud/).\\n' +
+#     ' *\\n' +
+#     ' * Data path: this pane never touches the SQLite file directly (desktop\\n' +
+#     " * plugins have no filesystem access). It drives the backend plugin's\\n" +
+#     ' * `hermes decision ...` CLI commands through the generic `cli.exec` RPC\\n' +
+#     " * (host.request('cli.exec', { argv: [...] })), which is the standard\\n" +
+#     ' * non-interactive command-exec surface already built into the gateway —\\n' +
+#     ' * no core changes, no new RPC method needed.\\n' +
+#     ' *\\n' +
+#     ' * Layout: card stack in the center (3-5 pending decisions, oldest/highest\\n' +
+#     ' * urgency first), a project switcher across the top, docked to the RIGHT\\n' +
+#     ' * of the main chat pane so it sits beside a live conversation. The left\\n' +
+#     ' * "switchable visualization" panel is a v1 placeholder (per the build\\n' +
+#     ' * decision) — wired for a future per-project stats view.\\n' +
+#     ' *\\n' +
+#     ' * Rich cards (decision-hud-cards skill): a decision row can carry an\\n' +
+#     ' * optional `card_type` + `card_payload` (see ~/.hermes/plugins/decision-hud/\\n' +
+#     ' * db.py v2 schema) hinting which visual widget below to render instead of\\n' +
+#     ' * the plain button list. `question`/`choices` always remain a complete,\\n' +
+#     ' * legible fallback — DecisionCard dispatches on card_type but falls back to\\n' +
+#     ' * the plain list for null/unrecognized types, so this never hard-fails on\\n' +
+#     ' * older or hand-pushed decisions with no card_type set.\\n' +
+#     ' */\\n' +
+#     '\\n' +
+#     "import { Badge, Button, cn, Codicon, haptic, host, PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Switch, useValue } from '@hermes/plugin-sdk'\\n" +
+#     "import { jsx, jsxs } from 'react/jsx-runtime'\\n" +
+#     "import * as React from 'react'\\n" +
+#     '\\n' +
+#     '// Spec Digest read boundary: persisted criteria may be corrupt or wrong-shaped.\\n' +
+#     'function parseSpecCriteria(criteria_json) {\\n' +
+#     '  if (!criteria_json) return { items: [], error: null }\\n' +
+#     '  try {\\n' +
+#     '    const parsed = JSON.parse(criteria_json)\\n' +
+#     "    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {\\n" +
+#     "      return { items: [], error: 'malformed criteria' }\\n" +
+#     '    }\\n' +
+#     '    return { items: parsed, error: null }\\n' +
+#     '  } catch {\\n' +
+#     "    return { items: [], error: 'malformed criteria' }\\n" +
+#     '  }\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     "const PLUGIN_ID = 'decision-hud'\\n" +
+#     'const POLL_MS = 4000\\n' +
+#     '\\n' +
+#     '// --- Agent Metrics (read-only interface) ----------------------------------\\n' +
+#     '// Inlined directly in this file — NOT split into dashboard/AgentDashboard.js —\\n' +
+#     "// because the desktop app's runtime plugin loader evaluates plugin.js as a\\n" +
+#     '// single blob URL (apps/desktop/src/contrib/runtime-loader.ts). Blob URLs\\n' +
+#     '// have no hierarchical base, so a relative import like\\n' +
+#     '// `./dashboard/AgentDashboard.js` can never resolve there even though it\\n' +
+#     "// resolves fine under Node's real filesystem ESM (which is why the test\\n" +
+#     '// suite passed while the live desktop app failed with "Failed to resolve\\n' +
+#     '// module specifier"). The loader only rewrites the bare specifiers\\n' +
+#     '// @hermes/plugin-sdk, react, react/jsx-runtime, react/jsx-dev-runtime to blob\\n' +
+#     "// shims (apps/desktop/src/sdk/runtime.ts's sdkImportMap) — notably NOT\\n" +
+#     '// react-dom, so flushSync is unavailable here too (a second, same-class bug\\n' +
+#     "// caught before shipping: the loader's unsupportedImports() check rejects\\n" +
+#     '// any other bare specifier up front with a clear error, rather than the\\n' +
+#     '// cryptic "Failed to resolve module specifier" a raw failed blob import\\n' +
+#     '// would throw). Plain setState replaces the flushSync calls below; this\\n' +
+#     "// pane's own tests only assert on committed render output, not on\\n" +
+#     '// microtask/macrotask update timing, so the loss of forced synchronous\\n' +
+#     '// flushing has no observable effect here.\\n' +
+#     '\\n' +
+#     'const DASHBOARD_MAX_ROWS = 1000\\n' +
+#     '// Reserved resolved_choice value for the Dismiss action: reuses resolve_decision()\\n' +
+#     '// (actor-token gated, same as a real answer) instead of a new delete endpoint —\\n' +
+#     '// the row and its history stay in decisions.db, just permanently off list_pending().\\n' +
+#     "const DISMISS_SENTINEL_CHOICE = '__dismissed__'\\n" +
+#     '// `ctx.rest(path)` is already scoped under `/api/plugins/<plugin-id>/...` by\\n' +
+#     "// the desktop host (plugin-id == 'decision-hud'), so a path that repeats the\\n" +
+#     '// plugin id here doubles the segment: `/decision-hud/agent-dashboard` became\\n' +
+#     '// `/api/plugins/decision-hud/decision-hud/agent-dashboard` -> 404 "No such\\n' +
+#     `// API endpoint". The backend HTTP service's own route\\n` +
+#     '// (backend/agent_telemetry/service/http_app.py, _ROUTE_PATH) is a separate,\\n' +
+#     '// unscoped loopback path and is unaffected by this — only the gateway-facing\\n' +
+#     '// path passed to `rest()` needs the plugin-id segment dropped.\\n' +
+#     "const DASHBOARD_READ_MODEL_PATH = '/agent-dashboard'\\n" +
+#     '\\n' +
+#     '// Real wiring (owner decision, 2026-09-14, supersedes the placeholder this\\n' +
+#     '// comment used to describe): project scope for the dashboard IS the\\n' +
+#     "// currently-selected Kanban board. DecisionHudPane's own board selector\\n" +
+#     '// (BoardSelector / selectedBoard) and this pane are SEPARATE registered\\n' +
+#     '// panes/routes with no shared React tree, so the selection is persisted to\\n' +
+#     '// `SELECTED_BOARD_STORAGE_KEY` in localStorage by DecisionHudPane and read\\n' +
+#     '// here — same cross-pane-persistence shape as SIDEBAR_SETTINGS_STORAGE_KEY\\n' +
+#     '// below, just keyed differently. `useKanbanBoards()` + `board.project_id`\\n' +
+#     "// resolve the slug to a project id exactly like DecisionHudPane's own\\n" +
+#     '// selectedBoardProjectId cross-link (search that name for the fuller\\n' +
+#     '// history of the board<->project_id link). The actor token is minted per\\n' +
+#     '// project via `hermes decision issue-token --actor desktop-pane\\n' +
+#     '// --project-id <id>` (decision-hud plugin cli.py, `_cmd_issue_token` +\\n' +
+#     '// `_agent_dashboard_auth_module()`), which calls the agent-dashboard\\n' +
+#     "// backend's `issue_project_actor_token()` — same token format/verification\\n" +
+#     '// as the unscoped token used elsewhere in this file (getActorToken), just\\n' +
+#     '// with an added project claim, minted fresh per project (not reused across\\n' +
+#     '// projects, since a token proves exactly one project claim; see\\n' +
+#     '// useProjectActorToken below). No board selected -> no project_id -> the\\n' +
+#     '// pane shows an explicit "select a board in Decision HUD" state rather than\\n' +
+#     '// issuing an unscoped/failing request.\\n' +
+#     "const SELECTED_BOARD_STORAGE_KEY = 'decision-hud:selected-board'\\n" +
+#     '\\n' +
+#     'function loadSelectedBoardSlug() {\\n' +
+#     '  try {\\n' +
+#     "    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(SELECTED_BOARD_STORAGE_KEY) : null\\n" +
+#     "    return typeof raw === 'string' && raw ? raw : null\\n" +
+#     '  } catch {\\n' +
+#     '    return null\\n' +
+#     '  }\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     'function saveSelectedBoardSlug(slug) {\\n' +
+#     '  try {\\n' +
+#     "    if (typeof localStorage === 'undefined') return\\n" +
+#     '    if (slug) localStorage.setItem(SELECTED_BOARD_STORAGE_KEY, slug)\\n' +
+#     '    else localStorage.removeItem(SELECTED_BOARD_STORAGE_KEY)\\n' +
+#     '  } catch {\\n' +
+#     '    // best-effort persistence only — a write failure just means the\\n' +
+#     "    // board selection doesn't survive a reload/other-pane read, not a\\n" +
+#     '    // functional error in the pane that made the selection.\\n' +
+#     '  }\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     "// Shared by DecisionHudPane's own auto-select effect AND\\n" +
+#     '// useProjectDashboardScope below: when nothing is persisted yet, prefer\\n' +
+#     '// the board literally named/slugged "default" (matches the common\\n' +
+#     '// single-board setup, e.g. the "Default" option seen in the board\\n' +
+#     '// dropdown) over just grabbing boards[0] — a board list is not guaranteed\\n' +
+#     '// to return "default" first, and picking an arbitrary board would scope\\n' +
+#     '// the Agent Metrics to the wrong project on a multi-board setup. Falls\\n' +
+#     '// back to the first board when there is no "default"-slugged one.\\n' +
+#     'function pickDefaultBoardSlug(boards) {\\n' +
+#     '  if (!Array.isArray(boards) || boards.length === 0) return null\\n' +
+#     "  const named = boards.find((b) => b && String(b.slug).toLowerCase() === 'default')\\n" +
+#     '  return (named || boards[0]).slug || null\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     '// Shared by AgentDashboard and AgentMetricsPage: resolve the persisted\\n' +
+#     '// selected-board slug to { projectId, boardsLoading, boardsError } via the\\n' +
+#     '// same useKanbanBoards() used by DecisionHudPane, then mint (and cache, per\\n' +
+#     '// projectId) a project-scoped actor token. Re-resolves on every mount since\\n' +
+#     "// these are routed/docked panes that can be reopened long after the token's\\n" +
+#     "// TTL — unlike getActorToken()'s single long-lived module-level promise,\\n" +
+#     '// this is deliberately NOT cached across projectId changes (see comment\\n' +
+#     '// block above this constant).\\n' +
+#     'function useProjectDashboardScope() {\\n' +
+#     '  const [boardSlug, setBoardSlug] = React.useState(loadSelectedBoardSlug)\\n' +
+#     '  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()\\n' +
+#     '  const [tokenState, setTokenState] = React.useState({ token: null, loading: false, error: null })\\n' +
+#     '\\n' +
+#     '  // Pick up a board selection made in the DecisionHudPane tab after this\\n' +
+#     '  // pane already mounted (e.g. user switches board, then opens Agent\\n' +
+#     '  // Metrics) — storage events fire in OTHER same-origin tabs/frames, which\\n' +
+#     "  // is exactly the desktop app's docked-pane-vs-routed-page relationship.\\n" +
+#     '  React.useEffect(() => {\\n' +
+#     '    function onStorage(e) {\\n' +
+#     '      if (e.key === SELECTED_BOARD_STORAGE_KEY) setBoardSlug(e.newValue || null)\\n' +
+#     '    }\\n' +
+#     "    if (typeof window !== 'undefined' && window.addEventListener) {\\n" +
+#     "      window.addEventListener('storage', onStorage)\\n" +
+#     "      return () => window.removeEventListener('storage', onStorage)\\n" +
+#     '    }\\n' +
+#     '    return undefined\\n' +
+#     '  }, [])\\n' +
+#     '\\n' +
+#     '  // Owner request: Agent Metrics must work without ever visiting\\n' +
+#     '  // Decision HUD first — before this fix, no persisted selection meant an\\n' +
+#     '  // indefinite "Select a board in Decision HUD to scope the Agent\\n' +
+#     '  // Metrics" dead end even when boards existed and one of them is\\n' +
+#     '  // "default". Auto-resolve and PERSIST the default board slug the same\\n' +
+#     "  // way DecisionHudPane's own auto-select effect does, so both panes\\n" +
+#     '  // converge on the same board and the choice is not silently re-guessed\\n' +
+#     '  // on every mount (a subsequent Decision HUD board switch still wins via\\n' +
+#     '  // the storage listener above).\\n' +
+#     '  React.useEffect(() => {\\n' +
+#     '    if (boardSlug || boardsLoading || boards.length === 0) return\\n' +
+#     '    const fallback = pickDefaultBoardSlug(boards)\\n' +
+#     '    if (fallback) {\\n' +
+#     '      setBoardSlug(fallback)\\n' +
+#     '      saveSelectedBoardSlug(fallback)\\n' +
+#     '    }\\n' +
+#     '  }, [boardSlug, board'... 284432 more characters,
+#   expected: /host\\.navigate\\(/,
+#   operator: 'doesNotMatch',
+#   diff: 'simple'
+# }
+# Node.js v22.22.1
+# Subtest: test/discuss-opens-new-session.test.mjs
+not ok 17 - test/discuss-opens-new-session.test.mjs
+  ---
+  duration_ms: 601.584619
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/discuss-opens-new-session.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# discuss-retries-on-session-not-found regression test passed
+# Subtest: test/discuss-retries-on-session-not-found.test.mjs
+ok 18 - test/discuss-retries-on-session-not-found.test.mjs
+  ---
+  duration_ms: 569.513586
+  type: 'test'
+  ...
+# discuss-uses-stored-session-id regression test passed
+# Subtest: test/discuss-uses-stored-session-id.test.mjs
+ok 19 - test/discuss-uses-stored-session-id.test.mjs
+  ---
+  duration_ms: 645.103786
+  type: 'test'
+  ...
+# kanban-escalation-scope structural test passed
+# Subtest: test/kanban-escalation-scope.test.mjs
+ok 20 - test/kanban-escalation-scope.test.mjs
+  ---
+  duration_ms: 629.875884
+  type: 'test'
+  ...
+# kanban-notification-toggle structural test passed
+# Subtest: test/kanban-notification-toggle.test.mjs
+ok 21 - test/kanban-notification-toggle.test.mjs
+  ---
+  duration_ms: 541.345939
+  type: 'test'
+  ...
+# metrics-sidebar-props (agentHealth destructure) regression test passed
+# Subtest: test/metrics-sidebar-props.test.mjs
+ok 22 - test/metrics-sidebar-props.test.mjs
+  ---
+  duration_ms: 547.927282
+  type: 'test'
+  ...
+# metrics-sidebar-width (now a configurable setting, not a fixed class) regression test passed
+# Subtest: test/metrics-sidebar-width.test.mjs
+ok 23 - test/metrics-sidebar-width.test.mjs
+  ---
+  duration_ms: 593.976129
+  type: 'test'
+  ...
+# mindmap decision attachment contract passed
+# Subtest: test/mindmap-decision-attachment.test.mjs
+ok 24 - test/mindmap-decision-attachment.test.mjs
+  ---
+  duration_ms: 434.091789
+  type: 'test'
+  ...
+# mindmap pane contract RED test passed
+# Subtest: test/mindmap-pane.test.mjs
+ok 25 - test/mindmap-pane.test.mjs
+  ---
+  duration_ms: 417.692176
+  type: 'test'
+  ...
+# node:internal/modules/run_main:123
+#     triggerUncaughtException(
+#     ^
+# AssertionError [ERR_ASSERTION]: The input did not match the regular expression /label:\\s*'Agent Matrix',\\s*path:\\s*AGENT_METRICS_WIDGETS_ROUTE_PATH/. Input:
+# '/**\\n' +
+#   ' * Decision HUD desktop plugin — card-stack pane for the cross-project\\n' +
+#   ' * decision queue (backend: ~/.hermes/plugins/decision-hud/).\\n' +
+#   ' *\\n' +
+#   ' * Data path: this pane never touches the SQLite file directly (desktop\\n' +
+#   " * plugins have no filesystem access). It drives the backend plugin's\\n" +
+#   ' * `hermes decision ...` CLI commands through the generic `cli.exec` RPC\\n' +
+#   " * (host.request('cli.exec', { argv: [...] })), which is the standard\\n" +
+#   ' * non-interactive command-exec surface already built into the gateway —\\n' +
+#   ' * no core changes, no new RPC method needed.\\n' +
+#   ' *\\n' +
+#   ' * Layout: card stack in the center (3-5 pending decisions, oldest/highest\\n' +
+#   ' * urgency first), a project switcher across the top, docked to the RIGHT\\n' +
+#   ' * of the main chat pane so it sits beside a live conversation. The left\\n' +
+#   ' * "switchable visualization" panel is a v1 placeholder (per the build\\n' +
+#   ' * decision) — wired for a future per-project stats view.\\n' +
+#   ' *\\n' +
+#   ' * Rich cards (decision-hud-cards skill): a decision row can carry an\\n' +
+#   ' * optional `card_type` + `card_payload` (see ~/.hermes/plugins/decision-hud/\\n' +
+#   ' * db.py v2 schema) hinting which visual widget below to render instead of\\n' +
+#   ' * the plain button list. `question`/`choices` always remain a complete,\\n' +
+#   ' * legible fallback — DecisionCard dispatches on card_type but falls back to\\n' +
+#   ' * the plain list for null/unrecognized types, so this never hard-fails on\\n' +
+#   ' * older or hand-pushed decisions with no card_type set.\\n' +
+#   ' */\\n' +
+#   '\\n' +
+#   "import { Badge, Button, cn, Codicon, haptic, host, PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Switch, useValue } from '@hermes/plugin-sdk'\\n" +
+#   "import { jsx, jsxs } from 'react/jsx-runtime'\\n" +
+#   "import * as React from 'react'\\n" +
+#   '\\n' +
+#   '// Spec Digest read boundary: persisted criteria may be corrupt or wrong-shaped.\\n' +
+#   'function parseSpecCriteria(criteria_json) {\\n' +
+#   '  if (!criteria_json) return { items: [], error: null }\\n' +
+#   '  try {\\n' +
+#   '    const parsed = JSON.parse(criteria_json)\\n' +
+#   "    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {\\n" +
+#   "      return { items: [], error: 'malformed criteria' }\\n" +
+#   '    }\\n' +
+#   '    return { items: parsed, error: null }\\n' +
+#   '  } catch {\\n' +
+#   "    return { items: [], error: 'malformed criteria' }\\n" +
+#   '  }\\n' +
+#   '}\\n' +
+#   '\\n' +
+#   "const PLUGIN_ID = 'decision-hud'\\n" +
+#   'const POLL_MS = 4000\\n' +
+#   '\\n' +
+#   '// --- Agent Metrics (read-only interface) ----------------------------------\\n' +
+#   '// Inlined directly in this file — NOT split into dashboard/AgentDashboard.js —\\n' +
+#   "// because the desktop app's runtime plugin loader evaluates plugin.js as a\\n" +
+#   '// single blob URL (apps/desktop/src/contrib/runtime-loader.ts). Blob URLs\\n' +
+#   '// have no hierarchical base, so a relative import like\\n' +
+#   '// `./dashboard/AgentDashboard.js` can never resolve there even though it\\n' +
+#   "// resolves fine under Node's real filesystem ESM (which is why the test\\n" +
+#   '// suite passed while the live desktop app failed with "Failed to resolve\\n' +
+#   '// module specifier"). The loader only rewrites the bare specifiers\\n' +
+#   '// @hermes/plugin-sdk, react, react/jsx-runtime, react/jsx-dev-runtime to blob\\n' +
+#   "// shims (apps/desktop/src/sdk/runtime.ts's sdkImportMap) — notably NOT\\n" +
+#   '// react-dom, so flushSync is unavailable here too (a second, same-class bug\\n' +
+#   "// caught before shipping: the loader's unsupportedImports() check rejects\\n" +
+#   '// any other bare specifier up front with a clear error, rather than the\\n' +
+#   '// cryptic "Failed to resolve module specifier" a raw failed blob import\\n' +
+#   '// would throw). Plain setState replaces the flushSync calls below; this\\n' +
+#   "// pane's own tests only assert on committed render output, not on\\n" +
+#   '// microtask/macrotask update timing, so the loss of forced synchronous\\n' +
+#   '// flushing has no observable effect here.\\n' +
+#   '\\n' +
+#   'const DASHBOARD_MAX_ROWS = 1000\\n' +
+#   '// Reserved resolved_choice value for the Dismiss action: reuses resolve_decision()\\n' +
+#   '// (actor-token gated, same as a real answer) instead of a new delete endpoint —\\n' +
+#   '// the row and its history stay in decisions.db, just permanently off list_pending().\\n' +
+#   "const DISMISS_SENTINEL_CHOICE = '__dismissed__'\\n" +
+#   '// `ctx.rest(path)` is already scoped under `/api/plugins/<plugin-id>/...` by\\n' +
+#   "// the desktop host (plugin-id == 'decision-hud'), so a path that repeats the\\n" +
+#   '// plugin id here doubles the segment: `/decision-hud/agent-dashboard` became\\n' +
+#   '// `/api/plugins/decision-hud/decision-hud/agent-dashboard` -> 404 "No such\\n' +
+#   `// API endpoint". The backend HTTP service's own route\\n` +
+#   '// (backend/agent_telemetry/service/http_app.py, _ROUTE_PATH) is a separate,\\n' +
+#   '// unscoped loopback path and is unaffected by this — only the gateway-facing\\n' +
+#   '// path passed to `rest()` needs the plugin-id segment dropped.\\n' +
+#   "const DASHBOARD_READ_MODEL_PATH = '/agent-dashboard'\\n" +
+#   '\\n' +
+#   '// Real wiring (owner decision, 2026-09-14, supersedes the placeholder this\\n' +
+#   '// comment used to describe): project scope for the dashboard IS the\\n' +
+#   "// currently-selected Kanban board. DecisionHudPane's own board selector\\n" +
+#   '// (BoardSelector / selectedBoard) and this pane are SEPARATE registered\\n' +
+#   '// panes/routes with no shared React tree, so the selection is persisted to\\n' +
+#   '// `SELECTED_BOARD_STORAGE_KEY` in localStorage by DecisionHudPane and read\\n' +
+#   '// here — same cross-pane-persistence shape as SIDEBAR_SETTINGS_STORAGE_KEY\\n' +
+#   '// below, just keyed differently. `useKanbanBoards()` + `board.project_id`\\n' +
+#   "// resolve the slug to a project id exactly like DecisionHudPane's own\\n" +
+#   '// selectedBoardProjectId cross-link (search that name for the fuller\\n' +
+#   '// history of the board<->project_id link). The actor token is minted per\\n' +
+#   '// project via `hermes decision issue-token --actor desktop-pane\\n' +
+#   '// --project-id <id>` (decision-hud plugin cli.py, `_cmd_issue_token` +\\n' +
+#   '// `_agent_dashboard_auth_module()`), which calls the agent-dashboard\\n' +
+#   "// backend's `issue_project_actor_token()` — same token format/verification\\n" +
+#   '// as the unscoped token used elsewhere in this file (getActorToken), just\\n' +
+#   '// with an added project claim, minted fresh per project (not reused across\\n' +
+#   '// projects, since a token proves exactly one project claim; see\\n' +
+#   '// useProjectActorToken below). No board selected -> no project_id -> the\\n' +
+#   '// pane shows an explicit "select a board in Decision HUD" state rather than\\n' +
+#   '// issuing an unscoped/failing request.\\n' +
+#   "const SELECTED_BOARD_STORAGE_KEY = 'decision-hud:selected-board'\\n" +
+#   '\\n' +
+#   'function loadSelectedBoardSlug() {\\n' +
+#   '  try {\\n' +
+#   "    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(SELECTED_BOARD_STORAGE_KEY) : null\\n" +
+#   "    return typeof raw === 'string' && raw ? raw : null\\n" +
+#   '  } catch {\\n' +
+#   '    return null\\n' +
+#   '  }\\n' +
+#   '}\\n' +
+#   '\\n' +
+#   'function saveSelectedBoardSlug(slug) {\\n' +
+#   '  try {\\n' +
+#   "    if (typeof localStorage === 'undefined') return\\n" +
+#   '    if (slug) localStorage.setItem(SELECTED_BOARD_STORAGE_KEY, slug)\\n' +
+#   '    else localStorage.removeItem(SELECTED_BOARD_STORAGE_KEY)\\n' +
+#   '  } catch {\\n' +
+#   '    // best-effort persistence only — a write failure just means the\\n' +
+#   "    // board selection doesn't survive a reload/other-pane read, not a\\n" +
+#   '    // functional error in the pane that made the selection.\\n' +
+#   '  }\\n' +
+#   '}\\n' +
+#   '\\n' +
+#   "// Shared by DecisionHudPane's own auto-select effect AND\\n" +
+#   '// useProjectDashboardScope below: when nothing is persisted yet, prefer\\n' +
+#   '// the board literally named/slugged "default" (matches the common\\n' +
+#   '// single-board setup, e.g. the "Default" option seen in the board\\n' +
+#   '// dropdown) over just grabbing boards[0] — a board list is not guaranteed\\n' +
+#   '// to return "default" first, and picking an arbitrary board would scope\\n' +
+#   '// the Agent Metrics to the wrong project on a multi-board setup. Falls\\n' +
+#   '// back to the first board when there is no "default"-slugged one.\\n' +
+#   'function pickDefaultBoardSlug(boards) {\\n' +
+#   '  if (!Array.isArray(boards) || boards.length === 0) return null\\n' +
+#   "  const named = boards.find((b) => b && String(b.slug).toLowerCase() === 'default')\\n" +
+#   '  return (named || boards[0]).slug || null\\n' +
+#   '}\\n' +
+#   '\\n' +
+#   '// Shared by AgentDashboard and AgentMetricsPage: resolve the persisted\\n' +
+#   '// selected-board slug to { projectId, boardsLoading, boardsError } via the\\n' +
+#   '// same useKanbanBoards() used by DecisionHudPane, then mint (and cache, per\\n' +
+#   '// projectId) a project-scoped actor token. Re-resolves on every mount since\\n' +
+#   "// these are routed/docked panes that can be reopened long after the token's\\n" +
+#   "// TTL — unlike getActorToken()'s single long-lived module-level promise,\\n" +
+#   '// this is deliberately NOT cached across projectId changes (see comment\\n' +
+#   '// block above this constant).\\n' +
+#   'function useProjectDashboardScope() {\\n' +
+#   '  const [boardSlug, setBoardSlug] = React.useState(loadSelectedBoardSlug)\\n' +
+#   '  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()\\n' +
+#   '  const [tokenState, setTokenState] = React.useState({ token: null, loading: false, error: null })\\n' +
+#   '\\n' +
+#   '  // Pick up a board selection made in the DecisionHudPane tab after this\\n' +
+#   '  // pane already mounted (e.g. user switches board, then opens Agent\\n' +
+#   '  // Metrics) — storage events fire in OTHER same-origin tabs/frames, which\\n' +
+#   "  // is exactly the desktop app's docked-pane-vs-routed-page relationship.\\n" +
+#   '  React.useEffect(() => {\\n' +
+#   '    function onStorage(e) {\\n' +
+#   '      if (e.key === SELECTED_BOARD_STORAGE_KEY) setBoardSlug(e.newValue || null)\\n' +
+#   '    }\\n' +
+#   "    if (typeof window !== 'undefined' && window.addEventListener) {\\n" +
+#   "      window.addEventListener('storage', onStorage)\\n" +
+#   "      return () => window.removeEventListener('storage', onStorage)\\n" +
+#   '    }\\n' +
+#   '    return undefined\\n' +
+#   '  }, [])\\n' +
+#   '\\n' +
+#   '  // Owner request: Agent Metrics must work without ever visiting\\n' +
+#   '  // Decision HUD first — before this fix, no persisted selection meant an\\n' +
+#   '  // indefinite "Select a board in Decision HUD to scope the Agent\\n' +
+#   '  // Metrics" dead end even when boards existed and one of them is\\n' +
+#   '  // "default". Auto-resolve and PERSIST the default board slug the same\\n' +
+#   "  // way DecisionHudPane's own auto-select effect does, so both panes\\n" +
+#   '  // converge on the same board and the choice is not silently re-guessed\\n' +
+#   '  // on every mount (a subsequent Decision HUD board switch still wins via\\n' +
+#   '  // the storage listener above).\\n' +
+#   '  React.useEffect(() => {\\n' +
+#   '    if (boardSlug || boardsLoading || boards.length === 0) return\\n' +
+#   '    const fallback = pickDefaultBoardSlug(boards)\\n' +
+#   '    if (fallback) {\\n' +
+#   '      setBoardSlug(fallback)\\n' +
+#   '      saveSelectedBoardSlug(fallback)\\n' +
+#   '    }\\n' +
+#   '  }, [boardSlug, board'... 284432 more characters
+#     at file:///home/ian-koratsky/GitHub/decision-hud-stage2/test/palette-navigate-safety.test.mjs:26:8 {
+#   generatedMessage: true,
+#   code: 'ERR_ASSERTION',
+#   actual: '/**\\n' +
+#     ' * Decision HUD desktop plugin — card-stack pane for the cross-project\\n' +
+#     ' * decision queue (backend: ~/.hermes/plugins/decision-hud/).\\n' +
+#     ' *\\n' +
+#     ' * Data path: this pane never touches the SQLite file directly (desktop\\n' +
+#     " * plugins have no filesystem access). It drives the backend plugin's\\n" +
+#     ' * `hermes decision ...` CLI commands through the generic `cli.exec` RPC\\n' +
+#     " * (host.request('cli.exec', { argv: [...] })), which is the standard\\n" +
+#     ' * non-interactive command-exec surface already built into the gateway —\\n' +
+#     ' * no core changes, no new RPC method needed.\\n' +
+#     ' *\\n' +
+#     ' * Layout: card stack in the center (3-5 pending decisions, oldest/highest\\n' +
+#     ' * urgency first), a project switcher across the top, docked to the RIGHT\\n' +
+#     ' * of the main chat pane so it sits beside a live conversation. The left\\n' +
+#     ' * "switchable visualization" panel is a v1 placeholder (per the build\\n' +
+#     ' * decision) — wired for a future per-project stats view.\\n' +
+#     ' *\\n' +
+#     ' * Rich cards (decision-hud-cards skill): a decision row can carry an\\n' +
+#     ' * optional `card_type` + `card_payload` (see ~/.hermes/plugins/decision-hud/\\n' +
+#     ' * db.py v2 schema) hinting which visual widget below to render instead of\\n' +
+#     ' * the plain button list. `question`/`choices` always remain a complete,\\n' +
+#     ' * legible fallback — DecisionCard dispatches on card_type but falls back to\\n' +
+#     ' * the plain list for null/unrecognized types, so this never hard-fails on\\n' +
+#     ' * older or hand-pushed decisions with no card_type set.\\n' +
+#     ' */\\n' +
+#     '\\n' +
+#     "import { Badge, Button, cn, Codicon, haptic, host, PALETTE_AREA, ROUTES_AREA, SIDEBAR_NAV_AREA, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Separator, Switch, useValue } from '@hermes/plugin-sdk'\\n" +
+#     "import { jsx, jsxs } from 'react/jsx-runtime'\\n" +
+#     "import * as React from 'react'\\n" +
+#     '\\n' +
+#     '// Spec Digest read boundary: persisted criteria may be corrupt or wrong-shaped.\\n' +
+#     'function parseSpecCriteria(criteria_json) {\\n' +
+#     '  if (!criteria_json) return { items: [], error: null }\\n' +
+#     '  try {\\n' +
+#     '    const parsed = JSON.parse(criteria_json)\\n' +
+#     "    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === 'string')) {\\n" +
+#     "      return { items: [], error: 'malformed criteria' }\\n" +
+#     '    }\\n' +
+#     '    return { items: parsed, error: null }\\n' +
+#     '  } catch {\\n' +
+#     "    return { items: [], error: 'malformed criteria' }\\n" +
+#     '  }\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     "const PLUGIN_ID = 'decision-hud'\\n" +
+#     'const POLL_MS = 4000\\n' +
+#     '\\n' +
+#     '// --- Agent Metrics (read-only interface) ----------------------------------\\n' +
+#     '// Inlined directly in this file — NOT split into dashboard/AgentDashboard.js —\\n' +
+#     "// because the desktop app's runtime plugin loader evaluates plugin.js as a\\n" +
+#     '// single blob URL (apps/desktop/src/contrib/runtime-loader.ts). Blob URLs\\n' +
+#     '// have no hierarchical base, so a relative import like\\n' +
+#     '// `./dashboard/AgentDashboard.js` can never resolve there even though it\\n' +
+#     "// resolves fine under Node's real filesystem ESM (which is why the test\\n" +
+#     '// suite passed while the live desktop app failed with "Failed to resolve\\n' +
+#     '// module specifier"). The loader only rewrites the bare specifiers\\n' +
+#     '// @hermes/plugin-sdk, react, react/jsx-runtime, react/jsx-dev-runtime to blob\\n' +
+#     "// shims (apps/desktop/src/sdk/runtime.ts's sdkImportMap) — notably NOT\\n" +
+#     '// react-dom, so flushSync is unavailable here too (a second, same-class bug\\n' +
+#     "// caught before shipping: the loader's unsupportedImports() check rejects\\n" +
+#     '// any other bare specifier up front with a clear error, rather than the\\n' +
+#     '// cryptic "Failed to resolve module specifier" a raw failed blob import\\n' +
+#     '// would throw). Plain setState replaces the flushSync calls below; this\\n' +
+#     "// pane's own tests only assert on committed render output, not on\\n" +
+#     '// microtask/macrotask update timing, so the loss of forced synchronous\\n' +
+#     '// flushing has no observable effect here.\\n' +
+#     '\\n' +
+#     'const DASHBOARD_MAX_ROWS = 1000\\n' +
+#     '// Reserved resolved_choice value for the Dismiss action: reuses resolve_decision()\\n' +
+#     '// (actor-token gated, same as a real answer) instead of a new delete endpoint —\\n' +
+#     '// the row and its history stay in decisions.db, just permanently off list_pending().\\n' +
+#     "const DISMISS_SENTINEL_CHOICE = '__dismissed__'\\n" +
+#     '// `ctx.rest(path)` is already scoped under `/api/plugins/<plugin-id>/...` by\\n' +
+#     "// the desktop host (plugin-id == 'decision-hud'), so a path that repeats the\\n" +
+#     '// plugin id here doubles the segment: `/decision-hud/agent-dashboard` became\\n' +
+#     '// `/api/plugins/decision-hud/decision-hud/agent-dashboard` -> 404 "No such\\n' +
+#     `// API endpoint". The backend HTTP service's own route\\n` +
+#     '// (backend/agent_telemetry/service/http_app.py, _ROUTE_PATH) is a separate,\\n' +
+#     '// unscoped loopback path and is unaffected by this — only the gateway-facing\\n' +
+#     '// path passed to `rest()` needs the plugin-id segment dropped.\\n' +
+#     "const DASHBOARD_READ_MODEL_PATH = '/agent-dashboard'\\n" +
+#     '\\n' +
+#     '// Real wiring (owner decision, 2026-09-14, supersedes the placeholder this\\n' +
+#     '// comment used to describe): project scope for the dashboard IS the\\n' +
+#     "// currently-selected Kanban board. DecisionHudPane's own board selector\\n" +
+#     '// (BoardSelector / selectedBoard) and this pane are SEPARATE registered\\n' +
+#     '// panes/routes with no shared React tree, so the selection is persisted to\\n' +
+#     '// `SELECTED_BOARD_STORAGE_KEY` in localStorage by DecisionHudPane and read\\n' +
+#     '// here — same cross-pane-persistence shape as SIDEBAR_SETTINGS_STORAGE_KEY\\n' +
+#     '// below, just keyed differently. `useKanbanBoards()` + `board.project_id`\\n' +
+#     "// resolve the slug to a project id exactly like DecisionHudPane's own\\n" +
+#     '// selectedBoardProjectId cross-link (search that name for the fuller\\n' +
+#     '// history of the board<->project_id link). The actor token is minted per\\n' +
+#     '// project via `hermes decision issue-token --actor desktop-pane\\n' +
+#     '// --project-id <id>` (decision-hud plugin cli.py, `_cmd_issue_token` +\\n' +
+#     '// `_agent_dashboard_auth_module()`), which calls the agent-dashboard\\n' +
+#     "// backend's `issue_project_actor_token()` — same token format/verification\\n" +
+#     '// as the unscoped token used elsewhere in this file (getActorToken), just\\n' +
+#     '// with an added project claim, minted fresh per project (not reused across\\n' +
+#     '// projects, since a token proves exactly one project claim; see\\n' +
+#     '// useProjectActorToken below). No board selected -> no project_id -> the\\n' +
+#     '// pane shows an explicit "select a board in Decision HUD" state rather than\\n' +
+#     '// issuing an unscoped/failing request.\\n' +
+#     "const SELECTED_BOARD_STORAGE_KEY = 'decision-hud:selected-board'\\n" +
+#     '\\n' +
+#     'function loadSelectedBoardSlug() {\\n' +
+#     '  try {\\n' +
+#     "    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(SELECTED_BOARD_STORAGE_KEY) : null\\n" +
+#     "    return typeof raw === 'string' && raw ? raw : null\\n" +
+#     '  } catch {\\n' +
+#     '    return null\\n' +
+#     '  }\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     'function saveSelectedBoardSlug(slug) {\\n' +
+#     '  try {\\n' +
+#     "    if (typeof localStorage === 'undefined') return\\n" +
+#     '    if (slug) localStorage.setItem(SELECTED_BOARD_STORAGE_KEY, slug)\\n' +
+#     '    else localStorage.removeItem(SELECTED_BOARD_STORAGE_KEY)\\n' +
+#     '  } catch {\\n' +
+#     '    // best-effort persistence only — a write failure just means the\\n' +
+#     "    // board selection doesn't survive a reload/other-pane read, not a\\n" +
+#     '    // functional error in the pane that made the selection.\\n' +
+#     '  }\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     "// Shared by DecisionHudPane's own auto-select effect AND\\n" +
+#     '// useProjectDashboardScope below: when nothing is persisted yet, prefer\\n' +
+#     '// the board literally named/slugged "default" (matches the common\\n' +
+#     '// single-board setup, e.g. the "Default" option seen in the board\\n' +
+#     '// dropdown) over just grabbing boards[0] — a board list is not guaranteed\\n' +
+#     '// to return "default" first, and picking an arbitrary board would scope\\n' +
+#     '// the Agent Metrics to the wrong project on a multi-board setup. Falls\\n' +
+#     '// back to the first board when there is no "default"-slugged one.\\n' +
+#     'function pickDefaultBoardSlug(boards) {\\n' +
+#     '  if (!Array.isArray(boards) || boards.length === 0) return null\\n' +
+#     "  const named = boards.find((b) => b && String(b.slug).toLowerCase() === 'default')\\n" +
+#     '  return (named || boards[0]).slug || null\\n' +
+#     '}\\n' +
+#     '\\n' +
+#     '// Shared by AgentDashboard and AgentMetricsPage: resolve the persisted\\n' +
+#     '// selected-board slug to { projectId, boardsLoading, boardsError } via the\\n' +
+#     '// same useKanbanBoards() used by DecisionHudPane, then mint (and cache, per\\n' +
+#     '// projectId) a project-scoped actor token. Re-resolves on every mount since\\n' +
+#     "// these are routed/docked panes that can be reopened long after the token's\\n" +
+#     "// TTL — unlike getActorToken()'s single long-lived module-level promise,\\n" +
+#     '// this is deliberately NOT cached across projectId changes (see comment\\n' +
+#     '// block above this constant).\\n' +
+#     'function useProjectDashboardScope() {\\n' +
+#     '  const [boardSlug, setBoardSlug] = React.useState(loadSelectedBoardSlug)\\n' +
+#     '  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()\\n' +
+#     '  const [tokenState, setTokenState] = React.useState({ token: null, loading: false, error: null })\\n' +
+#     '\\n' +
+#     '  // Pick up a board selection made in the DecisionHudPane tab after this\\n' +
+#     '  // pane already mounted (e.g. user switches board, then opens Agent\\n' +
+#     '  // Metrics) — storage events fire in OTHER same-origin tabs/frames, which\\n' +
+#     "  // is exactly the desktop app's docked-pane-vs-routed-page relationship.\\n" +
+#     '  React.useEffect(() => {\\n' +
+#     '    function onStorage(e) {\\n' +
+#     '      if (e.key === SELECTED_BOARD_STORAGE_KEY) setBoardSlug(e.newValue || null)\\n' +
+#     '    }\\n' +
+#     "    if (typeof window !== 'undefined' && window.addEventListener) {\\n" +
+#     "      window.addEventListener('storage', onStorage)\\n" +
+#     "      return () => window.removeEventListener('storage', onStorage)\\n" +
+#     '    }\\n' +
+#     '    return undefined\\n' +
+#     '  }, [])\\n' +
+#     '\\n' +
+#     '  // Owner request: Agent Metrics must work without ever visiting\\n' +
+#     '  // Decision HUD first — before this fix, no persisted selection meant an\\n' +
+#     '  // indefinite "Select a board in Decision HUD to scope the Agent\\n' +
+#     '  // Metrics" dead end even when boards existed and one of them is\\n' +
+#     '  // "default". Auto-resolve and PERSIST the default board slug the same\\n' +
+#     "  // way DecisionHudPane's own auto-select effect does, so both panes\\n" +
+#     '  // converge on the same board and the choice is not silently re-guessed\\n' +
+#     '  // on every mount (a subsequent Decision HUD board switch still wins via\\n' +
+#     '  // the storage listener above).\\n' +
+#     '  React.useEffect(() => {\\n' +
+#     '    if (boardSlug || boardsLoading || boards.length === 0) return\\n' +
+#     '    const fallback = pickDefaultBoardSlug(boards)\\n' +
+#     '    if (fallback) {\\n' +
+#     '      setBoardSlug(fallback)\\n' +
+#     '      saveSelectedBoardSlug(fallback)\\n' +
+#     '    }\\n' +
+#     '  }, [boardSlug, board'... 284432 more characters,
+#   expected: /label:\\s*'Agent Matrix',\\s*path:\\s*AGENT_METRICS_WIDGETS_ROUTE_PATH/,
+#   operator: 'match',
+#   diff: 'simple'
+# }
+# Node.js v22.22.1
+# Subtest: test/palette-navigate-safety.test.mjs
+not ok 26 - test/palette-navigate-safety.test.mjs
+  ---
+  duration_ms: 388.646666
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/palette-navigate-safety.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# route-backed workspace and persistent task-list dock contract passed
+# Subtest: test/pinned-pane.test.mjs
+ok 27 - test/pinned-pane.test.mjs
+  ---
+  duration_ms: 449.640331
+  type: 'test'
+  ...
+# settings gear fullscreen overlay structural test passed
+# Subtest: test/settings-gear.test.mjs
+ok 28 - test/settings-gear.test.mjs
+  ---
+  duration_ms: 318.050092
+  type: 'test'
+  ...
+# settings-popover-background (real theme tokens, not invisible ones) regression test passed
+# Subtest: test/settings-popover-background.test.mjs
+ok 29 - test/settings-popover-background.test.mjs
+  ---
+  duration_ms: 422.785428
+  type: 'test'
+  ...
+# node:internal/modules/run_main:123
+#     triggerUncaughtException(
+#     ^
+# AssertionError [ERR_ASSERTION]: at least one MetricDial must be rendered inside MetricsSidebar
+#     at file:///home/ian-koratsky/GitHub/decision-hud-stage2/test/sidebar-order-swap.test.mjs:19:8 {
+#   generatedMessage: false,
+#   code: 'ERR_ASSERTION',
+#   actual: false,
+#   expected: true,
+#   operator: '==',
+#   diff: 'simple'
+# }
+# Node.js v22.22.1
+# Subtest: test/sidebar-order-swap.test.mjs
+not ok 30 - test/sidebar-order-swap.test.mjs
+  ---
+  duration_ms: 365.137904
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/sidebar-order-swap.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'jsdom' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/dom-harness.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/sidebar-settings-crash.test.mjs
+not ok 31 - test/sidebar-settings-crash.test.mjs
+  ---
+  duration_ms: 379.59518
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/sidebar-settings-crash.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/run_main:123
+#     triggerUncaughtException(
+#     ^
+# AssertionError [ERR_ASSERTION]: DecisionHudPane function must exist
+#     at file:///home/ian-koratsky/GitHub/decision-hud-stage2/test/sidebar-settings.test.mjs:45:8 {
+#   generatedMessage: false,
+#   code: 'ERR_ASSERTION',
+#   actual: null,
+#   expected: true,
+#   operator: '==',
+#   diff: 'simple'
+# }
+# Node.js v22.22.1
+# Subtest: test/sidebar-settings.test.mjs
+not ok 32 - test/sidebar-settings.test.mjs
+  ---
+  duration_ms: 333.693362
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/sidebar-settings.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# spec digest criteria key regression passed
+# Subtest: test/spec-digest-criteria-key.test.mjs
+ok 33 - test/spec-digest-criteria-key.test.mjs
+  ---
+  duration_ms: 361.545354
+  type: 'test'
+  ...
+# node:internal/modules/package_json_reader:314
+#   throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+#         ^
+# Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@hermes/plugin-sdk' imported from /home/ian-koratsky/GitHub/decision-hud-stage2/test/spec-digest-route.test.mjs
+#     at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)
+#     at packageResolve (node:internal/modules/esm/resolve:768:81)
+#     at moduleResolve (node:internal/modules/esm/resolve:855:18)
+#     at defaultResolve (node:internal/modules/esm/resolve:985:11)
+#     at \#cachedDefaultResolve (node:internal/modules/esm/loader:731:20)
+#     at ModuleLoader.resolve (node:internal/modules/esm/loader:708:38)
+#     at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:310:38)
+#     at ModuleJob._link (node:internal/modules/esm/module_job:182:49) {
+#   code: 'ERR_MODULE_NOT_FOUND'
+# }
+# Node.js v22.22.1
+# Subtest: test/spec-digest-route.test.mjs
+not ok 34 - test/spec-digest-route.test.mjs
+  ---
+  duration_ms: 289.137482
+  type: 'test'
+  location: '/home/ian-koratsky/GitHub/decision-hud-stage2/test/spec-digest-route.test.mjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# triage blocked work structural test passed
+# Subtest: test/triage-blocked-work.test.mjs
+ok 35 - test/triage-blocked-work.test.mjs
+  ---
+  duration_ms: 314.008705
+  type: 'test'
+  ...
+# useDecisionQueue dependency regression test passed
+# Subtest: test/use-decision-queue.test.mjs
+ok 36 - test/use-decision-queue.test.mjs
+  ---
+  duration_ms: 272.675858
+  type: 'test'
+  ...
+# zone-select button and clear-response controls test passed
+# Subtest: test/zone-select-controls.test.mjs
+ok 37 - test/zone-select-controls.test.mjs
+  ---
+  duration_ms: 271.353485
+  type: 'test'
+  ...
+1..37
+# tests 37
+# suites 0
+# pass 23
+# fail 14
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1013.834385

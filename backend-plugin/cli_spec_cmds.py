@@ -1,10 +1,7 @@
-"""Spec Digest CLI command implementations."""
-
+"""Spec node CLI wrappers."""
 import json
 import sqlite3
 import sys
-import time
-import uuid
 
 
 def _db():
@@ -15,162 +12,87 @@ def _db():
     return db
 
 
-def _print(obj):
-    print(json.dumps(obj, default=str))
+def _print(value):
+    print(json.dumps(value, default=str))
 
 
-def _row(conn, node_id):
-    return conn.execute(
-        "SELECT id, project_id, kind, parent_id, title, status, note, criteria_json, decision_id, created_at, updated_at FROM spec_nodes WHERE id = ?",
-        (node_id,),
-    ).fetchone()
+def _fail(exc):
+    db = _db()
+    if isinstance(exc, db.BoundaryError):
+        code = exc.code
+    elif isinstance(exc, sqlite3.IntegrityError):
+        code = "constraint"
+    elif isinstance(exc, ValueError):
+        code = "invalid_input"
+    else:
+        code = "internal_error"
+    exit_code = {"invalid_input": 2, "not_found": 3, "conflict": 4,
+                 "busy": 5, "constraint": 6, "internal_error": 1}.get(code, 1)
+    message = "resource not found" if code == "not_found" else str(exc)[:256]
+    _print({"ok": False, "error": {"code": code, "message": message}})
+    raise SystemExit(exit_code)
 
 
-def _cmd_spec_add_node(args) -> None:
+def _run(args, action):
     db = _db()
     conn = db.connect()
     try:
-        project = db._resolve_project(args.project_id)
-        parent_id = args.parent_id
-        if parent_id:
-            parent = conn.execute("SELECT project_id FROM spec_nodes WHERE id = ?", (parent_id,)).fetchone()
-            if parent is None:
-                raise ValueError(f"parent_id {parent_id!r} not found")
-            if parent["project_id"] != project["id"]:
-                raise ValueError(f"parent_id {parent_id!r} belongs to project {parent['project_id']!r}, not {project['id']!r}")
-            if _has_cycle_in_ancestors(conn, parent_id):
-                raise ValueError(f"adding parent_id {parent_id!r} would create a cycle")
-        node_id = uuid.uuid4().hex[:12]
-        now = time.time()
-        conn.execute(
-            "INSERT INTO spec_nodes (id, project_id, kind, parent_id, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (node_id, project["id"], args.kind, parent_id, args.title, "draft", now, now),
-        )
-        conn.commit()
-        _print({"ok": True, "node": dict(_row(conn, node_id))})
-    except (ValueError, sqlite3.IntegrityError) as exc:
+        return action(db, conn)
+    except Exception as exc:
         conn.rollback()
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
+        _fail(exc)
     finally:
         conn.close()
 
 
-def _cmd_spec_list(args) -> None:
-    db = _db()
-    conn = db.connect()
-    try:
-        params = []
-        where = []
-        if args.project_id:
-            where.append("project_id = ?")
-            params.append(db._resolve_project(args.project_id)["id"])
-        if args.kind:
-            where.append("kind = ?")
-            params.append(args.kind)
-        sql = "SELECT id, project_id, kind, parent_id, title, status, note, criteria_json, decision_id, created_at, updated_at FROM spec_nodes"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
-        sql += " ORDER BY project_id, kind, created_at"
-        _print([dict(row) for row in conn.execute(sql, params)])
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
-    finally:
-        conn.close()
+def _cmd_spec_add_node(args):
+    def action(db, conn):
+        node = db.create_spec_node(conn, project_id=args.project_id, kind=args.kind,
+                                   title=args.title, parent_id=args.parent_id)
+        _print({"ok": True, "node": node})
+    _run(args, action)
 
 
-def _cmd_spec_update_node(args) -> None:
-    db = _db()
-    conn = db.connect()
-    try:
-        if _row(conn, args.id) is None:
-            raise ValueError(f"node {args.id!r} not found")
-        fields = [("title", args.title), ("status", args.status), ("note", args.note)]
-        updates = [(key, value) for key, value in fields if value is not None]
-        updates.append(("updated_at", time.time()))
-        conn.execute(f"UPDATE spec_nodes SET {', '.join(f'{key} = ?' for key, _ in updates)} WHERE id = ?", [value for _, value in updates] + [args.id])
-        conn.commit()
-        _print(dict(_row(conn, args.id)))
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
-    finally:
-        conn.close()
+def _cmd_spec_tree(args):
+    _run(args, lambda db, conn: _print({"ok": True, "tree": db.get_spec_tree(conn, project_id=args.project_id)}))
 
 
-def _cmd_spec_set_criteria(args) -> None:
-    db = _db()
-    conn = db.connect()
-    try:
-        if _row(conn, args.id) is None:
-            raise ValueError(f"node {args.id!r} not found")
-        criteria = json.loads(args.criteria_json)
-        if not isinstance(criteria, list):
-            raise ValueError(f"criteria_json must be an array, not {type(criteria).__name__}")
-        if not all(isinstance(item, str) for item in criteria):
-            raise ValueError("all criteria items must be strings")
-        if len(criteria) > 100 or any(len(item) > 10000 for item in criteria) or len(args.criteria_json.encode()) > 100 * 1024:
-            raise ValueError("criteria_json exceeds size limits")
-        conn.execute("UPDATE spec_nodes SET criteria_json = ?, updated_at = ? WHERE id = ?", (args.criteria_json, time.time(), args.id))
-        conn.commit()
-        _print(dict(_row(conn, args.id)))
-    except (ValueError, json.JSONDecodeError) as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
-    finally:
-        conn.close()
+def _cmd_spec_list(args):
+    def action(db, conn):
+        project = db._spec_project(args.project_id)
+        rows = conn.execute(
+            "SELECT id, project_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, created_at, updated_at "
+            "FROM spec_nodes WHERE project_id = ?" + (" AND kind = ?" if args.kind else "") +
+            " ORDER BY kind, created_at, id",
+            (project, args.kind) if args.kind else (project,),
+        ).fetchall()
+        _print({"ok": True, "nodes": [dict(row) for row in rows]})
+    _run(args, action)
 
 
-def _cmd_spec_link_decision(args) -> None:
-    db = _db()
-    conn = db.connect()
-    try:
-        node = _row(conn, args.id)
-        if node is None:
-            raise ValueError(f"node {args.id!r} not found")
-        decision = conn.execute("SELECT id, project_id FROM decisions WHERE id = ?", (args.decision_id,)).fetchone()
-        if decision is None:
-            raise ValueError(f"decision {args.decision_id!r} not found")
-        if decision["project_id"] != node["project_id"]:
-            raise ValueError(f"decision {args.decision_id!r} belongs to project {decision['project_id']!r}, not {node['project_id']!r}")
-        conn.execute("UPDATE spec_nodes SET decision_id = ?, updated_at = ? WHERE id = ?", (args.decision_id, time.time(), args.id))
-        conn.commit()
-        _print(dict(_row(conn, args.id)))
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
-    finally:
-        conn.close()
+def _cmd_spec_update_node(args):
+    def action(db, conn):
+        fields = {k: v for k, v in {"title": args.title, "status": args.status, "note": args.note, "metadata_json": args.metadata_json}.items() if v is not None}
+        node = db.update_spec_node(conn, args.id, project_id=args.project_id, **fields)
+        _print({"ok": True, "node": node})
+    _run(args, action)
 
 
-def _delete_node(conn, node_id):
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        row = conn.execute("SELECT id FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
-        if row is None:
-            raise ValueError(f"node {node_id!r} not found")
-        child_count = conn.execute("SELECT COUNT(*) FROM spec_nodes WHERE parent_id = ?", (node_id,)).fetchone()[0]
-        if child_count:
-            raise ValueError(f"cannot delete node {node_id!r}: it has {child_count} children. Delete children first.")
-        conn.execute("DELETE FROM spec_nodes WHERE id = ?", (node_id,))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+def _cmd_spec_set_criteria(args):
+    def action(db, conn):
+        value = json.loads(args.criteria_json)
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise db.BoundaryError("invalid_input", "criteria_json must be an array of strings")
+        node = db.update_spec_node(conn, args.id, project_id=args.project_id, criteria_json=args.criteria_json)
+        _print({"ok": True, "node": node})
+    _run(args, action)
 
 
-def _cmd_spec_delete_node(args) -> None:
-    db = _db()
-    conn = db.connect()
-    try:
-        _delete_node(conn, args.id)
-        _print({"ok": True, "id": args.id})
-    except ValueError as exc:
-        _print({"ok": False, "error": str(exc)})
-        sys.exit(1)
-    finally:
-        conn.close()
+def _cmd_spec_link_decision(args):
+    def action(db, conn):
+        node = db.update_spec_node(conn, args.id, project_id=args.project_id, decision_id=args.decision_id)
+        _print({"ok": True, "node": node})
+    _run(args, action)
 
 
 def _has_cycle_in_ancestors(conn: sqlite3.Connection, node_id: str, max_depth: int = 1000) -> bool:
@@ -185,3 +107,25 @@ def _has_cycle_in_ancestors(conn: sqlite3.Connection, node_id: str, max_depth: i
             return False
         current = parent["parent_id"]
     raise ValueError(f"ancestor chain exceeds max depth {max_depth}; refusing to trust malformed hierarchy")
+
+
+def _delete_node(conn, node_id, project_id=None):
+    if project_id is None:
+        project_id = conn.execute("SELECT project_id FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()["project_id"]
+    conn.execute("BEGIN IMMEDIATE")
+    row = conn.execute("SELECT id FROM spec_nodes WHERE id = ? AND project_id = ?", (node_id, project_id)).fetchone()
+    if row is None:
+        raise _db().BoundaryError("not_found", "resource not found")
+    child_count = conn.execute("SELECT COUNT(*) FROM spec_nodes WHERE project_id = ? AND parent_id = ?", (project_id, node_id)).fetchone()[0]
+    if child_count:
+        raise _db().BoundaryError("constraint", f"cannot delete node {node_id!r}: it has children")
+    conn.execute("DELETE FROM spec_nodes WHERE project_id = ? AND id = ?", (project_id, node_id))
+    conn.commit()
+
+
+def _cmd_spec_delete_node(args):
+    def action(db, conn):
+        project = db._spec_project(args.project_id)
+        _delete_node(conn, args.id, project)
+        _print({"ok": True, "id": args.id, "project_id": project})
+    _run(args, action)

@@ -1234,7 +1234,7 @@ function AgentDashboardCombinedPage({ rest }) {
         'data-dashboard-section': 'read-model',
         children: [
           jsx('div', { className: 'font-medium', children: 'Dashboard' }),
-          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }),
+          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics', children: jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }) }),
         ],
       }),
       jsx(Separator, {}),
@@ -1242,7 +1242,7 @@ function AgentDashboardCombinedPage({ rest }) {
         'data-dashboard-section': 'agent-matrix',
         children: [
           jsx('div', { className: 'font-medium', children: 'Agent Matrix' }),
-          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }),
+          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics Widgets', children: jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }) }),
         ],
       }),
       jsx(Separator, {}),
@@ -6083,6 +6083,222 @@ function HierarchyAttachedDecision({ decision, onChanged }) {
   })
 }
 
+function parseFlowResponse(res) {
+  if (!res || typeof res.output !== 'string') throw new Error('flow output unavailable')
+  const payload = parseTrailingJson(res.output)
+  if (!payload || payload.ok !== true) {
+    const error = payload?.error
+    const message = error && typeof error === 'object' ? error.message : error
+    throw new Error(message || 'flow request failed')
+  }
+  return payload
+}
+
+function deriveFlowLayout(steps) {
+  const rows = Array.isArray(steps) ? steps : []
+  const byId = new Map(rows.map((step) => [step.id, step]))
+  const depths = new Map()
+  const visit = (id, depth, path = new Set()) => {
+    if (path.has(id)) return
+    depths.set(id, Math.max(depths.get(id) || 0, depth))
+    const next = byId.get(id)?.next || []
+    next.forEach((child) => visit(child, depth + 1, new Set([...path, id])))
+  }
+  if (rows[0]) visit(rows[0].id, 0)
+  rows.forEach((step) => { if (!depths.has(step.id)) depths.set(step.id, 0) })
+  return rows.map((step, index) => ({ ...step, x: (depths.get(step.id) || 0) * 180, y: index * 72 }))
+}
+
+function FlowchartsPane() {
+  const [boardSlug] = React.useState(loadSelectedBoardSlug)
+  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
+  const effectiveBoardSlug = boardSlug || pickDefaultBoardSlug(boards)
+  const projectId = React.useMemo(() => boards.find((item) => item?.slug === effectiveBoardSlug)?.project_id || null, [boards, effectiveBoardSlug])
+  const [state, setState] = React.useState({ loading: true, flows: [], error: null })
+  const [selectedId, setSelectedId] = React.useState(null)
+  const [revision, setRevision] = React.useState(0)
+  const [newName, setNewName] = React.useState(() => '')
+  const [rename, setRename] = React.useState('')
+  const [stepsText, setStepsText] = React.useState('[]')
+  const [mutationLoading, setMutationLoading] = React.useState(false)
+
+  const runFlowCommand = async (argv) => {
+    if (mutationLoading) return false
+    setMutationLoading(true)
+    try {
+      const response = await host.request('cli.exec', { argv, timeout: 30 })
+      parseFlowResponse(response)
+      setState((current) => ({ ...current, error: null }))
+      setRevision((value) => value + 1)
+      return true
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+      return false
+    } finally {
+      /* mutationLoading false after every mutation */
+      setMutationLoading(false)
+    }
+  }
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) { setState((current) => ({ ...current, loading: false, flows: [], error: null })); return () => { active = false } }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    host.request('cli.exec', { argv: ['decision', 'flow', 'list', '--project', projectId], timeout: 30 })
+      .then((res) => { if (!active) return; try { setState((current) => ({ ...current, loading: false, flows: parseFlowResponse(res).flows || [], error: null })) } catch (error) { setState((current) => ({ ...current, loading: false, error: String(error.message || error) })) } })
+      .catch((error) => active && setState((current) => ({ ...current, loading: false, error: String(error.message || error) })))
+    return () => { active = false }
+  }, [projectId, revision])
+
+  const selected = state.flows.find((flow) => flow.id === selectedId) || state.flows[0]
+  // Preserve selected identity across refreshes: [selected?.id]
+  React.useEffect(() => { setStepsText(selected?.steps_json || '[]'); setRename(selected?.name || '') }, [selected?.id, selected?.steps_json, selected?.name])
+  let steps = []
+  let malformed = false
+  if (selected) { try { steps = JSON.parse(selected.steps_json); if (!Array.isArray(steps)) malformed = true } catch { malformed = true } }
+  const layout = malformed ? [] : deriveFlowLayout(steps)
+  const content = boardsLoading || state.loading ? 'Loading flowcharts…' : boardsError || state.error ? (boardsError || state.error) : !selected ? 'No flowcharts yet' : malformed ? 'Malformed graph' : steps.length === 0 ? 'No flow steps yet' : layout.map((step) => jsx('div', { key: step.id, className: 'rounded border border-(--ui-stroke-secondary) p-2', style: { marginLeft: `${step.x}px` }, children: `${step.label} (${(step.next || []).join(', ') || 'end'})` }))
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Flowcharts' }),
+    state.flows.length > 0 ? jsx('select', { value: selected?.id || '', onChange: (event) => setSelectedId(event.target.value), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent p-1', children: state.flows.map((flow) => jsx('option', { value: flow.id, children: flow.name }, flow.id)) }) : null,
+    selected ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: rename, placeholder: 'Flow name', 'aria-label': 'Flow name', onChange: (event) => setRename(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !rename.trim(), onClick: () => runFlowCommand(['decision', 'flow', 'update', '--project', projectId, selected.id, '--name', rename]), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Rename flow' }),
+    ] }) : null,
+    selected ? jsx('textarea', { value: stepsText, onChange: (event) => setStepsText(event.target.value), 'aria-label': 'Flow steps JSON', className: 'min-h-24 rounded border border-(--ui-stroke-secondary) bg-transparent p-2 font-mono text-xs' }) : null,
+    selected ? jsx('button', { type: 'button', disabled: mutationLoading, onClick: () => runFlowCommand(['decision', 'flow', 'set-steps', '--project', projectId, selected.id, '--steps', stepsText]), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Save steps' }) : null,
+    projectId ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: newName, placeholder: 'New flow name', onChange: (event) => setNewName(event.target.value), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !newName.trim(), onClick: async () => { if (await runFlowCommand(['decision', 'flow', 'add', '--project', projectId, '--name', newName])) setNewName('') }, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: 'Add' }),
+    ] }) : null,
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+    selected && projectId ? jsx('button', { type: 'button', onClick: () => setRevision((value) => value + 1), className: 'self-start rounded border border-(--ui-stroke-secondary) px-2 py-1', children: 'Refresh' }) : null,
+  ] })
+}
+
+function RoadmapPane() {
+  const { projectId, loading: scopeLoading, error: scopeError } = useProjectDashboardScope()
+  const [state, setState] = React.useState({ loading: true, lanes: [], items: [], error: null })
+  const [revision, setRevision] = React.useState(0)
+  const [mutationLoading, setMutationLoading] = React.useState(false)
+  const [laneDraft, setLaneDraft] = React.useState('')
+  const [itemDraft, setItemDraft] = React.useState({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })
+  const [drafts, setDrafts] = React.useState({})
+  const setError = (error) => setState((current) => ({ ...current, loading: false, error: String(error.message || error) }))
+  const setLoading = (value) => setMutationLoading(value)
+
+  const refresh = React.useCallback(() => setRevision((value) => value + 1), [])
+  const reload = refresh
+
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, lanes: [], items: [], error: null })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    const roadmapListCommand = ['roadmap', 'list', '--project-id', projectId]
+    cliExec(roadmapListCommand)
+      .then((res) => {
+        if (!active) return
+        setState({ loading: false, lanes: res?.lanes || [], items: res?.items || [], error: null })
+      })
+      .then(null, (error) => {
+        if (!active) return
+        setError(error)
+      })
+    return () => { active = false }
+  }, [projectId, revision])
+  React.useEffect(() => {}, [projectId])
+
+  // runUpdate('roadmap', 'item', 'update') is the item mutation shape.
+  async function runUpdate(argv) {
+    if (!projectId || mutationLoading) return false
+    setLoading(true)
+    try {
+      return await cliExec(argv).then(() => true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const submit = async (operation, draftKey, argv, onSuccess) => {
+    try {
+      if (await runUpdate(argv)) {
+        setDraft('')
+        setDrafts((current) => ({ ...current, [draftKey]: '' }))
+        setState((current) => ({ ...current, error: null }))
+        refresh()
+        onSuccess?.()
+      }
+    } catch (error) {
+      setError(error)
+    }
+  }
+  const setDraft = (value) => setDrafts((current) => ({ ...current, last: value }))
+
+  const listValues = (value) => value.split('\n').map((entry) => entry.trim()).filter(Boolean)
+  const relationshipArgs = (draft) => {
+    const argv = []
+    if (draft.dependsOn !== null && draft.dependsOn !== undefined) {
+      listValues(draft.dependsOn).forEach((value) => argv.push('--depends-on', value))
+      if (listValues(draft.dependsOn).length === 0) argv.push('--clear-depends-on')
+    }
+    if (draft.links !== null && draft.links !== undefined) {
+      listValues(draft.links).forEach((value) => argv.push('--link', value))
+      if (listValues(draft.links).length === 0) argv.push('--clear-links')
+    }
+    return argv
+  }
+  const content = scopeLoading || state.loading
+    ? 'Loading roadmap…'
+    : scopeError || state.error
+      ? (scopeError || state.error)
+      : state.lanes.length === 0
+        ? 'No roadmap lanes yet'
+        : state.lanes.map((lane) => {
+          const laneItems = state.items.filter((item) => item.lane_id === lane.id)
+          const laneTitle = drafts[`lane:${lane.id}`] ?? lane.title ?? ''
+          return jsxs('section', { key: lane.id, className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+            jsxs('div', { className: 'flex gap-2', children: [
+              jsx('input', { value: laneTitle, 'aria-label': `Lane ${lane.id}`, onChange: (event) => setDrafts((current) => ({ ...current, [`lane:${lane.id}`]: event.target.value })), className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1' }),
+              jsx('button', { type: 'button', disabled: mutationLoading || !laneTitle.trim(), onClick: () => submit('lane', `lane:${lane.id}`, ['roadmap', 'lane', 'update', '--project-id', projectId, '--lane-id', lane.id, '--title', laneTitle, '--sort-order', String(lane.sort_order ?? 0), '--expected-updated-at', String(lane.updated_at ?? '')]), children: 'Save lane' }),
+            ] }),
+            laneItems.map((item) => {
+              const itemId = item.id
+              const updatedAt = item.updated_at
+              const draft = drafts[`item:${itemId}`] || { title: item.title || '', description: item.description || '', status: item.status || 'planned', laneId: item.lane_id, sortOrder: String(item.sort_order ?? 0), dependsOn: null, links: null }
+              const setDraft = (field, value) => setDrafts((current) => ({ ...current, [`item:${item.id}`]: { ...draft, [field]: value } }))
+              const argv = ['roadmap', 'item', 'update', '--project-id', projectId, '--item-id', itemId, '--lane-id', draft.laneId, '--title', draft.title, '--description', draft.description, '--status', draft.status, '--sort-order', String(draft.sortOrder), '--expected-updated-at', String(updatedAt ?? ''), ...relationshipArgs(draft)]
+              return jsxs('div', { key: item.id, className: 'flex flex-col gap-1 border-t border-(--ui-stroke-secondary) pt-2', children: [
+                jsx('input', { value: draft.title, 'aria-label': `Item ${item.id} title`, onChange: (event) => setDraft('title', event.target.value) }),
+                jsx('textarea', { value: draft.description, 'aria-label': `Item ${item.id} description`, onChange: (event) => setDraft('description', event.target.value) }),
+                jsx('input', { value: draft.status, 'aria-label': `Item ${item.id} status`, onChange: (event) => setDraft('status', event.target.value) }),
+                jsx('textarea', { value: draft.dependsOn ?? '', 'aria-label': `Item ${item.id} dependencies`, onChange: (event) => setDraft('dependsOn', event.target.value) }),
+                jsx('textarea', { value: draft.links ?? '', 'aria-label': `Item ${item.id} links`, onChange: (event) => setDraft('links', event.target.value) }),
+                jsx('button', { type: 'button', disabled: mutationLoading || !draft.title.trim(), onClick: () => submit('item', `item:${item.id}`, argv), children: 'Save item' }),
+              ] })
+            }),
+          ] })
+        })
+
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: 'Roadmap' }),
+    projectId ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('input', { value: laneDraft, placeholder: 'New lane', onChange: (event) => setLaneDraft(event.target.value) }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !laneDraft.trim(), onClick: () => submit('lane', 'new-lane', ['roadmap', 'lane', 'add', '--project-id', projectId, '--title', laneDraft, '--sort-order', '0'], () => setLaneDraft('')), children: 'Add lane' }),
+    ] }) : null,
+    projectId && state.lanes.length > 0 ? jsxs('div', { className: 'flex gap-2', children: [
+      jsx('select', { value: itemDraft.laneId || state.lanes[0]?.id || '', onChange: (event) => setItemDraft((current) => ({ ...current, laneId: event.target.value })), children: state.lanes.map((lane) => jsx('option', { value: lane.id, children: lane.title }, lane.id)) }),
+      jsx('input', { value: itemDraft.title, placeholder: 'New item', onChange: (event) => setItemDraft((current) => ({ ...current, title: event.target.value })) }),
+      jsx('button', { type: 'button', disabled: mutationLoading || !itemDraft.title.trim(), onClick: () => submit('item', 'new-item', ['roadmap', 'item', 'add', '--project-id', projectId, '--lane-id', itemDraft.laneId || state.lanes[0]?.id || '', '--title', itemDraft.title, '--description', itemDraft.description, '--status', itemDraft.status, '--sort-order', itemDraft.sortOrder, ...listValues(itemDraft.dependsOn).flatMap((value) => ['--depends-on', value]), ...listValues(itemDraft.links).flatMap((value) => ['--link', value])], () => setItemDraft({ laneId: '', title: '', description: '', status: 'planned', sortOrder: '0', dependsOn: '', links: '' })), children: 'Add item' }),
+    ] }) : null,
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
+    projectId ? jsx('button', { type: 'button', onClick: reload, children: 'Refresh' }) : null,
+  ] })
+}
+
 function HierarchyMapPane() {
   const [boardSlug] = React.useState(loadSelectedBoardSlug)
   const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
@@ -6138,6 +6354,74 @@ function HierarchyMapPane() {
       ...attachedDecisions.map((decision) => jsx(HierarchyAttachedDecision, { key: decision.id, decision, onChanged: refreshDecisions })),
       jsx(HierarchyDecisionComposer, { projectId, selectedNode, onPushed: refreshDecisions }),
     ] }) : null,
+  ] })
+}
+
+const SCRUM_PLANNING_STATUSES = ["backlog", "ready", "in_progress", "done", "cancelled"]
+const SCRUM_PLANNING_ESTIMATES = [1, 2, 3, 5, 8, 13]
+
+function ScrumPlanningPane() {
+  const { projectId, loading: scopeLoading, error: scopeError } = useProjectDashboardScope()
+  const [state, setState] = React.useState({ loading: true, items: [], error: null })
+  const [busy, setBusy] = React.useState(false)
+  const [revision, setRevision] = React.useState(0)
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, items: [], error: null })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    cliExec(['scrum', 'plan', 'list', '--project-id', projectId]).then((result) => {
+      if (active) setState({ loading: false, items: Array.isArray(result?.planning_items) ? result.planning_items : [], error: null })
+    }).catch((error) => {
+      if (active) setState({ loading: false, items: [], error: String(error.message || error) })
+    })
+    return () => { active = false }
+  }, [projectId, revision])
+
+  const mutate = async (argv) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cliExec(argv)
+      setRevision((value) => value + 1)
+    } catch (error) {
+      setState((current) => ({ ...current, error: String(error.message || error) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const add = async () => {
+    const specNodeId = window.prompt('Spec node ID')
+    const title = window.prompt('Planning item title')
+    const sprint = window.prompt('Sprint number', '1')
+    if (!projectId || !specNodeId?.trim() || !title?.trim() || !sprint?.trim()) return
+    await mutate(['scrum', 'plan', 'add', '--project-id', projectId, '--spec-node-id', specNodeId.trim(), '--title', title.trim(), '--status', 'backlog', '--estimate', '1', '--sprint', sprint.trim()])
+  }
+
+  const content = scopeLoading ? 'Loading Scrum Planning…'
+    : scopeError || state.error ? (scopeError || state.error)
+      : !projectId ? 'Select a board in Decision HUD.'
+        : state.loading ? 'Loading Scrum Planning…'
+          : state.items.length === 0 ? 'No planning items yet.'
+            : state.items.map((item) => jsxs('div', { className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-2', children: [
+              jsx('div', { className: 'font-medium', children: item.title }),
+              jsx('div', { className: 'text-(--ui-text-tertiary)', children: item.spec_node_id }),
+              jsxs('div', { className: 'flex gap-2', children: [
+                jsx('select', { value: item.status, disabled: busy, 'aria-label': `Status for ${item.id}`, onChange: (event) => mutate(['scrum', 'plan', 'update', '--project-id', projectId, '--item-id', item.id, '--status', event.target.value]) , children: SCRUM_PLANNING_STATUSES.map((status) => jsx('option', { value: status, children: status }, status)) }),
+                jsx('select', { value: String(item.estimate), disabled: busy, 'aria-label': `Estimate for ${item.id}`, onChange: (event) => mutate(['scrum', 'plan', 'update', '--project-id', projectId, '--item-id', item.id, '--estimate', event.target.value]), children: SCRUM_PLANNING_ESTIMATES.map((estimate) => jsx('option', { value: String(estimate), children: `${estimate} points` }, estimate)) }),
+                jsx('button', { type: 'button', disabled: busy, onClick: () => mutate(['scrum', 'plan', 'delete', '--project-id', projectId, '--item-id', item.id]), children: 'Delete' }),
+              ] }),
+            ] }, item.id))
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsxs('div', { className: 'flex items-center justify-between', children: [
+      jsx('div', { className: 'font-medium', children: 'Scrum Planning' }),
+      jsx('button', { type: 'button', disabled: busy || !projectId, onClick: add, children: 'Add planning item' }),
+    ] }),
+    jsx('div', { className: 'flex flex-col gap-2', children: content }),
   ] })
 }
 
@@ -6606,6 +6890,42 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 42,
         data: { codicon: 'type-hierarchy-sub', label: 'Map', path: '/decision-hud/map' },
+      },
+      {
+        id: 'decision-hud-flowcharts-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/flowcharts' },
+        render: () => jsx(FlowchartsPane, {}),
+      },
+      {
+        id: 'decision-hud-flowcharts-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 43,
+        data: { codicon: 'graph', label: 'Flowcharts', path: '/decision-hud/flowcharts' },
+      },
+      {
+        id: 'roadmap-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/roadmap' },
+        render: () => jsx(RoadmapPane, {}),
+      },
+      {
+        id: 'roadmap-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 44,
+        data: { codicon: 'milestone', label: 'Roadmap', path: '/decision-hud/roadmap' },
+      },
+      {
+        id: 'scrum-planning-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/planning' },
+        render: () => jsx(ScrumPlanningPane, {}),
+      },
+      {
+        id: 'scrum-planning-nav',
+        area: SIDEBAR_NAV_AREA,
+        order: 43,
+        data: { codicon: 'calendar', label: 'Scrum Planning', path: '/decision-hud/planning' }
       },
       {
         id: 'agent-dashboard-route',
