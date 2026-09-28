@@ -14,6 +14,6 @@ assert.doesNotMatch(pane, /metricsReady|availableMetrics|handleMetricsChange|saf
 for (const retired of ['AgentMetricsPage', 'AgentMetricsWidgetsPage', 'AgentDashboardCombinedPage', 'ComparisonPanel', 'MetricsSidebar', 'DeferredMetricsSidebar', 'agent-metrics-route', 'agent-metrics-widgets-route', 'agent-metrics-open', 'agent-matrix-open']) {
   assert.doesNotMatch(source, new RegExp(`\\b${retired}\\b`), `retired symbol remains: ${retired}`)
 }
-assert.match(source, /function stableSpecCriteriaKey\(item, index, items\) \{[\s\S]*?Map\(\)/)
+assert.match(source, /function stableSpecCriteriaKey\(item, index, items(?:, occurrences)?\) \{[\s\S]*?Map\(\)/)
 
 console.log('performance optimization contracts passed')

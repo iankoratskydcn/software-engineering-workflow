@@ -5065,10 +5065,14 @@ function startNewDecisionToastWatcher() {
 
 // Criteria persist as strings, so duplicate entries have no durable identity.
 // Occurrence suffix keeps keys unique; distinct entries keep identity across reorder/insert.
-function stableSpecCriteriaKey(item, index, items) {
-  const occurrences = new Map()
-  for (let i = 0; i < index; i += 1) occurrences.set(items[i], (occurrences.get(items[i]) || 0) + 1)
-  return `spec-criterion:${JSON.stringify(item)}:${occurrences.get(item) || 0}`
+function stableSpecCriteriaKey(item, index, items, occurrences) {
+  if (!occurrences) {
+    occurrences = new Map()
+    for (let i = 0; i < index; i += 1) occurrences.set(items[i], (occurrences.get(items[i]) || 0) + 1)
+  }
+  const occurrence = occurrences.get(item) || 0
+  occurrences.set(item, occurrence + 1)
+  return `spec-criterion:${JSON.stringify(item)}:${occurrence}`
 }
 
 function MindMapPane({ projectId }) {
@@ -5105,6 +5109,7 @@ function MindMapPane({ projectId }) {
     return state.nodes.filter((node) => `${node.kind} ${node.title} ${node.note || ''}`.toLowerCase().includes(query))
   }, [mindQuery, state.nodes])
   const criteria = parseSpecCriteria(selectedMindNode?.criteria_json)
+  const criteriaOccurrences = new Map()
 
   return jsxs('div', {
     className: 'grid min-h-0 flex-1 gap-5 overflow-auto p-4 text-sm',
@@ -5134,7 +5139,7 @@ function MindMapPane({ projectId }) {
             criteria.error
               ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: 'Malformed acceptance criteria' })
               : criteria.items.length > 0
-                ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items))) })] })
+                ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) })] })
                 : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No acceptance criteria recorded.' }),
           ] })
         : jsx('div', { className: 'flex h-full min-h-48 items-center justify-center text-(--ui-text-tertiary)', children: 'Select a story to inspect it.' }) }),
@@ -5168,6 +5173,7 @@ function SpecDigest({ projectId }) {
     return () => { active = false }
   }, [projectId])
   const criteria = parseSpecCriteria(selectedNode?.criteria_json)
+  const criteriaOccurrences = new Map()
   return jsxs('div', { className: 'flex flex-col gap-3 p-4', children: [
     jsx('h2', { children: 'Spec Digest' }, 'title'),
     state.loading ? jsx('p', { children: 'Loading Spec Digest…' }, 'loading') : null,
@@ -5181,7 +5187,7 @@ function SpecDigest({ projectId }) {
       jsx('h3', { children: selectedNode.title }, 'selected-title'),
       criteria.error
         ? jsx('p', { role: 'alert', children: 'malformed criteria' }, 'criteria-error')
-        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items))) }, 'criteria-items'),
+        : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) }, 'criteria-items'),
     ] }, 'selected-node'),
   ] })
 }
