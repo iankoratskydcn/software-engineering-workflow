@@ -5,12 +5,12 @@ session, a subagent, a cron job, a different project's tooling) that hits a
 genuine owner-decision blocker calls decision_push here instead of asking
 inline; the desktop pane (Decision HUD plugin) surfaces it as a card.
 
-Configure in ~/.hermes/config.yaml:
+Configure in `~/.hermes/config.yaml` (use your local checkout path; `${userHome}` is supported by Hermes):
 
     mcp_servers:
       software_engineering_workflow:
         command: python3
-        args: ["/home/ian-koratsky/.hermes/plugins/decision-hud/decision_hud_mcp.py"]
+        args: ["${userHome}/GitHub/software-engineering-workflow/backend-plugin/decision_hud_mcp.py"]
 
 Uses the stdlib `mcp` package already vendored into the Hermes venv
 (mcp.server.mcpserver.MCPServer) — no extra install required.
