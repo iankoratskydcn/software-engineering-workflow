@@ -9,8 +9,6 @@ const source = await readFile(resolve(here, '..', 'plugin.js'), 'utf8')
 // Page navigation is intentional: these surfaces now follow the Kanban
 // route pattern and are opened through the sidebar or command palette.
 assert.match(source, /host\.navigate\('\/decision-hud'\)/)
-assert.match(source, /host\.navigate\(AGENT_METRICS_ROUTE_PATH\)/)
-assert.match(source, /host\.navigate\(AGENT_DASHBOARD_ROUTE_PATH\)/)
 
 assert.doesNotMatch(
   source,
@@ -29,10 +27,6 @@ assert.doesNotMatch(source, /id:\s*'spec-digest-nav'/)
 assert.doesNotMatch(source, /id:\s*'decision-hud-flowcharts-nav'/)
 assert.doesNotMatch(source, /id:\s*'roadmap-nav'/)
 
-assert.match(
-  source,
-  /id:\s*'agent-metrics-route'[\s\S]{0,120}data:\s*\{\s*path:\s*AGENT_METRICS_ROUTE_PATH/,
-  'the Agent Dashboard full page must remain reachable via its ROUTES_AREA registration',
-)
+assert.doesNotMatch(source, /agent-metrics|agent-dashboard|agent-matrix/)
 
 console.log('palette-navigate-safety regression test passed')

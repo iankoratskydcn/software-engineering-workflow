@@ -44,63 +44,8 @@ function parseSpecCriteria(criteria_json) {
 
 const PLUGIN_ID = 'decision-hud'
 const POLL_MS = 4000
-
-// --- Agent Metrics (read-only interface) ----------------------------------
-// Inlined directly in this file — NOT split into dashboard/AgentDashboard.js —
-// because the desktop app's runtime plugin loader evaluates plugin.js as a
-// single blob URL (apps/desktop/src/contrib/runtime-loader.ts). Blob URLs
-// have no hierarchical base, so a relative import like
-// `./dashboard/AgentDashboard.js` can never resolve there even though it
-// resolves fine under Node's real filesystem ESM (which is why the test
-// suite passed while the live desktop app failed with "Failed to resolve
-// module specifier"). The loader only rewrites the bare specifiers
-// @hermes/plugin-sdk, react, react/jsx-runtime, react/jsx-dev-runtime to blob
-// shims (apps/desktop/src/sdk/runtime.ts's sdkImportMap) — notably NOT
-// react-dom, so flushSync is unavailable here too (a second, same-class bug
-// caught before shipping: the loader's unsupportedImports() check rejects
-// any other bare specifier up front with a clear error, rather than the
-// cryptic "Failed to resolve module specifier" a raw failed blob import
-// would throw). Plain setState replaces the flushSync calls below; this
-// pane's own tests only assert on committed render output, not on
-// microtask/macrotask update timing, so the loss of forced synchronous
-// flushing has no observable effect here.
-
-const DASHBOARD_MAX_ROWS = 1000
-// Reserved resolved_choice value for the Dismiss action: reuses resolve_decision()
-// (actor-token gated, same as a real answer) instead of a new delete endpoint —
-// the row and its history stay in decisions.db, just permanently off list_pending().
+const MAX_DECISION_ROWS = 1000
 const DISMISS_SENTINEL_CHOICE = '__dismissed__'
-// `ctx.rest(path)` is already scoped under `/api/plugins/<plugin-id>/...` by
-// the desktop host (plugin-id == 'decision-hud'), so a path that repeats the
-// plugin id here doubles the segment: `/decision-hud/agent-dashboard` became
-// `/api/plugins/decision-hud/decision-hud/agent-dashboard` -> 404 "No such
-// API endpoint". The backend HTTP service's own route
-// (backend/agent_telemetry/service/http_app.py, _ROUTE_PATH) is a separate,
-// unscoped loopback path and is unaffected by this — only the gateway-facing
-// path passed to `rest()` needs the plugin-id segment dropped.
-const DASHBOARD_READ_MODEL_PATH = '/agent-dashboard'
-
-// Real wiring (owner decision, 2026-09-14, supersedes the placeholder this
-// comment used to describe): project scope for the dashboard IS the
-// currently-selected Kanban board. DecisionHudPane's own board selector
-// (BoardSelector / selectedBoard) and this pane are SEPARATE registered
-// panes/routes with no shared React tree, so the selection is persisted to
-// `SELECTED_BOARD_STORAGE_KEY` in localStorage by DecisionHudPane and read
-// here — same cross-pane-persistence shape as SIDEBAR_SETTINGS_STORAGE_KEY
-// below, just keyed differently. `useKanbanBoards()` + `board.project_id`
-// resolve the slug to a project id exactly like DecisionHudPane's own
-// selectedBoardProjectId cross-link (search that name for the fuller
-// history of the board<->project_id link). The actor token is minted per
-// project via `hermes decision issue-token --actor desktop-pane
-// --project-id <id>` (decision-hud plugin cli.py, `_cmd_issue_token` +
-// `_agent_dashboard_auth_module()`), which calls the agent-dashboard
-// backend's `issue_project_actor_token()` — same token format/verification
-// as the unscoped token used elsewhere in this file (getActorToken), just
-// with an added project claim, minted fresh per project (not reused across
-// projects, since a token proves exactly one project claim; see
-// useProjectActorToken below). No board selected -> no project_id -> the
-// pane shows an explicit "select a board in Decision HUD" state rather than
-// issuing an unscoped/failing request.
 const SELECTED_BOARD_STORAGE_KEY = 'decision-hud:selected-board'
 
 function loadSelectedBoardSlug() {
@@ -124,13 +69,11 @@ function saveSelectedBoardSlug(slug) {
   }
 }
 
-// Shared by DecisionHudPane's own auto-select effect AND
-// useProjectDashboardScope below: when nothing is persisted yet, prefer
+// Shared by DecisionHudPane's own auto-select effect: when nothing is persisted yet, prefer
 // the board literally named/slugged "default" (matches the common
 // single-board setup, e.g. the "Default" option seen in the board
 // dropdown) over just grabbing boards[0] — a board list is not guaranteed
 // to return "default" first, and picking an arbitrary board would scope
-// the Agent Metrics to the wrong project on a multi-board setup. Falls
 // back to the first board when there is no "default"-slugged one.
 function pickDefaultBoardSlug(boards) {
   if (!Array.isArray(boards) || boards.length === 0) return null
@@ -138,572 +81,6 @@ function pickDefaultBoardSlug(boards) {
   return (named || boards[0]).slug || null
 }
 
-// Shared by AgentDashboard and AgentMetricsPage: resolve the persisted
-// selected-board slug to { projectId, boardsLoading, boardsError } via the
-// same useKanbanBoards() used by DecisionHudPane, then mint (and cache, per
-// projectId) a project-scoped actor token. Re-resolves on every mount since
-// these are routed/docked panes that can be reopened long after the token's
-// TTL — unlike getActorToken()'s single long-lived module-level promise,
-// this is deliberately NOT cached across projectId changes (see comment
-// block above this constant).
-function useProjectDashboardScope() {
-  const [boardSlug, setBoardSlug] = React.useState(loadSelectedBoardSlug)
-  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
-  const [tokenState, setTokenState] = React.useState({ token: null, loading: false, error: null })
-
-  // Pick up a board selection made in the DecisionHudPane tab after this
-  // pane already mounted (e.g. user switches board, then opens Agent
-  // Metrics) — storage events fire in OTHER same-origin tabs/frames, which
-  // is exactly the desktop app's docked-pane-vs-routed-page relationship.
-  React.useEffect(() => {
-    function onStorage(e) {
-      if (e.key === SELECTED_BOARD_STORAGE_KEY) setBoardSlug(e.newValue || null)
-    }
-    if (typeof window !== 'undefined' && window.addEventListener) {
-      window.addEventListener('storage', onStorage)
-      return () => window.removeEventListener('storage', onStorage)
-    }
-    return undefined
-  }, [])
-
-  // Owner request: Agent Metrics must work without ever visiting
-  // Decision HUD first — before this fix, no persisted selection meant an
-  // indefinite "Select a board in Decision HUD to scope the Agent
-  // Metrics" dead end even when boards existed and one of them is
-  // "default". Auto-resolve and PERSIST the default board slug the same
-  // way DecisionHudPane's own auto-select effect does, so both panes
-  // converge on the same board and the choice is not silently re-guessed
-  // on every mount (a subsequent Decision HUD board switch still wins via
-  // the storage listener above).
-  React.useEffect(() => {
-    if (boardSlug || boardsLoading || boards.length === 0) return
-    const fallback = pickDefaultBoardSlug(boards)
-    if (fallback) {
-      setBoardSlug(fallback)
-      saveSelectedBoardSlug(fallback)
-    }
-  }, [boardSlug, boardsLoading, boards])
-
-  const projectId = React.useMemo(() => {
-    if (!boardSlug) return null
-    const board = boards.find((b) => b && b.slug === boardSlug)
-    return board ? board.project_id || null : null
-  }, [boards, boardSlug])
-
-  React.useEffect(() => {
-    let active = true
-    if (!projectId) {
-      setTokenState({ token: null, loading: false, error: null })
-      return () => { active = false }
-    }
-    setTokenState({ token: null, loading: true, error: null })
-    cliExec(['decision', 'issue-token', '--actor', 'desktop-pane', '--project-id', projectId])
-      .then((res) => {
-        if (!active) return
-        if (!res || !res.ok || !res.actor_token) {
-          setTokenState({ token: null, loading: false, error: (res && res.error) || 'failed to obtain project actor token' })
-          return
-        }
-        setTokenState({ token: res.actor_token, loading: false, error: null })
-      })
-      .catch((e) => {
-        if (active) setTokenState({ token: null, loading: false, error: String(e.message || e) })
-      })
-    return () => { active = false }
-  }, [projectId])
-
-  return {
-    boardSlug,
-    projectId,
-    token: tokenState.token,
-    loading: boardsLoading || tokenState.loading,
-    error: boardsError || tokenState.error,
-  }
-}
-
-function isDashboardRecord(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function dashboardFiniteNumber(value) {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
-function validateDashboardSnapshot(value) {
-  if (!isDashboardRecord(value) || value.schema_version !== 'dashboard-read-model.v1') {
-    throw new Error('read model is unavailable')
-  }
-  if (!isDashboardRecord(value.scope) || !value.scope.project_id || !value.scope.project_label) {
-    throw new Error('selected project scope is unavailable')
-  }
-  if (!isDashboardRecord(value.freshness) || !['fresh', 'stale', 'missing'].includes(value.freshness.state)) {
-    throw new Error('freshness state is unavailable')
-  }
-  if (!Array.isArray(value.agents) || !Array.isArray(value.metrics)) {
-    throw new Error('dashboard rows are unavailable')
-  }
-  return value
-}
-
-function boundedDashboardRows(rows) {
-  return { rows: rows.slice(0, DASHBOARD_MAX_ROWS), omitted: Math.max(0, rows.length - DASHBOARD_MAX_ROWS) }
-}
-
-function displayDashboardMetric(metric) {
-  if (!isDashboardRecord(metric)) return { label: 'Metric', value: 'Unavailable' }
-  if (metric.state === 'unavailable' || !dashboardFiniteNumber(metric.value) && typeof metric.value !== 'string') {
-    return { label: metric.label || metric.key || 'Metric', value: metric.reason || 'Unavailable' }
-  }
-  return {
-    label: metric.label || metric.key || 'Metric',
-    value: `${String(metric.value)}${metric.unit ? ` ${String(metric.unit)}` : ''}`,
-    window: metric.source_window,
-  }
-}
-
-function dashboardStatusText(snapshot) {
-  if (snapshot.freshness.state === 'missing') return 'No data'
-  return snapshot.freshness.state === 'stale' ? 'Stale' : 'Live'
-}
-
-function DashboardLoadingState() {
-  return jsx('div', { role: 'status', children: 'Loading Agent Metrics…' })
-}
-
-function DashboardMessageState({ children }) {
-  return jsx('div', { role: 'status', children })
-}
-
-// SectionErrorBoundary: same isolation pattern as CardErrorBoundary (see
-// that component's comment for the full rationale), applied to the two
-// top-level Agent Metrics sections instead of one decision card. Wave 2a
-// stacks the Postgres-backed dashboard section above the SQLite-backed
-// Agent Matrix section on one page; fetch failures are already isolated
-// per-section via each section's own useState/effect (see AgentMetricsPage
-// and AgentMetricsWidgetsPage), but an uncaught RENDER exception (e.g. a
-// snapshot that passes validation yet still breaks a body component) has
-// no boundary today and would unmount the whole page, including whatever
-// section is working fine. Wrapping each section's body in its own
-// boundary guarantees one backend's downtime — or a bug in reading its
-// data — can never blank the sibling section. No fabricated data: the
-// fallback states the failure plainly and renders nothing else.
-class SectionErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props)
-    this.state = { hasError: false }
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true }
-  }
-
-  componentDidCatch(error, info) {
-    // eslint-disable-next-line no-console
-    console.error('[decision-hud] section render error', this.props.sectionLabel, error, info)
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return jsx(DashboardMessageState, { children: `${this.props.sectionLabel} unavailable: section failed to render` })
-    }
-    return this.props.children
-  }
-}
-
-// --- Agent Metrics (full-page route) ------------------------------------
-// Ported from the standalone agent-metrics scaffold plugin
-// (~/.hermes/desktop-plugins/agent-metrics/plugin.js) into this plugin per
-// owner decision: it renders the SAME read-only dashboard read model
-// (DASHBOARD_READ_MODEL_PATH) as the docked AgentDashboard pane above, at
-// full page size, grouped by category — not a second data source, and not
-// backed by mock data. `metrics.category` is optional on the wire (older/
-// synthetic telemetry may omit it); those metrics land in an explicit
-// 'uncategorized' bucket rather than being dropped or guessed into one.
-const AGENT_METRICS_ROUTE_PATH = '/decision-hud/agent-metrics'
-// Retirement (Wave 2b): the canonical replacement page. Kept as a plain
-// string, not imported from Wave 2a's page module — that page lives on a
-// separate isolated-worktree branch and is not merged into this one yet;
-// Wave 3's merge ritual reconciles both. This route stays registered as a
-// redirect/alias for one release cycle per the consolidation plan, not a
-// second page.
-const AGENT_DASHBOARD_CANONICAL_ROUTE_PATH = '/decision-hud/agent-dashboard'
-const UNCATEGORIZED_KEY = 'uncategorized'
-
-// Category -> display-label lookup for the full-page Agent Metrics view.
-// This is a forward-looking, non-exhaustive lookup table — it is NOT a
-// mirror of any backend schema or Python type. As of this writing, the
-// only category value this repo's backend/agent_dashboard code and tests
-// actually emit is the literal string 'resource' (see
-// backend/tests/test_agent_dashboard_repair.py and
-// backend/tests/test_read_only_vertical_slice.py). The remaining entries
-// below are placeholders for categories that may be introduced once the
-// backend emits richer telemetry; they carry no verified contract today.
-// Any category key NOT present here (including future/unknown ones)
-// safely falls back to its raw key text via agentMetricsCategoryLabel
-// below — the fallback, not this map, is what must stay correct.
-const AGENT_METRICS_CATEGORY_LABELS = {
-  resource_cost: 'Resource / Cost',
-  quality_correctness: 'Quality / Correctness',
-  task_outcome_quality: 'Task-Outcome Quality',
-  throughput_progress: 'Throughput / Progress',
-  coordination_workflow: 'Coordination / Workflow',
-  human_trust: 'Human Trust (Decision HUD)',
-  latency_responsiveness: 'Latency / Responsiveness',
-  tool_reliability: 'Tool-Use Reliability',
-  security_permissions: 'Security / Permissions',
-  knowledge_freshness: 'Knowledge / Context Freshness',
-  resource: 'Resource',
-  [UNCATEGORIZED_KEY]: 'Uncategorized',
-}
-
-function agentMetricsCategoryLabel(key) {
-  return AGENT_METRICS_CATEGORY_LABELS[key] || key
-}
-
-// Category cards must render in a stable, deterministic order regardless of
-// backend metric-arrival order (Map insertion order is not a contract):
-// known categories follow their fixed position in
-// AGENT_METRICS_CATEGORY_LABELS; unknown categories sort alphabetically
-// after all known ones; UNCATEGORIZED_KEY (the catch-all/degenerate bucket)
-// always renders last, even though it appears earlier in the labels map.
-const AGENT_METRICS_CATEGORY_ORDER_INDEX = new Map(
-  Object.keys(AGENT_METRICS_CATEGORY_LABELS)
-    .filter((key) => key !== UNCATEGORIZED_KEY)
-    .map((key, index) => [key, index])
-)
-
-function sortAgentMetricsCategoryKeys(keys) {
-  return [...keys].sort((a, b) => {
-    if (a === UNCATEGORIZED_KEY) return b === UNCATEGORIZED_KEY ? 0 : 1
-    if (b === UNCATEGORIZED_KEY) return -1
-    const indexA = AGENT_METRICS_CATEGORY_ORDER_INDEX.has(a) ? AGENT_METRICS_CATEGORY_ORDER_INDEX.get(a) : Infinity
-    const indexB = AGENT_METRICS_CATEGORY_ORDER_INDEX.has(b) ? AGENT_METRICS_CATEGORY_ORDER_INDEX.get(b) : Infinity
-    if (indexA !== indexB) return indexA - indexB
-    return a < b ? -1 : a > b ? 1 : 0
-  })
-}
-
-function groupMetricsByCategory(metrics) {
-  const bounded = boundedDashboardRows(metrics)
-  const byCategory = new Map()
-  for (const metric of bounded.rows) {
-    const key = isDashboardRecord(metric) && typeof metric.category === 'string' && metric.category
-      ? metric.category
-      : UNCATEGORIZED_KEY
-    if (!byCategory.has(key)) byCategory.set(key, [])
-    byCategory.get(key).push(metric)
-  }
-  return { byCategory, omitted: bounded.omitted }
-}
-
-function AgentMetricsCategoryCard({ categoryKey, metrics }) {
-  return jsxs('div', {
-    'data-metrics-category': categoryKey,
-    style: {
-      border: '1px solid var(--ui-stroke-secondary)',
-      borderRadius: '8px',
-      padding: '12px 14px',
-      minWidth: '260px',
-      flex: '1 1 260px',
-    },
-    children: [
-      jsx('div', {
-        style: { fontWeight: 600, marginBottom: '8px', color: 'var(--ui-text-secondary)' },
-        children: agentMetricsCategoryLabel(categoryKey),
-      }),
-      jsx('div', {
-        role: 'list',
-        children: metrics.map((metric, index) => {
-          const item = displayDashboardMetric(metric)
-          return jsxs('div', {
-            'data-metric-row': 'true',
-            role: 'listitem',
-            style: { display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '12px' },
-            children: [
-              jsx('span', { children: item.label }),
-              jsx('span', { className: 'ml-2', children: item.value }),
-            ],
-          }, isDashboardRecord(metric) ? (metric.key || index) : index)
-        }),
-      }),
-    ],
-  })
-}
-
-function AgentMetricsPageBody({ snapshot }) {
-  const { byCategory, omitted } = groupMetricsByCategory(snapshot.metrics)
-  const categoryKeys = sortAgentMetricsCategoryKeys(byCategory.keys())
-  if (categoryKeys.length === 0) {
-    return jsx(DashboardMessageState, { children: 'No metrics available' })
-  }
-  return jsxs('div', {
-    children: [
-      jsxs('div', { children: [jsx('span', { className: 'font-medium', children: 'Scope: ' }), jsx('span', { children: snapshot.scope.project_label })] }),
-      jsx('div', { className: 'text-(--ui-text-tertiary)', children: dashboardStatusText(snapshot) }),
-      omitted > 0 ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: `${omitted} metrics omitted (showing ${DASHBOARD_MAX_ROWS})` }) : null,
-      jsx('div', {
-        style: { display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '12px' },
-        children: categoryKeys.map((key) => jsx(AgentMetricsCategoryCard, { categoryKey: key, metrics: byCategory.get(key) }, key)),
-      }),
-    ],
-  })
-}
-
-// Retired nav entry (Wave 2b): the route stays registered as a redirect so
-// old links/bookmarks/palette entries keep working for one release cycle,
-// per the consolidation plan — it is an alias, not a second page.
-function AgentMetricsRedirect() {
-  React.useEffect(() => {
-    host.navigate(AGENT_DASHBOARD_CANONICAL_ROUTE_PATH)
-  }, [])
-  return jsx(DashboardMessageState, { children: 'Agent Metrics has moved to Agent Dashboard. Redirecting…' })
-}
-
-function AgentMetricsPage({ rest }) {
-  const [state, setState] = React.useState({ loading: true, snapshot: null, error: null })
-  const scope = useProjectDashboardScope()
-  React.useLayoutEffect(() => {
-    let active = true
-    if (scope.loading) {
-      setState({ loading: true, snapshot: null, error: null })
-      return () => { active = false }
-    }
-    if (!scope.projectId) {
-      setState({ loading: false, snapshot: null, error: scope.error || 'Select a board in Decision HUD to scope Agent Metrics' })
-      return () => { active = false }
-    }
-    if (!scope.token) {
-      setState({ loading: false, snapshot: null, error: scope.error || 'Unable to obtain a project-scoped actor token' })
-      return () => { active = false }
-    }
-    const query = { limit: DASHBOARD_MAX_ROWS, project_id: scope.projectId }
-    const headers = { Authorization: `Bearer ${scope.token}` }
-    rest(DASHBOARD_READ_MODEL_PATH, { method: 'GET', query, headers }).then((response) => {
-      const snapshot = validateDashboardSnapshot(response)
-      if (active) setState({ loading: false, snapshot, error: null })
-    }).catch((error) => {
-      if (active) setState({ loading: false, snapshot: null, error: String(error?.message || error) })
-    })
-    return () => { active = false }
-  }, [rest, scope.loading, scope.projectId, scope.token, scope.error])
-
-  return jsxs('section', {
-    'aria-label': 'Agent Metrics',
-    className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',
-    children: [
-      jsx('div', { className: 'font-medium', children: 'Agent Metrics' }),
-      state.loading ? jsx(DashboardLoadingState, {}) : state.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${state.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics', children: jsx(AgentMetricsPageBody, { snapshot: state.snapshot }) }),
-    ],
-  })
-}
-// --- End Agent Metrics ---------------------------------------------------
-
-// --- Cost/Quality/Speed Comparison Panel (Wave 2d) ------------------------
-// Fed by Wave 1d's CrossSourceComparison read model (backend route sibling
-// to DASHBOARD_READ_MODEL_PATH — see http_app.py's _COMPARISON_ROUTE_PATH).
-// Reuses useProjectDashboardScope for the same board-scoped actor token as
-// AgentMetricsPage (this route still requires *a* valid token, even though
-// the comparison rows themselves are producer-tagged, not project-scoped —
-// see the backend route's own comment for why).
-const COMPARISON_ROUTE_PATH = '/decision-hud/agent-dashboard/comparison'
-const COMPARISON_REST_PATH = '/agent-dashboard/comparison'
-const COMPARISON_ALL_PATHS = '__all__'
-
-function validateComparisonSnapshot(value) {
-  if (!isDashboardRecord(value) || value.schema_version !== 'agent-dashboard-comparison.v1') {
-    throw new Error('comparison panel is unavailable')
-  }
-  if (!Array.isArray(value.rows) || !isDashboardRecord(value.comparisons)) {
-    throw new Error('comparison rows are unavailable')
-  }
-  return value
-}
-
-function formatComparisonNumber(value, unit) {
-  if (value === null || value === undefined) return 'n/a'
-  const rounded = Math.round(value * 100) / 100
-  return unit ? `${rounded} ${unit}` : String(rounded)
-}
-
-// Sidecar `quality_score` (and any path's, per the comparison contract) is
-// `null` for "not yet judged" — never a fabricated 0. Render that
-// distinctly rather than silently coercing to a bar at zero height.
-function ComparisonQualityBar({ score }) {
-  if (score === null || score === undefined) {
-    return jsx('span', { className: 'text-(--ui-text-tertiary)', children: 'not yet judged' })
-  }
-  const pct = Math.max(0, Math.min(100, score * 100))
-  return jsxs('div', {
-    style: { display: 'flex', alignItems: 'center', gap: '6px' },
-    children: [
-      jsx('div', {
-        style: { width: '80px', height: '6px', background: 'var(--ui-stroke-secondary)', borderRadius: '3px', overflow: 'hidden' },
-        children: jsx('div', { style: { width: `${pct}%`, height: '100%', background: 'var(--ui-accent, #4a9)' } }),
-      }),
-      jsx('span', { children: score.toFixed(2) }),
-    ],
-  })
-}
-
-function ComparisonRowItem({ row }) {
-  return jsxs('div', {
-    'data-comparison-row': 'true',
-    style: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr 1fr', gap: '8px', padding: '4px 0', fontSize: '12px', alignItems: 'center' },
-    children: [
-      jsx('span', { children: row.producer }),
-      jsx('span', { children: row.path }),
-      jsx('span', { children: row.agent_id }),
-      jsx('span', { children: `${row.input_tokens ?? 'n/a'} in / ${row.output_tokens ?? 'n/a'} out` }),
-      jsx('span', { children: formatComparisonNumber(row.latency_ms, 'ms') }),
-      jsx(ComparisonQualityBar, { score: row.quality_score }),
-    ],
-  })
-}
-
-function ComparisonDerivedMetrics({ path, metrics }) {
-  return jsxs('div', {
-    'data-comparison-derived': path,
-    style: { border: '1px solid var(--ui-stroke-secondary)', borderRadius: '8px', padding: '10px 12px', minWidth: '220px' },
-    children: [
-      jsx('div', { style: { fontWeight: 600, marginBottom: '6px' }, children: path }),
-      jsx('div', { style: { fontSize: '12px' }, children: `Net token savings: ${metrics.net_token_savings.input} in / ${metrics.net_token_savings.output} out` }),
-      jsx('div', { style: { fontSize: '12px' }, children: `Avoidance rate: ${formatComparisonNumber(metrics.avoidance_rate)}` }),
-      jsx('div', { style: { fontSize: '12px' }, children: `Latency delta: ${formatComparisonNumber(metrics.latency_delta_ms, 'ms')}` }),
-      jsx('div', { style: { fontSize: '12px' }, children: `Quality retention: ${formatComparisonNumber(metrics.quality_retention)}` }),
-    ],
-  })
-}
-
-function ComparisonPanelBody({ snapshot, pathFilter, onPathFilterChange }) {
-  const allPaths = React.useMemo(() => [...new Set(snapshot.rows.map((r) => r.path))].sort(), [snapshot.rows])
-  const filteredRows = pathFilter === COMPARISON_ALL_PATHS ? snapshot.rows : snapshot.rows.filter((r) => r.path === pathFilter)
-  const comparisonEntries = Object.entries(snapshot.comparisons)
-  return jsxs('div', {
-    children: [
-      jsxs('div', {
-        style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' },
-        children: [
-          jsx('span', { className: 'font-medium', children: 'Filter path:' }),
-          jsx(Select, {
-            value: pathFilter,
-            onValueChange: onPathFilterChange,
-            children: [
-              jsx(SelectTrigger, { children: jsx(SelectValue, {}) }),
-              jsxs(SelectContent, {
-                children: [
-                  jsx(SelectItem, { value: COMPARISON_ALL_PATHS, children: 'All paths' }, COMPARISON_ALL_PATHS),
-                  ...allPaths.map((path) => jsx(SelectItem, { value: path, children: path }, path)),
-                ],
-              }),
-            ],
-          }),
-        ],
-      }),
-      comparisonEntries.length === 0
-        ? jsx(DashboardMessageState, { children: 'No non-baseline paths to compare yet' })
-        : jsx('div', {
-            style: { display: 'flex', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' },
-            children: comparisonEntries.map(([path, metrics]) => jsx(ComparisonDerivedMetrics, { path, metrics }, path)),
-          }),
-      jsx('div', { className: 'font-medium', children: 'Rows' }),
-      filteredRows.length === 0
-        ? jsx(DashboardMessageState, { children: 'No rows for this filter' })
-        : jsx('div', { role: 'list', children: filteredRows.map((row, i) => jsx(ComparisonRowItem, { row }, `${row.producer}-${row.path}-${row.agent_id}-${i}`)) }),
-    ],
-  })
-}
-
-function ComparisonPanel({ rest }) {
-  const [state, setState] = React.useState({ loading: true, snapshot: null, error: null })
-  const [pathFilter, setPathFilter] = React.useState(COMPARISON_ALL_PATHS)
-  const scope = useProjectDashboardScope()
-  React.useLayoutEffect(() => {
-    let active = true
-    if (scope.loading) {
-      setState({ loading: true, snapshot: null, error: null })
-      return () => { active = false }
-    }
-    if (!scope.projectId) {
-      setState({ loading: false, snapshot: null, error: scope.error || 'Select a board in Decision HUD to scope the comparison panel' })
-      return () => { active = false }
-    }
-    if (!scope.token) {
-      setState({ loading: false, snapshot: null, error: scope.error || 'Unable to obtain a project-scoped actor token' })
-      return () => { active = false }
-    }
-    const query = { limit: DASHBOARD_MAX_ROWS, project_id: scope.projectId }
-    const headers = { Authorization: `Bearer ${scope.token}` }
-    rest(COMPARISON_REST_PATH, { method: 'GET', query, headers }).then((response) => {
-      const snapshot = validateComparisonSnapshot(response)
-      if (active) setState({ loading: false, snapshot, error: null })
-    }).catch((error) => {
-      if (active) setState({ loading: false, snapshot: null, error: String(error?.message || error) })
-    })
-    return () => { active = false }
-  }, [rest, scope.loading, scope.projectId, scope.token, scope.error])
-
-  return jsxs('section', {
-    'aria-label': 'Cost/Quality/Speed Comparison',
-    className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',
-    children: [
-      jsx('div', { className: 'font-medium', children: 'Cost/Quality/Speed Comparison' }),
-      state.loading
-        ? jsx(DashboardLoadingState, {})
-        : state.error
-          ? jsx(DashboardMessageState, { children: `Comparison unavailable: ${state.error}` })
-          : jsx(ComparisonPanelBody, { snapshot: state.snapshot, pathFilter, onPathFilterChange: setPathFilter }),
-    ],
-  })
-}
-// --- End Cost/Quality/Speed Comparison Panel ------------------------------
-
-// F2 authorization: the desktop pane is the interactive-only resolution
-// surface, so it mints ONE actor token per pane session (lazily, on first
-// resolve) via `hermes decision issue-token` and holds the raw value only
-// in this module's memory for the life of the pane — never written to
-// disk by the pane itself (db.py's issue_actor_token() persists only the
-// token's SHA-256 hash, in a 0600 file only the same OS user can read).
-// Every `decision resolve` cliExec call must carry --actor-token; there is
-// no fallback path that resolves without one.
-let _actorTokenPromise = null
-
-async function getActorToken() {
-  if (!_actorTokenPromise) {
-    _actorTokenPromise = cliExec(['decision', 'issue-token', '--actor', 'desktop-pane']).then((res) => {
-      if (!res || !res.ok || !res.actor_token) {
-        _actorTokenPromise = null // allow retry on next resolve attempt
-        throw new Error((res && res.error) || 'failed to obtain actor token')
-      }
-      return res.actor_token
-    }).catch((e) => {
-      _actorTokenPromise = null
-      throw e
-    })
-  }
-  return _actorTokenPromise
-}
-
-async function cliExec(argv) {
-  const res = await host.request('cli.exec', { argv, timeout: 30 })
-  if (!res || res.blocked) {
-    throw new Error((res && res.hint) || 'cli.exec blocked')
-  }
-  if (res.code !== 0) {
-    throw new Error(`decision CLI exited ${res.code}: ${res.output || ''}`)
-  }
-  return parseTrailingJson(res.output || '')
-}
-
-// stdout can carry noise ahead of the JSON (e.g. a Python
-// RequestsDependencyWarning from an unrelated import printed to stdout), and
-// separately the gateway's cli.exec joins the child's stdout AND stderr as
-// `stdout + "\n" + stderr` (tui_gateway/methods_tools.py:_joined_output) —
-// Python's warnings.warn() writes to STDERR, so that same warning can land
-// AFTER the JSON instead of before it. A "scan backward from the last line"
-// approach can never recover from trailing noise (every suffix slice still
-// ends in garbage), so instead find the first complete top-level JSON value
-// by bracket-matching from the start and ignore anything that follows it —
-// robust to noise on either side.
 function parseTrailingJson(output) {
   const trimmed = output.trim()
   if (trimmed) {
@@ -752,499 +129,55 @@ function parseTrailingJson(output) {
   throw new Error(`decision CLI returned no JSON value: ${output}`)
 }
 
-// --- Agent Metrics Widgets (heatmap/scatter/parallel-coords/treemap/radar/
-// sankey), backed by backend/scripts/agent_metrics_snapshot.py -----------
-// A genuinely separate surface from AgentMetricsPage above: different data
-// source (Kanban SQLite via a CLI subprocess, not the Postgres-backed
-// DASHBOARD_READ_MODEL_PATH read model), different route. Never touches
-// AgentMetricsPage/DASHBOARD_READ_MODEL_PATH. Hand-rolled inline SVG only —
-// this repo has zero runtime deps and the widgets are simple enough that a
-// charting library would be pure overhead (ponytail rung 4: stdlib/native
-// covers it — plain SVG is a native platform feature).
-const AGENT_METRICS_WIDGETS_ROUTE_PATH = '/decision-hud/agent-metrics/snapshot'
 
-function AgentMetricsWidgetsSection({ title, dataKey, children }) {
-  return jsxs('div', {
-    'data-widget': dataKey,
-    style: { border: '1px solid var(--ui-stroke-secondary)', borderRadius: '8px', padding: '12px 14px', marginBottom: '12px' },
-    children: [
-      jsx('div', { style: { fontWeight: 600, marginBottom: '8px', color: 'var(--ui-text-secondary)' }, children: title }),
-      children,
-    ],
-  })
-}
-
-function agentMetricsOutcomes(records) {
-  return [...new Set(records.map((r) => r.outcome))].sort()
-}
-
-function agentMetricsAssignees(records) {
-  return [...new Set(records.map((r) => r.assignee))].sort()
-}
-
-// Cross-filter selection shape shared by every widget below:
-// { assignee: string|null, outcome: string|null } — either field alone is a
-// valid partial filter (e.g. clicking a treemap/radar assignee segment sets
-// only `assignee`), both set together is the precise heatmap-cell case.
-// null/null means "no selection, show everything at full opacity."
-const EMPTY_METRICS_SELECTION = { assignee: null, outcome: null }
-
-function metricsSelectionIsEmpty(sel) {
-  return !sel || (!sel.assignee && !sel.outcome)
-}
-
-// Whether a given (assignee, outcome) pair matches the current selection —
-// a partial selection (only assignee OR only outcome set) matches on
-// whichever field(s) are set, so clicking a treemap assignee segment dims
-// every OTHER assignee's data across every chart without requiring an
-// outcome to also match.
-function metricsRecordMatchesSelection(sel, assignee, outcome) {
-  if (metricsSelectionIsEmpty(sel)) return true
-  if (sel.assignee && sel.assignee !== assignee) return false
-  if (sel.outcome && sel.outcome !== outcome) return false
-  return true
-}
-
-// Shared visual weight for matched vs dimmed marks — every widget uses the
-// same two opacity levels so the "isolate one variable" effect reads
-// consistently across chart types (a dimmed heatmap cell should look as
-// muted as a dimmed sankey band).
-const METRICS_MATCH_OPACITY = 1
-const METRICS_DIM_OPACITY = 0.12
-
-// Heatmap: assignee x outcome grid, cell intensity = volume. Plain DOM grid
-// (no SVG needed for a grid of colored cells). Clicking a cell toggles it as
-// the cross-filter selection (click again to clear) — this is the primary
-// entry point for "isolate one variable" triage; other widgets read the same
-// `selected`/`onSelect` pair so a heatmap click drives every chart below it.
-function AgentMetricsHeatmap({ records, selected, onSelect }) {
-  if (records.length === 0) return jsx(DashboardMessageState, { children: 'No agent metrics available' })
-  const assignees = agentMetricsAssignees(records)
-  const outcomes = agentMetricsOutcomes(records)
-  const maxVolume = Math.max(...records.map((r) => r.volume))
-  const byKey = new Map(records.map((r) => [`${r.assignee}\u0000${r.outcome}`, r]))
-  return jsx('div', {
-    style: { display: 'grid', gridTemplateColumns: `120px repeat(${outcomes.length}, 1fr)`, gap: '2px', fontSize: '11px' },
-    children: [
-      jsx('div', {}, 'corner'),
-      ...outcomes.map((o) => jsx('div', { style: { fontWeight: 600, textAlign: 'center' }, children: o }, `h-${o}`)),
-      ...assignees.flatMap((a) => [
-        jsx('div', { style: { fontWeight: 600 }, children: a }, `row-${a}`),
-        ...outcomes.map((o) => {
-          const rec = byKey.get(`${a}\u0000${o}`)
-          const intensity = rec ? rec.volume / maxVolume : 0
-          const isMatch = metricsRecordMatchesSelection(selected, a, o)
-          const isExactCell = selected && selected.assignee === a && selected.outcome === o
-          return jsx('div', {
-            'data-heatmap-cell': 'true',
-            role: rec ? 'button' : undefined,
-            tabIndex: rec ? 0 : undefined,
-            title: rec ? `${a} / ${o}: volume ${rec.volume} (click to isolate)` : `${a} / ${o}: no data`,
-            onClick: rec ? () => onSelect(isExactCell ? EMPTY_METRICS_SELECTION : { assignee: a, outcome: o }) : undefined,
-            style: {
-              minHeight: '24px',
-              background: rec ? `rgba(80,140,255,${0.15 + intensity * 0.75})` : 'transparent',
-              border: isExactCell ? '2px solid #fff' : '1px solid var(--ui-stroke-secondary)',
-              opacity: isMatch ? METRICS_MATCH_OPACITY : METRICS_DIM_OPACITY,
-              cursor: rec ? 'pointer' : 'default',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            },
-            children: rec ? String(rec.volume) : '',
-          }, `cell-${a}-${o}`)
-        }),
-      ]),
-    ],
-  })
-}
-
-// Scatter: avg_duration_s (x) vs volume (y), one point per (assignee, outcome).
-function AgentMetricsScatter({ records, selected }) {
-  if (records.length === 0) return jsx(DashboardMessageState, { children: 'No agent metrics available' })
-  const W = 320, H = 220, PAD = 30
-  const maxDuration = Math.max(1, ...records.map((r) => r.avg_duration_s))
-  const maxVolume = Math.max(1, ...records.map((r) => r.volume))
-  const points = records.map((r) => ({
-    x: PAD + (r.avg_duration_s / maxDuration) * (W - 2 * PAD),
-    y: H - PAD - (r.volume / maxVolume) * (H - 2 * PAD),
-    label: `${r.assignee} / ${r.outcome}: ${r.avg_duration_s.toFixed(0)}s, vol ${r.volume}`,
-    match: metricsRecordMatchesSelection(selected, r.assignee, r.outcome),
-  }))
-  return jsxs('svg', {
-    width: W, height: H, role: 'img', 'aria-label': 'avg duration vs volume scatter plot',
-    children: [
-      jsx('line', { x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--ui-stroke-secondary)' }),
-      jsx('line', { x1: PAD, y1: PAD, x2: PAD, y2: H - PAD, stroke: 'var(--ui-stroke-secondary)' }),
-      ...points.map((p, i) => jsxs('g', { opacity: p.match ? METRICS_MATCH_OPACITY : METRICS_DIM_OPACITY, children: [jsx('circle', { cx: p.x, cy: p.y, r: p.match && !metricsSelectionIsEmpty(selected) ? 6 : 4, fill: '#508cff' }), jsx('title', { children: p.label })] }, `pt-${i}`)),
-    ],
-  })
-}
-
-// Parallel coordinates: assignee -> outcome -> volume -> avg_duration_s axes.
-function AgentMetricsParallelCoordinates({ records, selected }) {
-  if (records.length === 0) return jsx(DashboardMessageState, { children: 'No agent metrics available' })
-  const W = 360, H = 200, PAD = 20
-  const assignees = agentMetricsAssignees(records)
-  const outcomes = agentMetricsOutcomes(records)
-  const maxVolume = Math.max(1, ...records.map((r) => r.volume))
-  const maxDuration = Math.max(1, ...records.map((r) => r.avg_duration_s))
-  const axes = ['assignee', 'outcome', 'volume', 'avg_duration_s']
-  const axisX = (i) => PAD + (i / (axes.length - 1)) * (W - 2 * PAD)
-  const yFor = (axis, r) => {
-    if (axis === 'assignee') return PAD + (assignees.indexOf(r.assignee) / Math.max(1, assignees.length - 1)) * (H - 2 * PAD)
-    if (axis === 'outcome') return PAD + (outcomes.indexOf(r.outcome) / Math.max(1, outcomes.length - 1)) * (H - 2 * PAD)
-    if (axis === 'volume') return H - PAD - (r.volume / maxVolume) * (H - 2 * PAD)
-    return H - PAD - (r.avg_duration_s / maxDuration) * (H - 2 * PAD)
-  }
-  return jsxs('svg', {
-    width: W, height: H, role: 'img', 'aria-label': 'parallel coordinates: assignee, outcome, volume, avg duration',
-    children: [
-      ...axes.map((axis, i) => jsx('line', { x1: axisX(i), y1: PAD, x2: axisX(i), y2: H - PAD, stroke: 'var(--ui-stroke-secondary)' }, `axis-${axis}`)),
-      ...records.map((r, i) => {
-        const match = metricsRecordMatchesSelection(selected, r.assignee, r.outcome)
-        return jsx('polyline', {
-          points: axes.map((axis, ai) => `${axisX(ai)},${yFor(axis, r)}`).join(' '),
-          fill: 'none', stroke: '#508cff', strokeOpacity: match ? 0.9 : METRICS_DIM_OPACITY,
-          strokeWidth: match && !metricsSelectionIsEmpty(selected) ? 2 : 1,
-        }, `line-${i}`)
-      }),
-    ],
-  })
-}
-
-// Treemap: nested by assignee, sized by volume. Simple single-level
-// slice-and-dice layout (rows sized proportional to each assignee's total
-// volume) — no nested-rectangle algorithm needed for one grouping level.
-// Clicking a segment sets the assignee half of the cross-filter (outcome
-// stays whatever it was, so heatmap-cell drill-down composes with a
-// treemap click rather than one silently overwriting the other's axis).
-function AgentMetricsTreemap({ records, selected, onSelect }) {
-  if (records.length === 0) return jsx(DashboardMessageState, { children: 'No agent metrics available' })
-  const W = 320, H = 220
-  const totals = new Map()
-  for (const r of records) totals.set(r.assignee, (totals.get(r.assignee) || 0) + r.volume)
-  const grandTotal = [...totals.values()].reduce((a, b) => a + b, 0) || 1
-  let y = 0
-  const rects = [...totals.entries()].map(([assignee, volume], i) => {
-    const h = (volume / grandTotal) * H
-    const rect = { x: 0, y, w: W, h, assignee, volume }
-    y += h
-    return rect
-  })
-  const palette = ['#508cff', '#5fd0a0', '#f0a860', '#e06880', '#a878e0', '#60c8d8']
-  return jsxs('svg', {
-    width: W, height: H, role: 'img', 'aria-label': 'volume by assignee treemap',
-    children: rects.map((r, i) => {
-      const match = !selected || !selected.assignee || selected.assignee === r.assignee
-      const isExact = selected && selected.assignee === r.assignee && !selected.outcome
-      return jsxs('g', {
-        style: { cursor: 'pointer' },
-        onClick: () => onSelect(isExact ? EMPTY_METRICS_SELECTION : { assignee: r.assignee, outcome: null }),
-        children: [
-          jsx('rect', { x: r.x, y: r.y, width: r.w, height: Math.max(0, r.h - 1), fill: palette[i % palette.length], fillOpacity: match ? 0.75 : METRICS_DIM_OPACITY, stroke: isExact ? '#fff' : 'none', strokeWidth: 2 }),
-          jsx('title', { children: `${r.assignee}: volume ${r.volume} (click to isolate)` }),
-          r.h > 14 ? jsx('text', { x: r.x + 4, y: r.y + 14, fontSize: 11, fill: '#fff', opacity: match ? 1 : METRICS_DIM_OPACITY, children: `${r.assignee} (${r.volume})` }) : null,
-        ],
-      }, `rect-${r.assignee}`)
-    }),
-  })
-}
-
-// Radar: per-assignee profile across outcome categories (volume per outcome,
-// normalized to that outcome's max across assignees). Clicking a polygon's
-// outline/fill isolates that assignee, same composable assignee-only filter
-// as the treemap.
-function AgentMetricsRadar({ records, selected, onSelect }) {
-  if (records.length === 0) return jsx(DashboardMessageState, { children: 'No agent metrics available' })
-  const W = 260, H = 260, CX = W / 2, CY = H / 2, R = 100
-  const outcomes = agentMetricsOutcomes(records)
-  const assignees = agentMetricsAssignees(records)
-  if (outcomes.length < 3) {
-    // A radar chart needs >=3 axes to be meaningful; fall back to an
-    // explicit note rather than drawing a degenerate 1-2-axis shape.
-    return jsx(DashboardMessageState, { children: `Not enough outcome categories for a radar chart (need >=3, have ${outcomes.length})` })
-  }
-  const maxByOutcome = new Map(outcomes.map((o) => [o, Math.max(1, ...records.filter((r) => r.outcome === o).map((r) => r.volume))]))
-  const angleFor = (i) => (i / outcomes.length) * 2 * Math.PI - Math.PI / 2
-  const palette = ['#508cff', '#5fd0a0', '#f0a860', '#e06880', '#a878e0', '#60c8d8']
-  const axisLines = outcomes.map((o, i) => {
-    const a = angleFor(i)
-    return jsx('line', { x1: CX, y1: CY, x2: CX + R * Math.cos(a), y2: CY + R * Math.sin(a), stroke: 'var(--ui-stroke-secondary)' }, `axis-${o}`)
-  })
-  const polygons = assignees.map((assignee, ai) => {
-    const pts = outcomes.map((o, i) => {
-      const rec = records.find((r) => r.assignee === assignee && r.outcome === o)
-      const ratio = rec ? rec.volume / maxByOutcome.get(o) : 0
-      const a = angleFor(i)
-      return `${CX + R * ratio * Math.cos(a)},${CY + R * ratio * Math.sin(a)}`
-    }).join(' ')
-    const match = !selected || !selected.assignee || selected.assignee === assignee
-    const isExact = selected && selected.assignee === assignee && !selected.outcome
-    return jsxs('g', {
-      style: { cursor: 'pointer' },
-      onClick: () => onSelect(isExact ? EMPTY_METRICS_SELECTION : { assignee, outcome: null }),
-      children: [
-        jsx('polygon', { points: pts, fill: palette[ai % palette.length], fillOpacity: match ? 0.2 : 0.03, stroke: palette[ai % palette.length], strokeOpacity: match ? 1 : METRICS_DIM_OPACITY, strokeWidth: isExact ? 3 : 1 }),
-        jsx('title', { children: `${assignee} (click to isolate)` }),
-      ],
-    }, `poly-${assignee}`)
-  })
-  return jsxs('svg', { width: W, height: H, role: 'img', 'aria-label': 'per-assignee outcome radar', children: [...axisLines, ...polygons] })
-}
-
-// Sankey: handoffs[] from -> to flow. Two-column layout (from-nodes left,
-// to-nodes right) with flow bands sized by volume — the simplest sankey
-// shape that fits this data (handoffs is already a flat from/to/volume
-// list, not a multi-stage graph). Selection here filters by assignee only
-// (handoffs have no `outcome` field), matching either endpoint of a band.
-function AgentMetricsSankey({ handoffs, selected, onSelect }) {
-  if (handoffs.length === 0) return jsx(DashboardMessageState, { children: 'No handoffs available' })
-  const W = 360, H = 240, NODE_W = 10
-  const fromNodes = [...new Set(handoffs.map((h) => h.from))]
-  const toNodes = [...new Set(handoffs.map((h) => h.to))]
-  const totalOut = new Map(fromNodes.map((n) => [n, handoffs.filter((h) => h.from === n).reduce((s, h) => s + h.volume, 0)]))
-  const totalIn = new Map(toNodes.map((n) => [n, handoffs.filter((h) => h.to === n).reduce((s, h) => s + h.volume, 0)]))
-  const grandTotal = handoffs.reduce((s, h) => s + h.volume, 0) || 1
-  const usableH = H - 20
-  function layout(nodes, totals) {
-    let y = 10
-    const pos = new Map()
-    for (const n of nodes) {
-      const h = (totals.get(n) / grandTotal) * usableH
-      pos.set(n, { y, h })
-      y += h + 4
-    }
-    return pos
-  }
-  const fromPos = layout(fromNodes, totalOut)
-  const toPos = layout(toNodes, totalIn)
-  const fromCursor = new Map(fromNodes.map((n) => [n, fromPos.get(n).y]))
-  const toCursor = new Map(toNodes.map((n) => [n, toPos.get(n).y]))
-  const palette = ['#508cff', '#5fd0a0', '#f0a860', '#e06880', '#a878e0', '#60c8d8']
-  const bands = handoffs.map((h, i) => {
-    const bandH = (h.volume / grandTotal) * usableH
-    const y0 = fromCursor.get(h.from)
-    const y1 = toCursor.get(h.to)
-    fromCursor.set(h.from, y0 + bandH)
-    toCursor.set(h.to, y1 + bandH)
-    const x0 = NODE_W, x1 = W - NODE_W
-    const path = `M${x0},${y0} C${W / 2},${y0} ${W / 2},${y1} ${x1},${y1} L${x1},${y1 + bandH} C${W / 2},${y1 + bandH} ${W / 2},${y0 + bandH} ${x0},${y0 + bandH} Z`
-    const match = !selected || !selected.assignee || selected.assignee === h.from || selected.assignee === h.to
-    return jsxs('g', { children: [jsx('path', { d: path, fill: palette[i % palette.length], fillOpacity: match ? 0.45 : 0.04 }), jsx('title', { children: `${h.from} -> ${h.to}: ${h.volume}` })] }, `band-${h.from}-${h.to}`)
-  })
-  const fromLabels = fromNodes.map((n) => {
-    const isExact = selected && selected.assignee === n
-    return jsx('text', {
-      x: 0, y: fromPos.get(n).y + fromPos.get(n).h / 2, fontSize: 10, style: { cursor: 'pointer' },
-      fontWeight: isExact ? 700 : 400,
-      onClick: () => onSelect(isExact ? EMPTY_METRICS_SELECTION : { assignee: n, outcome: null }),
-      children: n,
-    }, `from-label-${n}`)
-  })
-  const toLabels = toNodes.map((n) => {
-    const isExact = selected && selected.assignee === n
-    return jsx('text', {
-      x: W, y: toPos.get(n).y + toPos.get(n).h / 2, fontSize: 10, textAnchor: 'end', style: { cursor: 'pointer' },
-      fontWeight: isExact ? 700 : 400,
-      onClick: () => onSelect(isExact ? EMPTY_METRICS_SELECTION : { assignee: n, outcome: null }),
-      children: n,
-    }, `to-label-${n}`)
-  })
-  return jsxs('svg', { width: W, height: H, role: 'img', 'aria-label': 'agent handoff sankey diagram', children: [...bands, ...fromLabels, ...toLabels] })
-}
-
-// Filter summary bar shown above the widget grid once a cross-filter
-// selection is active — states which assignee/outcome is isolated and
-// gives one obvious way to clear it (every widget's own click-to-toggle
-// is a second way, but a persistent visible bar is what makes "quick
-// visual triage" actually quick — no hunting for which chart to re-click).
-function AgentMetricsSelectionBar({ selected, onClear }) {
-  if (metricsSelectionIsEmpty(selected)) return null
-  const parts = []
-  if (selected.assignee) parts.push(`assignee = ${selected.assignee}`)
-  if (selected.outcome) parts.push(`outcome = ${selected.outcome}`)
-  return jsxs('div', {
-    style: {
-      display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px',
-      padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--ui-stroke-secondary)',
-      background: 'var(--ui-surface-secondary, rgba(80,140,255,0.08))', fontSize: '12px',
-    },
-    children: [
-      jsx('span', { style: { color: 'var(--ui-text-secondary)' }, children: 'Isolated: ' }),
-      jsx('span', { style: { fontWeight: 600 }, children: parts.join(', ') }),
-      jsx('button', {
-        type: 'button', onClick: onClear,
-        style: { marginLeft: 'auto', border: '1px solid var(--ui-stroke-secondary)', borderRadius: '4px', padding: '2px 8px', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: '11px' },
-        children: 'Clear',
-      }),
-    ],
-  })
-}
-
-function AgentMetricsWidgetsBody({ snapshot }) {
-  const records = Array.isArray(snapshot.records) ? snapshot.records : []
-  const handoffs = Array.isArray(snapshot.handoffs) ? snapshot.handoffs : []
-  // Cross-filter selection is owned here (not per-widget) so a click in any
-  // one chart (heatmap cell, treemap segment, radar polygon, sankey node)
-  // drives every other chart's highlight/dim state — that shared-state lift
-  // is what makes this a "click one thing, see it everywhere" triage tool
-  // instead of six independently-clickable but disconnected charts.
-  const [selected, setSelected] = React.useState(EMPTY_METRICS_SELECTION)
-  const clearSelection = React.useCallback(() => setSelected(EMPTY_METRICS_SELECTION), [])
-  if (records.length === 0 && handoffs.length === 0) {
-    return jsx(DashboardMessageState, { children: 'No agent metrics available' })
-  }
-  return jsxs('div', {
-    children: [
-      jsx(AgentMetricsSelectionBar, { selected, onClear: clearSelection }),
-      jsx(AgentMetricsWidgetsSection, { title: 'Heatmap (assignee x outcome, volume) — click a cell to isolate', dataKey: 'heatmap', children: jsx(AgentMetricsHeatmap, { records, selected, onSelect: setSelected }) }),
-      jsx(AgentMetricsWidgetsSection, { title: 'Scatter (avg duration vs volume)', dataKey: 'scatter', children: jsx(AgentMetricsScatter, { records, selected }) }),
-      jsx(AgentMetricsWidgetsSection, { title: 'Parallel Coordinates (assignee/outcome/volume/duration)', dataKey: 'parallel-coordinates', children: jsx(AgentMetricsParallelCoordinates, { records, selected }) }),
-      jsx(AgentMetricsWidgetsSection, { title: 'Treemap (volume by assignee) — click a segment to isolate', dataKey: 'treemap', children: jsx(AgentMetricsTreemap, { records, selected, onSelect: setSelected }) }),
-      jsx(AgentMetricsWidgetsSection, { title: 'Radar (per-assignee outcome profile) — click a polygon to isolate', dataKey: 'radar', children: jsx(AgentMetricsRadar, { records, selected, onSelect: setSelected }) }),
-      jsx(AgentMetricsWidgetsSection, { title: 'Sankey (handoff flow) — click a node label to isolate', dataKey: 'sankey', children: jsx(AgentMetricsSankey, { handoffs, selected, onSelect: setSelected }) }),
-    ],
-  })
-}
-
-function AgentMetricsWidgetsPage() {
-  const [state, setState] = React.useState({ loading: true, snapshot: null, error: null })
-  React.useLayoutEffect(() => {
-    let active = true
-    cliExec(['decision', 'agent-metrics-snapshot']).then((res) => {
-      if (!active) return
-      if (!res || res.ok === false || !Array.isArray(res.records)) {
-        setState({ loading: false, snapshot: null, error: (res && res.error) || 'agent metrics snapshot is unavailable' })
-        return
-      }
-      setState({ loading: false, snapshot: res, error: null })
-    }).catch((e) => {
-      if (active) setState({ loading: false, snapshot: null, error: String(e.message || e) })
-    })
-    return () => { active = false }
-  }, [])
-
-  return jsxs('section', {
-    'aria-label': 'Agent Metrics Widgets',
-    className: 'flex h-full flex-col gap-3 overflow-auto p-4 text-sm',
-    children: [
-      jsx('div', { className: 'font-medium', children: 'Agent Metrics Widgets' }),
-      state.loading ? jsx(DashboardLoadingState, {}) : state.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${state.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics Widgets', children: jsx(AgentMetricsWidgetsBody, { snapshot: state.snapshot }) }),
-    ],
-  })
-}
-// --- End Agent Metrics Widgets --------------------------------------------
-
-// --- Agent Dashboard (canonical merged page, Wave 2a) ---------------------
-// Stacks the dashboard read-model section (health/freshness/categorized
-// metrics, Postgres-backed) above the Agent Matrix widgets section
-// (heatmap/scatter/parallel-coords/treemap/radar/sankey, Kanban-SQLite-
-// backed) on one page, sharing ONE board/project selector — no duplicate
-// pane tree. The two sections keep their existing independent data paths
-// (see the "genuinely separate surface" comment above
-// AGENT_METRICS_WIDGETS_ROUTE_PATH): the widgets snapshot has no
-// project-scoping parameter today, so it stays Kanban-wide rather than
-// silently (and incorrectly) filtered by the read-model's project scope —
-// each section fetches and fails independently, so one backend's outage
-// never blanks the other (Wave 2c will add richer unavailable-state UI;
-// this page already gets that for free since each section already renders
-// its own loading/error state).
-const AGENT_DASHBOARD_ROUTE_PATH = '/decision-hud/agent-dashboard'
-
-function AgentDashboardCombinedPage({ rest }) {
-  const scope = useProjectDashboardScope()
-  const [readModel, setReadModel] = React.useState({ loading: true, snapshot: null, error: null })
-  const [widgets, setWidgets] = React.useState({ loading: true, snapshot: null, error: null })
-
-  React.useLayoutEffect(() => {
-    let active = true
-    if (scope.loading) {
-      setReadModel({ loading: true, snapshot: null, error: null })
-      return () => { active = false }
-    }
-    if (!scope.projectId) {
-      setReadModel({ loading: false, snapshot: null, error: scope.error || 'Select a board in Decision HUD to scope the dashboard' })
-      return () => { active = false }
-    }
-    if (!scope.token) {
-      setReadModel({ loading: false, snapshot: null, error: scope.error || 'Unable to obtain a project-scoped actor token' })
-      return () => { active = false }
-    }
-    const query = { limit: DASHBOARD_MAX_ROWS, project_id: scope.projectId }
-    const headers = { Authorization: 'Bearer ' + scope.token }
-    rest(DASHBOARD_READ_MODEL_PATH, { method: 'GET', query, headers }).then((response) => {
-      const snapshot = validateDashboardSnapshot(response)
-      if (active) setReadModel({ loading: false, snapshot, error: null })
-    }).catch((error) => {
-      if (active) setReadModel({ loading: false, snapshot: null, error: String(error?.message || error) })
-    })
-    return () => { active = false }
-  }, [rest, scope.loading, scope.projectId, scope.token, scope.error])
-
-  React.useLayoutEffect(() => {
-    let active = true
-    cliExec(['decision', 'agent-metrics-snapshot']).then((res) => {
-      if (!active) return
-      if (!res || res.ok === false || !Array.isArray(res.records)) {
-        setWidgets({ loading: false, snapshot: null, error: (res && res.error) || 'agent metrics snapshot is unavailable' })
-        return
-      }
-      setWidgets({ loading: false, snapshot: res, error: null })
-    }).catch((e) => {
-      if (active) setWidgets({ loading: false, snapshot: null, error: String(e.message || e) })
-    })
-    return () => { active = false }
-  }, [])
-
-  return jsxs('section', {
-    'aria-label': 'Agent Dashboard',
-    className: 'flex h-full flex-col gap-4 overflow-auto p-4 text-sm',
-    children: [
-      jsxs('div', {
-        'data-dashboard-section': 'read-model',
-        children: [
-          jsx('div', { className: 'font-medium', children: 'Dashboard' }),
-          readModel.loading ? jsx(DashboardLoadingState, {}) : readModel.error ? jsx(DashboardMessageState, { children: `Dashboard unavailable: ${readModel.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics', children: jsx(AgentMetricsPageBody, { snapshot: readModel.snapshot }) }),
-        ],
-      }),
-      jsx(Separator, {}),
-      jsxs('div', {
-        'data-dashboard-section': 'agent-matrix',
-        children: [
-          jsx('div', { className: 'font-medium', children: 'Retrospective' }),
-          widgets.loading ? jsx(DashboardLoadingState, {}) : widgets.error ? jsx(DashboardMessageState, { children: `Agent metrics unavailable: ${widgets.error}` }) : jsx(SectionErrorBoundary, { sectionLabel: 'Agent Metrics Widgets', children: jsx(AgentMetricsWidgetsBody, { snapshot: widgets.snapshot }) }),
-        ],
-      }),
-    ],
-  })
-}
-// --- End Agent Dashboard ---------------------------------------------------
+const kanbanBoardsCache = { boards: [], loaded: false, error: null }
 
 function useKanbanBoards() {
-  // Kanban boards are a wholly separate concept from decision-hud "projects"
-  // (see BoardSelector below) — this only lists them for the selector UI,
-  // it does not join them to anything.
-  const [state, setState] = React.useState({ boards: [], loading: true, error: null })
+  const [state, setState] = React.useState(() => ({
+    boards: kanbanBoardsCache.boards,
+    loading: !kanbanBoardsCache.loaded,
+    error: kanbanBoardsCache.error,
+  }))
 
   const refresh = React.useCallback(async () => {
     try {
-      // Real CLI verb, confirmed via `hermes kanban boards list --help`:
-      // `hermes kanban boards list --json` — returns a bare JSON array of
-      // board objects (not wrapped in a `{ boards: [...] }` envelope like
-      // the decision CLI's list commands).
       const boardsRes = await cliExec(['kanban', 'boards', 'list', '--json'])
-      setState({ boards: Array.isArray(boardsRes) ? boardsRes : [], loading: false, error: null })
+      const boards = Array.isArray(boardsRes) ? boardsRes : []
+      Object.assign(kanbanBoardsCache, { boards, loaded: true, error: null })
+      setState({ boards, loading: false, error: null })
     } catch (e) {
-      setState((s) => ({ ...s, loading: false, error: String(e.message || e) }))
+      const error = String(e.message || e)
+      Object.assign(kanbanBoardsCache, { loaded: true, error })
+      setState((s) => ({ ...s, loading: false, error }))
     }
   }, [])
 
   React.useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, POLL_MS)
-    return () => clearInterval(id)
+    if (!kanbanBoardsCache.loaded) refresh()
   }, [refresh])
 
   return { ...state, refresh }
+}
+
+function useProjectDashboardScope() {
+  const [boardSlug, setBoardSlug] = React.useState(loadSelectedBoardSlug)
+  const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
+
+  React.useEffect(() => {
+    if (boardSlug || boardsLoading || boards.length === 0) return
+    const fallback = pickDefaultBoardSlug(boards)
+    if (fallback) {
+      setBoardSlug(fallback)
+      saveSelectedBoardSlug(fallback)
+    }
+  }, [boardSlug, boardsLoading, boards])
+
+  const projectId = React.useMemo(
+    () => boards.find((board) => board && board.slug === boardSlug)?.project_id || null,
+    [boards, boardSlug],
+  )
+
+  return { boardSlug, projectId, loading: boardsLoading, error: boardsError }
 }
 
 // limit: how many pending decisions to fetch, so the grid can actually
@@ -3232,10 +2165,7 @@ function VennOverlapCard({ decision, onResolve, resolving }) {
 }
 
 // size: 'default' (original, used by ModeRadialGaugeCard's larger card
-// display) or 'compact' (roughly half the visual footprint, used by
-// MetricDial inside the narrow MetricsSidebar). Only rendering constants
-// (radius/stroke/viewBox/text size) change between sizes — the arc-angle
-// math and the underlying value/fraction are identical either way.
+// MetricDial rendering constants vary only by size; the arc-angle math and value/fraction are shared.
 function RadialGaugeDisplay({ value, min, max, unit, size = 'default' }) {
   const compact = size === 'compact'
   const cx = 100
@@ -4114,12 +3044,6 @@ const GRID_LAYOUT_STORAGE_KEY = 'decision-hud:grid-layout'
 const GRID_MIN = 1
 const GRID_MAX = 3
 
-const SIDEBAR_SETTINGS_STORAGE_KEY = 'decision-hud:sidebar-settings'
-const SIDEBAR_WIDTH_MIN = 140
-const SIDEBAR_WIDTH_MAX = 320
-const SIDEBAR_WIDTH_DEFAULT = 200
-const DIAL_COLS_MIN = 1
-const DIAL_COLS_MAX = 2
 
 // Pane placement: workspace panels this plugin (and the sibling task-list
 // plugin) register can live docked to the right of chat (the original
@@ -4154,7 +3078,7 @@ function savePanePlacement(settings) {
   try {
     localStorage.setItem(PANE_PLACEMENT_STORAGE_KEY, JSON.stringify(settings))
   } catch {
-    // best-effort persistence only, matches saveSidebarSettings above
+    // best-effort persistence only.
   }
 }
 
@@ -4239,46 +3163,6 @@ function PanePlacementControls() {
   })
 }
 
-const DEFAULT_SIDEBAR_SETTINGS = { side: 'left', widthPx: SIDEBAR_WIDTH_DEFAULT, dialCols: 1 }
-
-// loadSidebarSettings/saveSidebarSettings: side (left/right), widthPx (the
-// sidebar's max-width cap in px, replacing the old hardcoded 200), and
-// dialCols (metric-dial grid column count) all live in one small settings
-// object, same persistence pattern as loadGridLayout/saveGridLayout above.
-function loadSidebarSettings() {
-  try {
-    const raw = localStorage.getItem(SIDEBAR_SETTINGS_STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_SIDEBAR_SETTINGS }
-    const parsed = JSON.parse(raw)
-    // parsed can legally be `null` here (`JSON.parse("null")` succeeds and
-    // returns null, it does not throw) — property access on it (parsed.side
-    // below) DOES throw, "Cannot read properties of null (reading 'side')",
-    // which is exactly the live crash reported ("decision-hud:pane" failed
-    // to render). Guard the object shape up front instead of relying on the
-    // outer try/catch to paper over a null/non-object parse result.
-    const safeParsed = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
-    const side = safeParsed.side === 'right' ? 'right' : 'left'
-    const widthPx = Number.isFinite(safeParsed.widthPx)
-      ? Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, safeParsed.widthPx))
-      : SIDEBAR_WIDTH_DEFAULT
-    const dialCols = Number.isInteger(safeParsed.dialCols)
-      ? Math.min(DIAL_COLS_MAX, Math.max(DIAL_COLS_MIN, safeParsed.dialCols))
-      : 1
-    return { side, widthPx, dialCols }
-  } catch {
-    return { ...DEFAULT_SIDEBAR_SETTINGS }
-  }
-}
-
-function saveSidebarSettings(settings) {
-  try {
-    localStorage.setItem(SIDEBAR_SETTINGS_STORAGE_KEY, JSON.stringify(settings))
-  } catch {
-    // best-effort — a failed localStorage write just means these settings
-    // reset to default next session, never a crash (same as saveGridLayout).
-  }
-}
-
 function loadGridLayout() {
   try {
     const raw = localStorage.getItem(GRID_LAYOUT_STORAGE_KEY)
@@ -4338,88 +3222,12 @@ function GridLayoutControls({ layout, onChange }) {
 }
 
 
-// SidebarPositionControls: left/right toggle + width stepper for the
-// metrics sidebar, persisted via loadSidebarSettings/saveSidebarSettings.
-function SidebarPositionControls({ settings, onChange }) {
-  return jsxs('div', {
-    className: 'flex items-center gap-3 text-(--ui-text-secondary)',
-    children: [
-      jsx('span', { className: 'text-[0.65rem] uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Sidebar' }),
-      jsxs('div', {
-        className: 'flex items-center gap-1',
-        children: [
-          jsx('button', {
-            type: 'button',
-            'aria-label': 'Sidebar left',
-            onClick: () => onChange({ ...settings, side: 'left' }),
-            className: `h-5 rounded border px-1.5 text-[0.65rem] ${settings.side === 'left' ? 'border-(--ui-accent) text-(--ui-accent)' : 'border-(--ui-stroke-secondary)'}`,
-            children: 'Left',
-          }),
-          jsx('button', {
-            type: 'button',
-            'aria-label': 'Sidebar right',
-            onClick: () => onChange({ ...settings, side: 'right' }),
-            className: `h-5 rounded border px-1.5 text-[0.65rem] ${settings.side === 'right' ? 'border-(--ui-accent) text-(--ui-accent)' : 'border-(--ui-stroke-secondary)'}`,
-            children: 'Right',
-          }),
-        ],
-      }),
-      jsxs('div', {
-        className: 'flex items-center gap-1',
-        children: [
-          jsx('button', {
-            type: 'button',
-            disabled: settings.widthPx <= SIDEBAR_WIDTH_MIN,
-            onClick: () => onChange({ ...settings, widthPx: Math.max(SIDEBAR_WIDTH_MIN, settings.widthPx - 20) }),
-            className: 'h-5 w-5 rounded border border-(--ui-stroke-secondary) text-[0.7rem] disabled:opacity-30',
-            children: '−',
-          }),
-          jsx('span', { className: 'w-9 text-center text-[0.65rem] tabular-nums', children: `${settings.widthPx}px` }),
-          jsx('button', {
-            type: 'button',
-            disabled: settings.widthPx >= SIDEBAR_WIDTH_MAX,
-            onClick: () => onChange({ ...settings, widthPx: Math.min(SIDEBAR_WIDTH_MAX, settings.widthPx + 20) }),
-            className: 'h-5 w-5 rounded border border-(--ui-stroke-secondary) text-[0.7rem] disabled:opacity-30',
-            children: '+',
-          }),
-        ],
-      }),
-    ],
-  })
-}
-
-// DialGridControls: grid-select (1 or 2 columns) for the metric dials'
-// layout inside MetricsSidebar — distinct from GridLayoutControls, which
-// controls the decision-card grid in the main column, not the dials.
-function DialGridControls({ settings, onChange }) {
-  return jsxs('div', {
-    className: 'flex items-center gap-2 text-(--ui-text-secondary)',
-    children: [
-      jsx('span', { className: 'text-[0.65rem] uppercase tracking-wide text-(--ui-text-tertiary)', children: 'Dials' }),
-      jsx('div', {
-        className: 'flex items-center gap-1',
-        children: [DIAL_COLS_MIN, DIAL_COLS_MAX].map((n) =>
-          jsx('button', {
-            key: n,
-            type: 'button',
-            'aria-label': `${n} column${n > 1 ? 's' : ''}`,
-            onClick: () => onChange({ ...settings, dialCols: n }),
-            className: `h-5 rounded border px-1.5 text-[0.65rem] ${settings.dialCols === n ? 'border-(--ui-accent) text-(--ui-accent)' : 'border-(--ui-stroke-secondary)'}`,
-            children: `${n}col`,
-          })
-        ),
-      }),
-    ],
-  })
-}
-
-
 // SettingsPopover: small anchored dropdown/panel opened from the gear icon
 // in the DecisionHudPane header. Deliberately generic ("settings panel with
 // sections") so future settings can be added as additional labeled section
 // divs — grid size, sidebar position/width, and dial grid are the sections
 // today.
-function SettingsPopover({ layout, onGridChange, sidebarSettings, onSidebarChange, onOpenFullscreen }) {
+function SettingsPopover({ layout, onGridChange, onOpenFullscreen }) {
   return jsx('div', {
     // the old --ui-surface-primary token used here was not a real theme token (checked against
     // apps/desktop/src/styles.css — it doesn't exist), so it resolved to
@@ -4439,7 +3247,6 @@ function SettingsPopover({ layout, onGridChange, sidebarSettings, onSidebarChang
           children: 'Grid size',
         }),
         jsx(GridLayoutControls, { layout, onChange: onGridChange }),
-        jsx(SidebarPositionControls, { settings: sidebarSettings, onChange: onSidebarChange }),
         jsx('div', { className: 'my-1 border-t border-(--ui-stroke-secondary)' }),
         jsx('button', {
           type: 'button',
@@ -4931,7 +3738,7 @@ function UniversalSubagentSkillsTab() {
   })
 }
 
-function SubagentRulesTab({ availableMetrics }) {
+function SubagentRulesTab() {
   const { loading, enabled, rule, error, refresh, save } = useSubagentRuleSettings()
   const [draftRule, setDraftRule] = React.useState('')
   const [saving, setSaving] = React.useState(false)
@@ -5022,13 +3829,11 @@ function SubagentRulesTab({ availableMetrics }) {
       }),
       jsx(Separator, {}),
       jsx(UniversalSubagentSkillsTab, {}),
-      jsx(Separator, {}),
-      jsx(AgentHealthBarSettings, { availableMetrics }),
     ],
   })
 }
 
-function SettingsFullscreen({ isOpen, onClose, layout, onGridChange, sidebarSettings, onSidebarChange, availableMetrics }) {
+function SettingsFullscreen({ isOpen, onClose, layout, onGridChange }) {
   const [activeTab, setActiveTab] = React.useState('subagent-rules')
 
   React.useEffect(() => {
@@ -5102,7 +3907,7 @@ function SettingsFullscreen({ isOpen, onClose, layout, onGridChange, sidebarSett
             jsx('div', {
               className: 'min-w-0 flex-1 overflow-y-auto',
               children: activeTab === 'subagent-rules'
-                ? jsx(SubagentRulesTab, { availableMetrics })
+                ? jsx(SubagentRulesTab, {})
                 : activeTab === 'kanban-escalation'
                 ? jsx(KanbanEscalationScopeTab, {})
                 : activeTab === 'kanban-notifications'
@@ -5114,8 +3919,7 @@ function SettingsFullscreen({ isOpen, onClose, layout, onGridChange, sidebarSett
                     children: [
                       jsx('div', { className: 'text-sm font-medium', children: 'Layout' }),
                       jsx(GridLayoutControls, { layout, onChange: onGridChange }),
-                      jsx(SidebarPositionControls, { settings: sidebarSettings, onChange: onSidebarChange }),
-                      jsx(Separator, {}),
+                                    jsx(Separator, {}),
                       jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children: 'Decision HUD and Retrospective open as full workspace pages. Task List remains docked beside chat.' }),
                     ],
                   }),
@@ -5125,669 +3929,6 @@ function SettingsFullscreen({ isOpen, onClose, layout, onGridChange, sidebarSett
       ],
     }),
   })
-}
-
-
-// --- Left-hand metrics/dials sidebar -------------------------------------
-//
-// Real numbers only, computed from data this pane already polls (decisions,
-// boards) plus one extra lightweight CLI call for the necessity rate —
-// never fabricated placeholders. A metric with no real signal yet (e.g. no
-// resolved rows) renders as an explicit "n/a", matching the same
-// honest-gap convention as decision-hub-integration/metrics_dashboard.py.
-function useHudMetrics(decisions, boards) {
-  const [necessity, setNecessity] = React.useState({ loading: true, rate: null, marked: 0, error: null })
-
-  React.useEffect(() => {
-    let cancelled = false
-    async function poll() {
-      try {
-        const res = await cliExec(['decision', 'necessity-rate'])
-        if (cancelled) return
-        setNecessity({
-          loading: false,
-          rate: typeof res.escalation_necessity_rate === 'number' ? res.escalation_necessity_rate : null,
-          marked: res.marked_count || 0,
-          error: null,
-        })
-      } catch (e) {
-        if (cancelled) return
-        setNecessity((s) => ({ ...s, loading: false, error: String(e.message || e) }))
-      }
-    }
-    poll()
-    const id = setInterval(poll, POLL_MS)
-    return () => {
-      cancelled = true
-      clearInterval(id)
-    }
-  }, [])
-
-  return React.useMemo(() => {
-    const pendingCount = decisions.length
-    const highUrgencyCount = decisions.filter((d) => d.urgency === 'high').length
-    const cardCount = decisions.filter((d) => d.card_type).length
-    const cardCoverage = pendingCount > 0 ? cardCount / pendingCount : null
-    // "Gated" = review_dispatch_enabled: the kanban-side knob closest to a
-    // batch-approval-style gate today (dispatch requires a review pass
-    // before landing). This is still a proxy metric, not a direct count of
-    // boards with an actual OPEN/pending batch_approval row for their linked
-    // project — the board<->project_id join now exists (DecisionHudPane's
-    // selectedBoardProjectId) and COULD support that tighter count, but
-    // nothing has wired it through to this metric yet.
-    const boardsGated = boards.filter((b) => b && b.review_dispatch_enabled).length
-    return {
-      pendingCount,
-      highUrgencyCount,
-      cardCoverage,
-      boardsTotal: boards.length,
-      boardsGated,
-      necessity,
-    }
-  }, [decisions, boards, necessity])
-}
-
-// useAgentHealth: sorted agent-health roster for the metrics sidebar.
-//
-// Real numbers only, same convention as useHudMetrics above: this pulls the
-// known-agent roster from `hermes kanban assignees --json` (confirmed shape:
-// a bare array of `{ name, on_disk, counts }`, where `counts` is commonly
-// `{}` in an environment with no active task data — never assume it has any
-// particular status keys) plus `hermes kanban stats --json` (confirmed
-// shape: `{ by_status, by_assignee, oldest_ready_age_seconds, now }`, also
-// commonly empty). Per-agent blocked/running task counts would ideally come
-// from `by_assignee`, but when that's empty (as observed) there is no real
-// per-agent signal available today — this renders those agents as
-// "no data" rather than inventing a fabricated score. This is a deliberately
-// simple MVP: sort by blocked-task count descending (most stuck first), then
-// running-task count descending, as tie-break. See
-// decision-hub-integration/research-composite-health-score-agent4.md for the
-// future EWMA composite design — not implemented here.
-// useProjectActorToken: mint (and remint on projectId change) a
-// project-scoped actor token via the same `hermes decision issue-token`
-// CLI path AgentDashboard/useAgentTelemetryMetrics already use. Extracted
-// so useAgentHealthHistoryStats below can share one token-minting flow
-// instead of a second copy of this same effect.
-function useProjectActorToken(projectId) {
-  const [token, setToken] = React.useState(null)
-  React.useEffect(() => {
-    let active = true
-    if (!projectId) {
-      setToken(null)
-      return () => { active = false }
-    }
-    cliExec(['decision', 'issue-token', '--actor', 'desktop-pane', '--project-id', projectId])
-      .then((res) => { if (active && res && res.ok && res.actor_token) setToken(res.actor_token) })
-      .catch(() => { if (active) setToken(null) })
-    return () => { active = false }
-  }, [projectId])
-  return token
-}
-
-// useAgentTelemetryMetrics: real per-agent Agent Metrics telemetry (the same
-// Postgres-backed read model AgentDashboard/AgentMetricsPage render), scoped
-// to the given projectId. Metric keys are whatever the telemetry pipeline
-// has actually emitted for this project — no hardcoded vocabulary — so the
-// health-bar picker below always reflects real available metrics, never a
-// guessed list. Requires a project-scoped actor token (same
-// `hermes decision issue-token --project-id` mint AgentDashboard uses);
-// returns per-agent metric maps plus the sorted list of distinct metric keys
-// seen across all agents.
-function useAgentTelemetryMetrics(projectId, rest) {
-  const [state, setState] = React.useState({ byAgent: {}, metricKeys: [], loading: true, error: null })
-  const token = useProjectActorToken(projectId)
-
-  const refresh = React.useCallback(async () => {
-    if (!projectId || !token || typeof rest !== 'function') {
-      setState((s) => ({ ...s, loading: false }))
-      return
-    }
-    setState((s) => ({ ...s, loading: true, error: null }))
-    try {
-      const query = { limit: DASHBOARD_MAX_ROWS, project_id: projectId }
-      const headers = { Authorization: `Bearer ${token}` }
-      const response = await rest(DASHBOARD_READ_MODEL_PATH, { method: 'GET', query, headers })
-      const snapshot = validateDashboardSnapshot(response)
-      const byAgent = {}
-      const keySet = new Set()
-      for (const metric of snapshot.metrics) {
-        if (!isDashboardRecord(metric) || typeof metric.agent_id !== 'string' || typeof metric.key !== 'string') continue
-        if (!dashboardFiniteNumber(metric.value)) continue // bars need a numeric magnitude
-        if (!byAgent[metric.agent_id]) byAgent[metric.agent_id] = {}
-        byAgent[metric.agent_id][metric.key] = metric.value
-        keySet.add(metric.key)
-      }
-      setState({ byAgent, metricKeys: [...keySet].sort(), loading: false, error: null })
-    } catch (e) {
-      setState((s) => ({ ...s, loading: false, error: String(e.message || e) }))
-    }
-  }, [projectId, token, rest])
-
-  React.useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, POLL_MS)
-    return () => clearInterval(id)
-  }, [refresh])
-
-  return { ...state, refresh }
-}
-
-// HISTORY_REST_PATH: sibling of DASHBOARD_READ_MODEL_PATH (see
-// http_app.py's _HISTORY_ROUTE_PATH) — one metric's real time series per
-// agent, backed by the SAME telemetry_snapshots table every
-// sync_kanban_telemetry.py run already writes to (no new store; see the
-// owner's "check what we already have" note). Used only to sharpen
-// AgentHealthCard's percentile/z-score bars against real history instead of
-// the on-screen snapshot; the 'max' mode still uses the snapshot, since it's
-// inherently a "relative to what's visible right now" measure.
-const HISTORY_REST_PATH = '/agent-dashboard/history'
-const AGENT_HEALTH_HISTORY_WINDOW_DAYS = 30
-
-// agentHealthStatsFromPoints: same {values, n, max, mean, stdev} shape as
-// agentHealthMetricStats, but built from a flat list of historical raw
-// values across ALL agents for one metric — the actual distribution over
-// time percentile/z-score are meant to compare against, not just today's
-// per-agent snapshot.
-function agentHealthStatsFromPoints(values) {
-  const sorted = [...values].sort((a, b) => a - b)
-  const n = sorted.length
-  const max = n > 0 ? Math.max(...sorted) : 0
-  const mean = n > 0 ? sorted.reduce((s, v) => s + v, 0) / n : 0
-  const variance = n > 0 ? sorted.reduce((s, v) => s + (v - mean) ** 2, 0) / n : 0
-  return { values: sorted, n, max, mean, stdev: Math.sqrt(variance) }
-}
-
-// useAgentHealthHistoryStats: fetch real history for whichever metric keys
-// the three configured health bars use (percentile/zscore modes only — see
-// AGENT_HEALTH_NORMALIZE_MODES) and reduce it to the same stats shape
-// agentHealthMetricStats already produces from the on-screen snapshot.
-// Returns {} for any metric with no/unreachable history so callers fall
-// back to the on-screen-snapshot stats already computed in AgentHealthList,
-// never blocking the bars on this fetch succeeding.
-function useAgentHealthHistoryStats(projectId, rest, agentIds, metricKeys) {
-  const [statsByMetric, setStatsByMetric] = React.useState({})
-  const token = useProjectActorToken(projectId)
-  const keysSignature = metricKeys.join(',')
-  const agentIdsSignature = agentIds.join(',')
-
-  const refresh = React.useCallback(async () => {
-    if (!projectId || !token || typeof rest !== 'function' || !keysSignature || !agentIdsSignature) {
-      setStatsByMetric({})
-      return
-    }
-    const since = new Date(Date.now() - AGENT_HEALTH_HISTORY_WINDOW_DAYS * 86400 * 1000).toISOString()
-    const headers = { Authorization: `Bearer ${token}` }
-    const next = {}
-    for (const metricKey of keysSignature.split(',')) {
-      try {
-        const query = { project_id: projectId, metric_key: metricKey, agent_ids: agentIdsSignature, since }
-        const response = await rest(HISTORY_REST_PATH, { method: 'GET', query, headers })
-        if (!isDashboardRecord(response) || response.schema_version !== 'agent-dashboard-history.v1') continue
-        const series = response.series
-        if (!isDashboardRecord(series)) continue
-        const values = []
-        for (const points of Object.values(series)) {
-          if (!Array.isArray(points)) continue
-          for (const point of points) {
-            if (isDashboardRecord(point) && dashboardFiniteNumber(point.value)) values.push(point.value)
-          }
-        }
-        if (values.length > 0) next[metricKey] = agentHealthStatsFromPoints(values)
-      } catch {
-        // Leave this metric's stats absent — callers fall back to the
-        // on-screen-snapshot stats, never a broken/blank bar.
-      }
-    }
-    setStatsByMetric(next)
-  }, [projectId, token, rest, keysSignature, agentIdsSignature])
-
-  React.useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, POLL_MS)
-    return () => clearInterval(id)
-  }, [refresh])
-
-  return statsByMetric
-}
-
-function useAgentHealth(telemetryByAgent) {
-  const [state, setState] = React.useState({ agents: [], loading: true, error: null })
-
-  const refresh = React.useCallback(async () => {
-    try {
-      const [assigneesRes, statsRes] = await Promise.all([
-        cliExec(['kanban', 'assignees', '--json']),
-        cliExec(['kanban', 'stats', '--json']),
-      ])
-      const roster = Array.isArray(assigneesRes) ? assigneesRes : []
-      const byAssignee = (statsRes && typeof statsRes === 'object' && statsRes.by_assignee) || {}
-
-      const agents = roster.map((a) => {
-        const name = (a && a.name) || 'unknown'
-        // Prefer real per-agent breakdowns from kanban stats' by_assignee
-        // when present; fall back to the roster's own `counts` field
-        // (also real CLI data, just from a different endpoint). Neither is
-        // guaranteed to carry any status keys in a quiet environment.
-        const fromStats = byAssignee[name] || null
-        const fromRoster = (a && a.counts) || {}
-        const kanbanCounts = fromStats && typeof fromStats === 'object' ? fromStats : fromRoster
-        // Agent Metrics telemetry (real per-agent Postgres-backed values,
-        // see useAgentTelemetryMetrics) takes priority over kanban task
-        // counts for the health-bar values when telemetry has data for this
-        // agent — kanban counts remain the fallback so bars aren't just
-        // blank in a project with no telemetry pipeline wired up yet.
-        const telemetryCounts = telemetryByAgent && telemetryByAgent[name]
-        const counts = telemetryCounts && Object.keys(telemetryCounts).length > 0 ? telemetryCounts : kanbanCounts
-        const blocked = typeof kanbanCounts.blocked === 'number' ? kanbanCounts.blocked : 0
-        const running = typeof kanbanCounts.running === 'number' ? kanbanCounts.running : 0
-        const hasData = Object.keys(counts).length > 0
-        return {
-          name,
-          onDisk: Boolean(a && a.on_disk),
-          blocked,
-          running,
-          counts,
-          hasData,
-        }
-      })
-
-      // Unhealthiest first: most blocked work first, running count as
-      // tie-break. Agents with no real signal float to the bottom, shown as
-      // neutral "no data" rather than sorted as if they were healthy.
-      agents.sort((x, y) => {
-        if (x.hasData !== y.hasData) return x.hasData ? -1 : 1
-        if (y.blocked !== x.blocked) return y.blocked - x.blocked
-        return y.running - x.running
-      })
-
-      setState({ agents, loading: false, error: null })
-    } catch (e) {
-      setState((s) => ({ ...s, loading: false, error: String(e.message || e) }))
-    }
-  }, [telemetryByAgent])
-
-  React.useEffect(() => {
-    refresh()
-    const id = setInterval(refresh, POLL_MS)
-    return () => clearInterval(id)
-  }, [refresh])
-
-  return { ...state, refresh }
-}
-
-// Agent health bars ("HP/MP/stamina" style, in Hermes' own visual language):
-// three configurable stat bars per agent card, bound to real Agent Metrics
-// telemetry keys when telemetry is available for the current project
-// (useAgentTelemetryMetrics), falling back to kanban task-count keys
-// (done/todo/blocked/review) otherwise — see useAgentHealth above for the
-// merge. Selection is mutually exclusive across the three slots (one
-// dropdown each) plus a display checkbox per slot, persisted via the same
-// settings-get/-set backend as subagent injection (hud_settings table, key
-// `agent_health_bars`, see cli.py's _SETTINGS_KEYS default).
-const FALLBACK_AGENT_HEALTH_METRICS = [
-  { key: 'done', label: 'Done' },
-  { key: 'todo', label: 'Todo' },
-  { key: 'blocked', label: 'Blocked' },
-  { key: 'review', label: 'Review' },
-]
-const AGENT_HEALTH_BAR_COLORS = ['bg-(--ui-success,#3dd68c)', 'bg-(--ui-accent,#5b8def)', 'bg-(--ui-danger,#e5484d)']
-// Normalization modes for bar length, toggleable per slot (owner decision:
-// "toggle any of these as an additional option compared to what's being
-// measured" — not a single fixed scheme). All three read the SAME
-// population: whichever agents currently have a numeric value for that
-// metric in this snapshot (see agentHealthMetricStats below) — there is no
-// historical/long-window store to draw from yet, so this is deliberately an
-// on-screen-snapshot early-warning signal, not a long-run baseline; it will
-// sharpen as more telemetry accumulates.
-const AGENT_HEALTH_NORMALIZE_MODES = [
-  { key: 'max', label: 'Max (0-100%)' },
-  { key: 'percentile', label: 'Percentile rank' },
-  { key: 'zscore', label: 'Z-score' },
-]
-const DEFAULT_AGENT_HEALTH_BARS = [
-  { metric: 'done', enabled: true, normalize: 'max' },
-  { metric: 'todo', enabled: true, normalize: 'max' },
-  { metric: 'blocked', enabled: true, normalize: 'max' },
-]
-
-// agentHealthMetricStats: per-metric distribution stats (max, mean, stdev,
-// sorted values) across whatever agents have a real numeric value for that
-// metric right now. Computed once per render from the full agent list so
-// every card's bar reads a consistent population, not just "the agents
-// rendered so far".
-function agentHealthMetricStats(agents, metricKey) {
-  const values = agents
-    .map((a) => (typeof a.counts?.[metricKey] === 'number' ? a.counts[metricKey] : null))
-    .filter((v) => v !== null)
-    .sort((a, b) => a - b)
-  const n = values.length
-  const max = n > 0 ? Math.max(...values) : 0
-  const mean = n > 0 ? values.reduce((s, v) => s + v, 0) / n : 0
-  const variance = n > 0 ? values.reduce((s, v) => s + (v - mean) ** 2, 0) / n : 0
-  const stdev = Math.sqrt(variance)
-  return { values, n, max, mean, stdev }
-}
-
-// agentHealthBarPct: turn one agent's raw metric value into a 0-100 bar
-// length under the requested normalization mode. Every mode degrades
-// gracefully to 0 when the population can't support it (e.g. a single data
-// point has no meaningful percentile/z-score) rather than dividing by zero.
-function agentHealthBarPct(value, stats, mode) {
-  if (stats.n === 0) return 0
-  if (mode === 'percentile') {
-    const rank = stats.values.filter((v) => v <= value).length
-    return Math.max(0, Math.min(100, (rank / stats.n) * 100))
-  }
-  if (mode === 'zscore') {
-    if (stats.stdev === 0) return value > stats.mean ? 100 : value < stats.mean ? 0 : 50
-    const z = (value - stats.mean) / stats.stdev
-    // Clamp to +/-3 sigma and rescale to 0-100 so the bar stays on-screen.
-    return Math.max(0, Math.min(100, ((z + 3) / 6) * 100))
-  }
-  // 'max' (default): plain min-max against the largest value seen.
-  const max = stats.max || 1
-  return Math.max(0, Math.min(100, (value / max) * 100))
-}
-
-function useAgentHealthBarSettings(availableMetrics) {
-  const [state, setState] = React.useState({ bars: DEFAULT_AGENT_HEALTH_BARS, loading: true, error: null })
-  const metricKeys = availableMetrics && availableMetrics.length > 0
-    ? availableMetrics.map((m) => m.key)
-    : FALLBACK_AGENT_HEALTH_METRICS.map((m) => m.key)
-
-  const refresh = React.useCallback(async () => {
-    setState((s) => ({ ...s, loading: true, error: null }))
-    try {
-      const res = await cliExec(['decision', 'settings-get'])
-      const raw = (res && res.settings && res.settings.agent_health_bars) || '[]'
-      let bars
-      try {
-        const parsed = JSON.parse(raw)
-        bars = Array.isArray(parsed) && parsed.length === 3
-          ? parsed.map((b, i) => ({
-              metric: metricKeys.includes(b?.metric) ? b.metric : metricKeys[i] || metricKeys[0],
-              enabled: Boolean(b?.enabled),
-              normalize: AGENT_HEALTH_NORMALIZE_MODES.some((m) => m.key === b?.normalize) ? b.normalize : 'max',
-            }))
-          : DEFAULT_AGENT_HEALTH_BARS
-      } catch {
-        bars = DEFAULT_AGENT_HEALTH_BARS
-      }
-      setState({ bars, loading: false, error: null })
-    } catch (e) {
-      setState((s) => ({ ...s, loading: false, error: String(e.message || e) }))
-    }
-  }, [metricKeys.join(',')])
-
-  React.useEffect(() => { refresh() }, [refresh])
-
-  const save = React.useCallback(async (bars) => {
-    await cliExec(['decision', 'settings-set', 'agent_health_bars', JSON.stringify(bars)])
-    setState((s) => ({ ...s, bars }))
-  }, [])
-
-  return { ...state, refresh, save }
-}
-
-// AgentHealthBarSettings: lives on the same settings page as Subagent
-// Rules/Universal skill select. Three rows, each a metric dropdown
-// (mutually exclusive — picking a metric already used elsewhere swaps it)
-// plus a "display" checkbox that toggles that bar's visibility on cards.
-// `availableMetrics` is real Agent Metrics telemetry keys for the current
-// project when telemetry exists there; otherwise the fallback kanban
-// task-count vocabulary (done/todo/blocked/review) — see useAgentHealth.
-function AgentHealthBarSettings({ availableMetrics }) {
-  const metrics = availableMetrics && availableMetrics.length > 0 ? availableMetrics : FALLBACK_AGENT_HEALTH_METRICS
-  const { bars, loading, error, save } = useAgentHealthBarSettings(metrics)
-  const [saving, setSaving] = React.useState(false)
-
-  const updateSlot = async (index, patch) => {
-    const next = bars.map((b, i) => (i === index ? { ...b, ...patch } : b))
-    if (patch.metric) {
-      // Enforce mutual exclusivity: if another slot already had this
-      // metric, swap it for the slot being replaced's old metric.
-      const displaced = bars[index].metric
-      next.forEach((b, i) => {
-        if (i !== index && b.metric === patch.metric) next[i] = { ...b, metric: displaced }
-      })
-    }
-    setSaving(true)
-    try {
-      await save(next)
-    } catch (e) {
-      host.notify({ kind: 'error', message: String(e.message || e) })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return jsxs('section', {
-    className: 'flex flex-col gap-2',
-    children: [
-      jsx('div', { className: 'text-sm font-medium', children: 'Agent health bars' }),
-      jsx('div', {
-        className: 'text-[0.75rem] text-(--ui-text-secondary)',
-        children: availableMetrics && availableMetrics.length > 0
-          ? 'Pick up to three Agent Metrics telemetry stats to show as stat bars on each agent card.'
-          : 'No Agent Metrics telemetry yet for this board\u2019s project — showing kanban task-count stats as stat bars on each agent card.',
-      }),
-      error ? jsx('div', { className: 'text-[0.75rem] text-(--ui-danger,#e5484d)', children: error }) : null,
-      loading
-        ? jsx('div', { className: 'text-[0.75rem] text-(--ui-text-tertiary)', children: 'Loading…' })
-        : jsx('div', {
-            className: 'flex flex-col gap-2',
-            children: bars.map((bar, index) =>
-              jsxs('div', {
-                key: index,
-                className: 'flex items-center gap-3',
-                children: [
-                  jsx(Switch, {
-                    'aria-label': `Display bar ${index + 1}`,
-                    checked: bar.enabled,
-                    disabled: saving,
-                    size: 'xs',
-                    onCheckedChange: (checked) => updateSlot(index, { enabled: checked }),
-                  }),
-                  jsxs(Select, {
-                    value: bar.metric,
-                    disabled: saving,
-                    onValueChange: (value) => updateSlot(index, { metric: value }),
-                    children: [
-                      jsx(SelectTrigger, { className: 'h-7 w-32 text-[0.75rem]', children: jsx(SelectValue, {}) }),
-                      jsx(SelectContent, {
-                        children: metrics.map((m) => jsx(SelectItem, { value: m.key, children: m.label }, m.key)),
-                      }),
-                    ],
-                  }),
-                  jsxs(Select, {
-                    value: bar.normalize || 'max',
-                    disabled: saving,
-                    onValueChange: (value) => updateSlot(index, { normalize: value }),
-                    children: [
-                      jsx(SelectTrigger, { className: 'h-7 w-28 text-[0.75rem]', children: jsx(SelectValue, {}) }),
-                      jsx(SelectContent, {
-                        children: AGENT_HEALTH_NORMALIZE_MODES.map((m) => jsx(SelectItem, { value: m.key, children: m.label }, m.key)),
-                      }),
-                    ],
-                  }),
-                ],
-              })
-            ),
-          }),
-    ],
-  })
-}
-
-
-// AgentHealthCard: a compact per-agent "stat card" — three small bars (the
-// video-game HP/MP/stamina shape, restyled with Hermes' own tokens instead
-// of game terminology) driven by whichever kanban metrics are configured
-// in AgentHealthBarSettings. Bar length is metric-value clamped against the
-// largest value for that metric across all agents (own-relative scale —
-// there's no fixed "max tasks" ceiling to normalize against).
-// humanizeAgentName: "adversarial-reviewer" -> "Adversarial Reviewer". Purely
-// cosmetic — the raw hyphenated id is still used for keys/lookups/title attrs.
-function humanizeAgentName(name) {
-  return String(name || '')
-    .split('-')
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ')
-}
-
-function AgentHealthCard({ agent, bars, statsByMetric }) {
-  const visibleBars = bars.filter((b) => b.enabled)
-  return jsxs('div', {
-    className: 'flex flex-col gap-1 rounded border border-(--ui-stroke-secondary) px-2 py-1.5',
-    children: [
-      jsx('div', {
-        className: 'truncate text-[0.7rem] font-medium text-(--ui-text-secondary)',
-        title: agent.name,
-        children: humanizeAgentName(agent.name),
-      }),
-      !agent.hasData
-        ? jsx('div', { className: 'text-[0.6rem] text-(--ui-text-tertiary) opacity-50', children: 'no data' })
-        : jsx('div', {
-            className: 'flex flex-col gap-0.5',
-            children: visibleBars.map((bar, i) => {
-              const value = typeof agent.counts?.[bar.metric] === 'number' ? agent.counts[bar.metric] : 0
-              const stats = statsByMetric[bar.metric] || { n: 0, max: 0, mean: 0, stdev: 0, values: [] }
-              const pct = agentHealthBarPct(value, stats, bar.normalize || 'max')
-              return jsxs('div', {
-                key: bar.metric,
-                className: 'flex items-center gap-1.5',
-                children: [
-                  jsx('span', {
-                    className: 'w-10 shrink-0 truncate uppercase tracking-wide text-(--ui-text-tertiary)',
-                    style: { fontSize: '0.55rem', lineHeight: '0.75rem' },
-                    title: `${bar.metric}: ${value} (${bar.normalize || 'max'})`,
-                    children: bar.metric,
-                  }),
-                  jsx('div', {
-                    className: 'h-1.5 flex-1 overflow-hidden rounded-full bg-(--ui-stroke-secondary)',
-                    children: jsx('div', {
-                      className: `h-full rounded-full ${AGENT_HEALTH_BAR_COLORS[i % AGENT_HEALTH_BAR_COLORS.length]}`,
-                      style: { width: `${pct}%` },
-                    }),
-                  }),
-                ],
-              })
-            }),
-          }),
-    ],
-  })
-}
-
-// AgentHealthList: compact card stack below the dials, one per known agent,
-// sorted unhealthiest-first (see useAgentHealth). Honest empty/neutral
-// states instead of a fabricated ranking, matching the "n/a" / "no pending
-// rows" convention used elsewhere in this sidebar.
-function AgentHealthList({ health, availableMetrics, projectId, rest }) {
-  const { agents, loading, error } = health
-  const metrics = availableMetrics && availableMetrics.length > 0 ? availableMetrics : FALLBACK_AGENT_HEALTH_METRICS
-  const { bars } = useAgentHealthBarSettings(metrics)
-  const barMetricKeys = React.useMemo(() => [...new Set(bars.map((b) => b.metric))], [bars])
-  const agentIds = React.useMemo(() => agents.map((a) => a.name), [agents])
-  const historyStatsByMetric = useAgentHealthHistoryStats(projectId, rest, agentIds, barMetricKeys)
-
-  if (error) {
-    return jsx('div', {
-      className: 'text-[0.65rem] text-(--ui-danger,#e5484d)',
-      children: 'agent health: error',
-    })
-  }
-  if (loading) {
-    return jsx('div', {
-      className: 'text-center text-[0.65rem] text-(--ui-text-tertiary)',
-      children: 'agent health: loading…',
-    })
-  }
-  if (agents.length === 0) {
-    return jsx('div', {
-      className: 'text-center text-[0.65rem] text-(--ui-text-tertiary)',
-      children: 'agent health: no agents',
-    })
-  }
-
-  const anyData = agents.some((a) => a.hasData)
-  // Real history (see useAgentHealthHistoryStats) wins when it exists for a
-  // metric — that's what percentile/z-score are meant to measure against
-  // (an actual distribution over time, not just today's on-screen agents).
-  // The on-screen-snapshot stats remain the fallback for a metric with no
-  // history yet (new project, telemetry pipeline not synced) and are always
-  // what 'max' mode uses, since "max of what's visible" is itself the point
-  // of that mode.
-  const statsByMetric = {}
-  for (const bar of bars) {
-    const snapshotStats = agentHealthMetricStats(agents, bar.metric)
-    const useHistory = bar.normalize !== 'max' && historyStatsByMetric[bar.metric]
-    statsByMetric[bar.metric] = useHistory || snapshotStats
-  }
-
-  return jsxs('div', {
-    className: 'flex flex-col gap-1',
-    children: [
-      jsx('div', {
-        className: 'text-[0.65rem] uppercase tracking-wide text-(--ui-text-tertiary)',
-        children: 'Agent health',
-      }),
-      !anyData
-        ? jsx('div', {
-            className: 'text-center text-[0.6rem] text-(--ui-text-tertiary)',
-            children: 'n/a (no per-agent task data yet)',
-          })
-        : jsx('div', {
-            className: 'flex flex-col gap-1',
-            children: agents.map((a) => jsx(AgentHealthCard, { key: a.name, agent: a, bars, statsByMetric })),
-          }),
-    ],
-  })
-}
-
-function MetricDial({ label, value, min, max, unit, subtitle }) {
-  return jsxs('div', {
-    className: 'flex flex-col items-center gap-1 rounded-lg border border-(--ui-stroke-secondary) p-2',
-    children: [
-      jsx('div', {
-        className: 'w-full',
-        children: jsx(RadialGaugeDisplay, { value, min, max, unit, size: 'compact' }),
-      }),
-      jsx('div', { className: 'text-center text-[0.7rem] font-medium', children: label }),
-      subtitle
-        ? jsx('div', { className: 'text-center text-[0.6rem] text-(--ui-text-tertiary)', children: subtitle })
-        : null,
-    ],
-  })
-}
-
-// MetricsSidebar: dials/metrics panel, matching the plugin header comment's
-// original "switchable visualization" placeholder — this is the real
-// implementation of that slot, not a further placeholder. Side (left/right)
-// and width are now user-configurable settings instead of a hardcoded
-// left-only w-1/4/max-w-[200px] class.
-function MetricsSidebar({ agentHealth, side, widthPx, availableMetrics, projectId, rest }) {
-  const borderClass = side === 'right' ? 'border-l pl-3' : 'border-r pr-3'
-  return jsx('div', {
-    className: `flex shrink-0 flex-col gap-3 overflow-y-auto border-(--ui-stroke-secondary) ${borderClass}`,
-    style: { width: `${widthPx}px`, maxWidth: `${widthPx}px` },
-    children: jsx(AgentHealthList, { health: agentHealth, availableMetrics, projectId, rest }),
-  })
-}
-
-// Keep agent health/telemetry off the critical path. The workflow shell and
-// active tab must paint before unrelated kanban/telemetry CLI and REST calls
-// begin; otherwise a slow gateway makes the whole Decision HUD look stuck.
-function DeferredMetricsSidebar({ side, widthPx, projectId, rest, onMetrics }) {
-  const telemetry = useAgentTelemetryMetrics(projectId, rest)
-  const agentHealth = useAgentHealth(telemetry.byAgent)
-  const availableMetrics = React.useMemo(
-    () => telemetry.metricKeys.map((key) => ({ key, label: key })),
-    [telemetry.metricKeys],
-  )
-  React.useEffect(() => {
-    if (typeof onMetrics === 'function') onMetrics(availableMetrics)
-  }, [availableMetrics, onMetrics])
-  return jsx(MetricsSidebar, { agentHealth, side, widthPx, availableMetrics, projectId, rest })
 }
 
 
@@ -5837,7 +3978,7 @@ function useHierarchyDecisions(projectId) {
       return
     }
     try {
-      const result = await cliExec(['decision', 'list', '--limit', String(DASHBOARD_MAX_ROWS), '--project-id', projectId])
+      const result = await cliExec(['decision', 'list', '--limit', String(MAX_DECISION_ROWS), '--project-id', projectId])
       setState({ decisions: Array.isArray(result?.decisions) ? result.decisions : [], loading: false, error: null })
     } catch (error) {
       setState((current) => ({ ...current, loading: false, error: String(error.message || error) }))
@@ -6576,11 +4717,7 @@ const ENGINEERING_TABS = [
 function DecisionHudPane({ rest }) {
   // The selected board is the sole project scope: boards and projects are
   // intentionally one-to-one.
-  // Initialized from + persisted to SELECTED_BOARD_STORAGE_KEY so the
-  // routed Agent Dashboard / Agent Metrics panes (useProjectDashboardScope,
-  // near the top of this file) see the same board selection — they are
-  // separate registered panes with no shared React tree, so localStorage
-  // plus a same-origin 'storage' listener is the cross-pane channel.
+  // Initialized from + persisted to SELECTED_BOARD_STORAGE_KEY so routed workflow panes
   const [selectedBoard, setSelectedBoardState] = React.useState(loadSelectedBoardSlug)
   const [activeTab, setActiveTab] = React.useState('mindmap')
   const [starterRevision, setStarterRevision] = React.useState(0)
@@ -6590,15 +4727,15 @@ function DecisionHudPane({ rest }) {
   }, [])
   const [resolving, setResolving] = React.useState(false)
   const [gridLayout, setGridLayout] = React.useState(loadGridLayout)
-  const [sidebarSettings, setSidebarSettings] = React.useState(loadSidebarSettings)
   const [settingsFullscreenOpen, setSettingsFullscreenOpen] = React.useState(false)
-  const { boards, error: boardsError } = useKanbanBoards()
+  const { boards, error: boardsError, refresh: refreshBoards } = useKanbanBoards()
+
+  React.useEffect(() => startNewDecisionToastWatcher(), [])
 
   React.useEffect(() => {
     if (!selectedBoard && boards.length > 0) {
       // Same "default"-slug preference as useProjectDashboardScope, so
-      // Decision HUD and Agent Dashboard/Metrics converge on the same
-      // auto-picked board instead of racing to different boards[0]s.
+      // Decision HUD and other workflow tabs converge on the same auto-picked board.
       const fallback = pickDefaultBoardSlug(boards)
       if (fallback) setSelectedBoard(fallback)
     }
@@ -6619,29 +4756,9 @@ function DecisionHudPane({ rest }) {
     return board?.name || boardForControls || null
   }, [boards, boardForControls])
 
-  const [metricsReady, setMetricsReady] = React.useState(false)
-  const refresh = React.useCallback(async () => {}, [])
-  const [availableMetrics, setAvailableMetrics] = React.useState([])
-  const handleMetricsChange = React.useCallback((next) => setAvailableMetrics(next), [])
-
-  React.useEffect(() => {
-    const schedule = typeof window.requestIdleCallback === 'function'
-      ? window.requestIdleCallback(() => setMetricsReady(true), { timeout: 1000 })
-      : window.setTimeout(() => setMetricsReady(true), 0)
-    return () => {
-      if (typeof window.cancelIdleCallback === 'function' && typeof schedule === 'number') window.cancelIdleCallback(schedule)
-      else window.clearTimeout(schedule)
-    }
-  }, [])
-
   const handleGridChange = React.useCallback((next) => {
     setGridLayout(next)
     saveGridLayout(next)
-  }, [])
-
-  const handleSidebarSettingsChange = React.useCallback((next) => {
-    setSidebarSettings(next)
-    saveSidebarSettings(next)
   }, [])
 
   const handleResolve = React.useCallback(
@@ -6656,14 +4773,14 @@ function DecisionHudPane({ rest }) {
         }
         await cliExec(argv)
         host.notify({ kind: 'success', message: `Resolved: ${choice}` })
-        await refresh()
+        await refreshBoards()
       } catch (e) {
         host.notify({ kind: 'error', message: String(e.message || e) })
       } finally {
         setResolving(false)
       }
     },
-    [refresh]
+    [refreshBoards]
   )
 
   const handleDefer = React.useCallback(
@@ -6675,14 +4792,14 @@ function DecisionHudPane({ rest }) {
       try {
         await cliExec(['decision', 'defer', id])
         host.notify({ kind: 'success', message: 'Deferred' })
-        await refresh()
+        await refreshBoards()
       } catch (e) {
         host.notify({ kind: 'error', message: String(e.message || e) })
       } finally {
         setResolving(false)
       }
     },
-    [refresh]
+    [refreshBoards]
   )
 
   const handleDismiss = React.useCallback(
@@ -6700,14 +4817,14 @@ function DecisionHudPane({ rest }) {
         const actorToken = await getActorToken()
         await cliExec(['decision', 'resolve', id, DISMISS_SENTINEL_CHOICE, '--actor-token', actorToken])
         host.notify({ kind: 'success', message: 'Dismissed' })
-        await refresh()
+        await refreshBoards()
       } catch (e) {
         host.notify({ kind: 'error', message: String(e.message || e) })
       } finally {
         setResolving(false)
       }
     },
-    [refresh]
+    [refreshBoards]
   )
 
   const handleDiscuss = React.useCallback(
@@ -6784,15 +4901,6 @@ function DecisionHudPane({ rest }) {
     []
   )
 
-  // Defensive fallback: sidebarSettings comes from useState(loadSidebarSettings)
-  // and every setter path also goes through loadSidebarSettings-shaped
-  // objects, so this should always be a real object — but this is the exact
-  // spot the live "Cannot read properties of undefined (reading 'side')"
-  // crash would resurface if that ever stopped being true (e.g. a future
-  // change that calls setSidebarSettings(null) directly). Falling back to
-  // the same defaults loadSidebarSettings() itself returns on a bad parse
-  // keeps this component from being a second place that bug can hide.
-  const safeSidebarSettings = sidebarSettings && typeof sidebarSettings === 'object' ? sidebarSettings : DEFAULT_SIDEBAR_SETTINGS
   const mainColumn = jsxs('div', {
     className: 'relative flex min-w-0 flex-1 flex-col gap-3',
     children: [
@@ -6872,8 +4980,6 @@ function DecisionHudPane({ rest }) {
         isOpen: settingsFullscreenOpen,
         onClose: () => setSettingsFullscreenOpen(false),
         layout: gridLayout, onGridChange: handleGridChange,
-        sidebarSettings, onSidebarChange: handleSidebarSettingsChange,
-        availableMetrics,
       }),
     ],
   })
@@ -6915,10 +5021,12 @@ function saveSeenDecisionIds(ids) {
 }
 
 function startNewDecisionToastWatcher() {
+  let active = true
   const seen = loadSeenDecisionIds()
   let primed = false // first tick marks existing pending decisions as seen without toasting
 
   const tick = async () => {
+    if (!active) return
     let decisions
     try {
       const res = await cliExec(['decision', 'list', '--limit', '50'])
@@ -6949,13 +5057,18 @@ function startNewDecisionToastWatcher() {
   // Tests and short-lived host sessions must not stay alive solely for a
   // background toast poll; browsers do not expose unref, so guard it.
   if (typeof interval?.unref === 'function') interval.unref()
+  return () => {
+    active = false
+    clearInterval(interval)
+  }
 }
 
 // Criteria persist as strings, so duplicate entries have no durable identity.
 // Occurrence suffix keeps keys unique; distinct entries keep identity across reorder/insert.
 function stableSpecCriteriaKey(item, index, items) {
-  const occurrence = items.slice(0, index).filter((candidate) => candidate === item).length
-  return `spec-criterion:${JSON.stringify(item)}:${occurrence}`
+  const occurrences = new Map()
+  for (let i = 0; i < index; i += 1) occurrences.set(items[i], (occurrences.get(items[i]) || 0) + 1)
+  return `spec-criterion:${JSON.stringify(item)}:${occurrences.get(item) || 0}`
 }
 
 function MindMapPane({ projectId }) {
@@ -7074,7 +5187,9 @@ function SpecDigest({ projectId }) {
 }
 
 function SpecDigestRoute({ projectId: overrideProjectId } = {}) {
-  const { projectId } = useProjectDashboardScope()
+  const { boards } = useKanbanBoards()
+  const selectedBoard = loadSelectedBoardSlug() || pickDefaultBoardSlug(boards)
+  const projectId = boards.find((board) => board && board.slug === selectedBoard)?.project_id || null
   return jsx(SpecDigest, { projectId: overrideProjectId || projectId })
 }
 
@@ -7082,7 +5197,6 @@ export default {
   id: PLUGIN_ID,
   name: 'Software Engineering Workflow',
   register(ctx) {
-    startNewDecisionToastWatcher()
     // Full-page surfaces, matching the Kanban board: route navigation owns
     // the main workspace, so switching chats cannot evict or resize them.
     ctx.registerMany([
@@ -7129,43 +5243,6 @@ export default {
         render: () => jsx(ScrumPlanningPane, {}),
       },
       {
-        id: 'agent-dashboard-route',
-        area: ROUTES_AREA,
-        data: { path: AGENT_DASHBOARD_ROUTE_PATH },
-        render: () => jsx(AgentDashboardCombinedPage, { rest: ctx.rest }),
-      },
-      {
-        id: 'agent-dashboard-open',
-        area: PALETTE_AREA,
-        data: {
-          id: 'decision-hud.agent-dashboard',
-          label: 'Retrospective: Open page',
-          keywords: ['agent', 'dashboard', 'metrics', 'matrix', 'heatmap', 'charts'],
-          run: () => host.navigate(AGENT_DASHBOARD_ROUTE_PATH),
-        },
-      },
-      {
-        // Wave 2b retirement: route stays registered (old links/bookmarks
-        // keep working) but renders a redirect, and the nav entry below is
-        // removed — Agent Metrics is no longer a visible nav destination.
-        id: 'agent-metrics-route',
-        area: ROUTES_AREA,
-        data: { path: AGENT_METRICS_ROUTE_PATH },
-        render: () => jsx(AgentMetricsRedirect, {}),
-      },
-      {
-        // Wave 3 retirement: the standalone widgets-only page is now fully
-        // subsumed by the combined Agent Dashboard/Matrix page above (it
-        // renders the identical AgentMetricsWidgetsBody). Route stays
-        // registered so old links/bookmarks/palette history keep working,
-        // but it is no longer a distinct nav destination — matching the
-        // AGENT_METRICS_ROUTE_PATH retirement pattern immediately above.
-        id: 'agent-metrics-widgets-route',
-        area: ROUTES_AREA,
-        data: { path: AGENT_METRICS_WIDGETS_ROUTE_PATH },
-        render: () => jsx(AgentMetricsWidgetsPage, {}),
-      },
-      {
         id: 'decision-hud-open',
         area: PALETTE_AREA,
         data: {
@@ -7173,30 +5250,6 @@ export default {
           label: 'Decision HUD: Open page',
           keywords: ['decision', 'hud', 'queue', 'page'],
           run: () => host.navigate('/decision-hud'),
-        },
-      },
-      {
-        id: 'agent-metrics-open',
-        area: PALETTE_AREA,
-        data: {
-          id: 'decision-hud.agent-metrics',
-          label: 'Agent Metrics: Open page',
-          keywords: ['agent', 'metrics'],
-          run: () => host.navigate(AGENT_METRICS_ROUTE_PATH),
-        },
-      },
-      {
-        // Wave 3: retired in favor of 'agent-dashboard-open' above (same
-        // "Agent Matrix: Open page" label now points at the combined page)
-        // — kept registered only so it still resolves for the old
-        // widgets-only route in case a palette history/macro references it.
-        id: 'agent-matrix-open',
-        area: PALETTE_AREA,
-        data: {
-          id: 'decision-hud.agent-matrix-legacy',
-          label: 'Agent Matrix (legacy widgets page): Open page',
-          keywords: ['agent', 'matrix', 'charts', 'tradeoffs', 'legacy'],
-          run: () => host.navigate(AGENT_METRICS_WIDGETS_ROUTE_PATH),
         },
       },
     ])

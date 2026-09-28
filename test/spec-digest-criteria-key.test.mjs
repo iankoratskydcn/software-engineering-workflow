@@ -8,6 +8,6 @@ assert.match(source, /function stableSpecCriteriaKey\(item, index, items\)/)
 assert.match(specDigest, /criteria\.items\.map\(\(item, index\) => jsx\('li',[\s\S]*?stableSpecCriteriaKey\(item, index, criteria\.items\)\)/)
 assert.doesNotMatch(specDigest, /criteria\.items\.map\(\(item, index\)[\s\S]*?\}, index\)/)
 assert.match(source, /JSON\.stringify\(item\)/)
-assert.match(source, /filter\(\(candidate\) => candidate === item\)/)
+assert.match(source, /const occurrences = new Map\(\)/)
 
 console.log('spec digest criteria key regression passed')

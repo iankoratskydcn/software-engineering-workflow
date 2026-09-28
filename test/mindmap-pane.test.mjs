@@ -17,7 +17,7 @@ assert.match(source, /done_count[\s\S]*?total_count/)
 // Wave 4: node-attached decisions must reuse the existing queue/card path.
 assert.match(source, /function hierarchyDecisionMatchesNode\(decision, nodeId\)/)
 assert.match(source, /_hierarchy_node_id/)
-assert.match(source, /decision', 'list', '--limit', String\(DASHBOARD_MAX_ROWS\), '--project-id', projectId/)
+assert.match(source, /decision', 'list', '--limit', String\(MAX_DECISION_ROWS\), '--project-id', projectId/)
 assert.match(source, /onClick: selectNode/)
 assert.match(source, /onDoubleClick: \(\) => onInspect\(node\)/)
 assert.match(source, /role: 'treeitem'/)

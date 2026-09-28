@@ -40,13 +40,12 @@ test('MindMap exposes the prototype search and selected-node detail model', () =
   assert.match(source, /gridTemplateColumns: '280px 1fr'/)
 })
 
-test('agent health sidebar is not rendered in the workflow shell', () => {
-  assert.match(source, /function DeferredMetricsSidebar\(/)
-  assert.doesNotMatch(source, /const metricsSidebar =/)
+test('agent health sidebar and retired telemetry are absent from the workflow shell', () => {
+  assert.doesNotMatch(source, /function DeferredMetricsSidebar\(/)
+  assert.doesNotMatch(source, /function MetricsSidebar\(/)
   assert.doesNotMatch(source, /jsx\(DeferredMetricsSidebar/)
   assert.match(source, /className: 'relative flex h-full min-w-0 p-3 text-sm'/)
   assert.match(source, /children: mainColumn/)
-  assert.doesNotMatch(source, /useDecisionQueue\(selectedBoardProjectId/)
 })
 
 test('Spec Digest shows malformed backend data as an error, not an empty success', async () => {
