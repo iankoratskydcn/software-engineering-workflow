@@ -40,6 +40,8 @@ def seed_starter_workflow(conn, project_id: str, root_title: str | None = None) 
             demo["title"] = root_title.strip()
         _seed_demo_node(db, conn, project_id, demo)
         root = db.get_spec_tree(conn, project_id=project_id)
+    elif root_title and root_title.strip() and root.get("title") == _DEMO_MINDMAP["title"]:
+        root = db.update_spec_node(conn, root["id"], project_id=project_id, title=root_title.strip())
     story_id = _story_id(root)
 
     flow = _first(conn, "flows", project_id, "name", "Request lifecycle")
