@@ -27,6 +27,11 @@ test('workflow tabs match the supplied prototype order and default', () => {
   assert.match(source, /useState\('mindmap'\)/)
 })
 
+test('unified workspace uses the prototype title instead of the legacy Decision HUD heading', () => {
+  assert.match(source, /children: 'Software Engineering Workflow'/)
+  assert.doesNotMatch(source, /className: 'shrink-0 font-medium', children: 'Decision HUD'/)
+})
+
 test('MindMap exposes the prototype search and selected-node detail model', () => {
   assert.match(source, /function MindMapPane\(/)
   assert.match(source, /mindQuery/)

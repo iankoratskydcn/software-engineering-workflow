@@ -6785,7 +6785,7 @@ function DecisionHudPane({ rest }) {
           jsxs('div', {
             className: 'flex min-w-0 flex-wrap items-center gap-2',
             children: [
-              jsx('div', { className: 'shrink-0 font-medium', children: 'Decision HUD' }),
+              jsx('div', { className: 'shrink-0 font-medium', children: 'Software Engineering Workflow' }),
               jsx(BoardSettingsPanel, { boardSlug: boardForControls }),
               jsx(BoardSelector, { boards, active: boardForControls, onSelect: setSelectedBoard }),
               jsx(TriageBlockedWorkButton, { boardSlug: boardForControls, projectId: selectedBoardProjectId, onComplete: refresh }),
