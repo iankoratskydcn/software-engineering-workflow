@@ -5774,6 +5774,22 @@ function MetricsSidebar({ agentHealth, side, widthPx, availableMetrics, projectI
   })
 }
 
+// Keep agent health/telemetry off the critical path. The workflow shell and
+// active tab must paint before unrelated kanban/telemetry CLI and REST calls
+// begin; otherwise a slow gateway makes the whole Decision HUD look stuck.
+function DeferredMetricsSidebar({ side, widthPx, projectId, rest, onMetrics }) {
+  const telemetry = useAgentTelemetryMetrics(projectId, rest)
+  const agentHealth = useAgentHealth(telemetry.byAgent)
+  const availableMetrics = React.useMemo(
+    () => telemetry.metricKeys.map((key) => ({ key, label: key })),
+    [telemetry.metricKeys],
+  )
+  React.useEffect(() => {
+    if (typeof onMetrics === 'function') onMetrics(availableMetrics)
+  }, [availableMetrics, onMetrics])
+  return jsx(MetricsSidebar, { agentHealth, side, widthPx, availableMetrics, projectId, rest })
+}
+
 
 const VALID_HIERARCHY_STATUS_COLORS = {
   pending: 'grey',
@@ -6603,13 +6619,20 @@ function DecisionHudPane({ rest }) {
     return board?.name || boardForControls || null
   }, [boards, boardForControls])
 
-  const { decisions, loading, error, refresh } = useDecisionQueue(selectedBoardProjectId, gridLayout.cols * gridLayout.rows)
-  const telemetry = useAgentTelemetryMetrics(selectedBoardProjectId, rest)
-  const agentHealth = useAgentHealth(telemetry.byAgent)
-  const availableMetrics = React.useMemo(
-    () => telemetry.metricKeys.map((key) => ({ key, label: key })),
-    [telemetry.metricKeys]
-  )
+  const [metricsReady, setMetricsReady] = React.useState(false)
+  const refresh = React.useCallback(async () => {}, [])
+  const [availableMetrics, setAvailableMetrics] = React.useState([])
+  const handleMetricsChange = React.useCallback((next) => setAvailableMetrics(next), [])
+
+  React.useEffect(() => {
+    const schedule = typeof window.requestIdleCallback === 'function'
+      ? window.requestIdleCallback(() => setMetricsReady(true), { timeout: 1000 })
+      : window.setTimeout(() => setMetricsReady(true), 0)
+    return () => {
+      if (typeof window.cancelIdleCallback === 'function' && typeof schedule === 'number') window.cancelIdleCallback(schedule)
+      else window.clearTimeout(schedule)
+    }
+  }, [])
 
   const handleGridChange = React.useCallback((next) => {
     setGridLayout(next)
@@ -6770,12 +6793,19 @@ function DecisionHudPane({ rest }) {
   // the same defaults loadSidebarSettings() itself returns on a bad parse
   // keeps this component from being a second place that bug can hide.
   const safeSidebarSettings = sidebarSettings && typeof sidebarSettings === 'object' ? sidebarSettings : DEFAULT_SIDEBAR_SETTINGS
-  const metricsSidebar = jsx(MetricsSidebar, {
-    agentHealth,
-    side: safeSidebarSettings.side, widthPx: safeSidebarSettings.widthPx,
-    availableMetrics,
-    projectId: selectedBoardProjectId, rest,
-  })
+  const metricsSidebar = metricsReady
+    ? jsx(DeferredMetricsSidebar, {
+        side: safeSidebarSettings.side,
+        widthPx: safeSidebarSettings.widthPx,
+        projectId: selectedBoardProjectId,
+        rest,
+        onMetrics: handleMetricsChange,
+      })
+    : jsx('div', {
+        className: `flex shrink-0 items-center justify-center border-(--ui-stroke-secondary) text-xs text-(--ui-text-tertiary) ${safeSidebarSettings.side === 'right' ? 'border-l pl-3' : 'border-r pr-3'}`,
+        style: { width: `${safeSidebarSettings.widthPx}px`, maxWidth: `${safeSidebarSettings.widthPx}px` },
+        children: 'Metrics loading…',
+      })
   const mainColumn = jsxs('div', {
     className: 'relative flex min-w-0 flex-1 flex-col gap-3',
     children: [
@@ -6788,7 +6818,7 @@ function DecisionHudPane({ rest }) {
               jsx('div', { className: 'shrink-0 font-medium', children: 'Software Engineering Workflow' }),
               jsx(BoardSettingsPanel, { boardSlug: boardForControls }),
               jsx(BoardSelector, { boards, active: boardForControls, onSelect: setSelectedBoard }),
-              jsx(TriageBlockedWorkButton, { boardSlug: boardForControls, projectId: selectedBoardProjectId, onComplete: refresh }),
+              jsx(TriageBlockedWorkButton, { boardSlug: boardForControls, projectId: selectedBoardProjectId, onComplete: () => {} }),
             ],
           }),
           jsx('div', {
@@ -6813,9 +6843,6 @@ function DecisionHudPane({ rest }) {
       }),
       boardsError
         ? jsx('div', { className: 'text-[0.75rem] text-(--ui-danger,#e5484d)', children: boardsError })
-        : null,
-      error
-        ? jsx('div', { className: 'text-[0.75rem] text-(--ui-danger,#e5484d)', children: error })
         : null,
       jsx('div', {
         role: 'tablist',

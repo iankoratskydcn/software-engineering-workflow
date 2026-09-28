@@ -56,7 +56,7 @@ assert.match(
 )
 assert.match(
   pane,
-  /jsx\(MetricsSidebar,\s*\{[^}]*side:\s*safeSidebarSettings\.side/,
+  /(?:jsx\(DeferredMetricsSidebar,\s*\{[^}]*side:\s*safeSidebarSettings\.side|jsx\(MetricsSidebar,\s*\{[^}]*side:\s*safeSidebarSettings\.side)/,
   'MetricsSidebar must be rendered with side: safeSidebarSettings.side (the null-safe view), not the raw possibly-malformed sidebarSettings',
 )
 

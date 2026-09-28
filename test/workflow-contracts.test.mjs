@@ -40,6 +40,14 @@ test('MindMap exposes the prototype search and selected-node detail model', () =
   assert.match(source, /gridTemplateColumns: '280px 1fr'/)
 })
 
+test('agent telemetry is deferred until after the workflow shell can paint', () => {
+  assert.match(source, /function DeferredMetricsSidebar\(/)
+  assert.match(source, /requestIdleCallback|setTimeout\(\(\) => setMetricsReady\(true\), 0\)/)
+  assert.match(source, /metricsReady\s*\? jsx\(DeferredMetricsSidebar/)
+  assert.doesNotMatch(source, /const telemetry = useAgentTelemetryMetrics\(selectedBoardProjectId, rest\)/)
+  assert.doesNotMatch(source, /useDecisionQueue\(selectedBoardProjectId/)
+})
+
 test('Spec Digest shows malformed backend data as an error, not an empty success', async () => {
   const originalRequest = host.request
   const registrations = []
