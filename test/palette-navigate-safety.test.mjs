@@ -24,7 +24,7 @@ assert.doesNotMatch(
 assert.match(source, /area:\s*SIDEBAR_NAV_AREA/)
 assert.match(source, /label:\s*'Software Engineering',\s*path:\s*'\/decision-hud'/)
 assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Spec Digest'/)
-assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Retrospective'/)
+assert.doesNotMatch(source, /ENGINEERING_TABS[\s\S]*?label: 'Retrospective'/)
 assert.doesNotMatch(source, /id:\s*'spec-digest-nav'/)
 assert.doesNotMatch(source, /id:\s*'decision-hud-flowcharts-nav'/)
 assert.doesNotMatch(source, /id:\s*'roadmap-nav'/)

@@ -6548,13 +6548,13 @@ function ScrumPlanningPane() {
 }
 
 const ENGINEERING_TABS = [
-  { id: 'decision', label: 'Decision HUD', codicon: 'checklist' },
-  { id: 'spec', label: 'Spec Digest', codicon: 'file-tree' },
-  { id: 'map', label: 'Map', codicon: 'type-hierarchy-sub' },
-  { id: 'flowcharts', label: 'Flowcharts', codicon: 'graph' },
-  { id: 'planning', label: 'Scrum Planning', codicon: 'calendar' },
+  { id: 'mindmap', label: 'MindMap', codicon: 'type-hierarchy-sub' },
   { id: 'roadmap', label: 'Roadmap', codicon: 'milestone' },
-  { id: 'retrospective', label: 'Retrospective', codicon: 'pulse' },
+  { id: 'riskTradeoff', label: 'Risk & Tradeoffs', codicon: 'warning' },
+  { id: 'flowcharts', label: 'Flowcharts', codicon: 'graph' },
+  { id: 'architecture', label: 'Architecture', codicon: 'symbol-class' },
+  { id: 'spec', label: 'Spec Digest', codicon: 'file-tree' },
+  { id: 'planning', label: 'Scrum Planning', codicon: 'calendar' },
 ]
 
 function DecisionHudPane({ rest }) {
@@ -6566,7 +6566,7 @@ function DecisionHudPane({ rest }) {
   // separate registered panes with no shared React tree, so localStorage
   // plus a same-origin 'storage' listener is the cross-pane channel.
   const [selectedBoard, setSelectedBoardState] = React.useState(loadSelectedBoardSlug)
-  const [activeTab, setActiveTab] = React.useState('decision')
+  const [activeTab, setActiveTab] = React.useState('mindmap')
   const [starterRevision, setStarterRevision] = React.useState(0)
   const setSelectedBoard = React.useCallback((slug) => {
     setSelectedBoardState(slug)
@@ -6835,43 +6835,24 @@ function DecisionHudPane({ rest }) {
             ),
             children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
           }, tab.id)),
-          activeTab !== 'decision'
+          activeTab !== 'mindmap'
             ? jsx(StarterWorkflowButton, { projectId: selectedBoardProjectId, boardName: selectedBoardName, onGenerated: () => setStarterRevision((value) => value + 1) }, 'starter-workflow')
             : null,
         ],
       }),
       jsx('div', {
         className: 'flex min-h-0 flex-1 flex-col overflow-y-auto',
-        children: activeTab === 'decision'
-          ? (decisions.length === 0
-            ? jsx('div', {
-                className: 'flex h-full items-center justify-center text-(--ui-text-tertiary)',
-                children: loading ? 'Loading…' : 'Queue clear.',
-              })
-            : jsx('div', {
-                className: 'grid gap-3',
-                style: {
-                  gridTemplateColumns: `repeat(${gridLayout.cols}, minmax(0, 1fr))`,
-                  gridTemplateRows: `repeat(${gridLayout.rows}, auto)`,
-                  gridAutoFlow: 'column',
-                },
-                children: decisions
-                  .slice(0, gridLayout.cols * gridLayout.rows)
-                  .map((d) =>
-                    jsx(DecisionCard, { key: d.id, decision: d, onResolve: handleResolve, onDefer: handleDefer, onDiscuss: handleDiscuss, onDismiss: handleDismiss, resolving })
-                  ),
-              }))
+        children: activeTab === 'mindmap'
+          ? jsx(MindMapPane, { key: `mindmap-${starterRevision}`, projectId: selectedBoardProjectId })
           : activeTab === 'spec'
             ? jsx(SpecDigest, { key: `spec-${starterRevision}`, projectId: selectedBoardProjectId })
-            : activeTab === 'map'
-              ? jsx(HierarchyMapPane, { key: `map-${starterRevision}` })
-              : activeTab === 'flowcharts'
+            : activeTab === 'flowcharts'
                 ? jsx(FlowchartsPane, { key: `flowcharts-${starterRevision}` })
                 : activeTab === 'planning'
                   ? jsx(ScrumPlanningPane, { key: `planning-${starterRevision}` })
                   : activeTab === 'roadmap'
                     ? jsx(RoadmapPane, { key: `roadmap-${starterRevision}` })
-                    : jsx(AgentDashboardCombinedPage, { key: `retrospective-${starterRevision}`, rest }),
+                    : jsx('div', { className: 'flex h-full items-center justify-center p-6 text-(--ui-text-tertiary)', children: `${ENGINEERING_TABS.find((tab) => tab.id === activeTab)?.label || 'Section'} unavailable` }),
       }),
       jsx(SettingsFullscreen, {
         isOpen: settingsFullscreenOpen,
@@ -6968,24 +6949,109 @@ function stableSpecCriteriaKey(item, index, items) {
   return `spec-criterion:${JSON.stringify(item)}:${occurrence}`
 }
 
+function MindMapPane({ projectId }) {
+  const [mindQuery, setMindQuery] = React.useState('')
+  const [selectedMindNode, setSelectedMindNode] = React.useState(null)
+  const [state, setState] = React.useState({ loading: false, nodes: [], error: null })
+
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, nodes: [], error: 'No project selected' })
+      return () => { active = false }
+    }
+    setState({ loading: true, nodes: [], error: null })
+    host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
+      if (!active) return
+      try {
+        if (output?.code !== undefined && output.code !== 0) throw new Error(`MindMap CLI exited ${output.code}`)
+        const parsed = parseTrailingJson(output?.output || output?.stdout || '')
+        if (parsed?.ok === false) throw new Error(parsed.error?.message || parsed.error || 'MindMap unavailable')
+        const nodes = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.nodes) ? parsed.nodes : null
+        if (!nodes) throw new Error('MindMap returned an invalid nodes payload')
+        setState({ loading: false, nodes, error: null })
+      } catch (error) {
+        setState({ loading: false, nodes: [], error: String(error.message || error) })
+      }
+    }).catch((error) => active && setState({ loading: false, nodes: [], error: String(error.message || error) }))
+    return () => { active = false }
+  }, [projectId])
+
+  const results = React.useMemo(() => {
+    const query = mindQuery.trim().toLowerCase()
+    if (!query) return state.nodes
+    return state.nodes.filter((node) => `${node.kind} ${node.title} ${node.note || ''}`.toLowerCase().includes(query))
+  }, [mindQuery, state.nodes])
+  const criteria = parseSpecCriteria(selectedMindNode?.criteria_json)
+
+  return jsxs('div', {
+    className: 'grid min-h-0 flex-1 gap-5 overflow-auto p-4 text-sm',
+    style: { gridTemplateColumns: '280px 1fr' },
+    children: [
+      jsxs('div', { className: 'flex min-w-0 flex-col gap-3', children: [
+        jsx('input', {
+          type: 'text', value: mindQuery, onChange: (event) => setMindQuery(event.target.value), placeholder: 'Search stories...',
+          className: 'w-full rounded border border-(--ui-stroke-secondary) px-2.5 py-2 text-xs', style: { background: '#1e1e1e' },
+        }),
+        state.loading ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Loading MindMap…' }) : null,
+        state.error ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: `MindMap unavailable: ${state.error}` }) : null,
+        !state.loading && !state.error && results.length === 0 ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No matching stories.' }) : null,
+        jsx('div', { className: 'flex flex-col gap-1.5 overflow-auto', children: results.map((node) => jsx('button', {
+          type: 'button', onClick: () => setSelectedMindNode(node), className: 'rounded border border-(--ui-stroke-secondary) p-2 text-left hover:bg-(--chrome-action-hover)',
+          children: [
+            jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: node.kind }),
+            jsx('div', { className: 'text-xs text-(--ui-text-primary)', children: node.title }),
+          ],
+        }, node.id)) }),
+      ] }),
+      jsx('div', { className: 'min-w-0 rounded border border-(--ui-stroke-secondary) p-4', style: { background: '#1a1a1a' }, children: selectedMindNode
+        ? jsxs('div', { className: 'flex flex-col gap-3', children: [
+            jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: selectedMindNode.kind }),
+            jsx('h2', { className: 'text-base font-semibold', children: selectedMindNode.title }),
+            selectedMindNode.note ? jsx('p', { className: 'text-(--ui-text-secondary)', children: selectedMindNode.note }) : null,
+            criteria.error
+              ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: 'Malformed acceptance criteria' })
+              : criteria.items.length > 0
+                ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items))) })] })
+                : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No acceptance criteria recorded.' }),
+          ] })
+        : jsx('div', { className: 'flex h-full min-h-48 items-center justify-center text-(--ui-text-tertiary)', children: 'Select a story to inspect it.' }) }),
+    ],
+  })
+}
+
 function SpecDigest({ projectId }) {
-  const [nodes, setNodes] = React.useState([])
+  const [state, setState] = React.useState({ loading: false, nodes: [], error: null })
   const [selectedNode, setSelectedNode] = React.useState(null)
   React.useEffect(() => {
-    if (!projectId) return
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, nodes: [], error: 'No project selected' })
+      return () => { active = false }
+    }
+    setState({ loading: true, nodes: [], error: null })
     host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
+      if (!active) return
       try {
-        const parsed = JSON.parse(output?.output || output?.stdout || '{}')
-        setNodes(Array.isArray(parsed) ? parsed : Array.isArray(parsed?.nodes) ? parsed.nodes : [])
-      } catch {
-        setNodes([])
+        if (output?.code !== undefined && output.code !== 0) throw new Error(`Spec Digest CLI exited ${output.code}`)
+        const parsed = parseTrailingJson(output?.output || output?.stdout || '')
+        if (parsed && parsed.ok === false) throw new Error(parsed.error?.message || parsed.error || 'Spec Digest unavailable')
+        const nodes = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.nodes) ? parsed.nodes : null
+        if (!nodes) throw new Error('Spec Digest returned an invalid nodes payload')
+        setState({ loading: false, nodes, error: null })
+      } catch (error) {
+        setState({ loading: false, nodes: [], error: String(error.message || error) })
       }
-    }).catch(() => setNodes([]))
+    }).catch((error) => active && setState({ loading: false, nodes: [], error: String(error.message || error) }))
+    return () => { active = false }
   }, [projectId])
   const criteria = parseSpecCriteria(selectedNode?.criteria_json)
   return jsxs('div', { className: 'flex flex-col gap-3 p-4', children: [
     jsx('h2', { children: 'Spec Digest' }, 'title'),
-    jsx('div', { className: 'flex flex-col gap-1', children: nodes.map((node) => jsx('button', {
+    state.loading ? jsx('p', { children: 'Loading Spec Digest…' }, 'loading') : null,
+    state.error ? jsx('p', { role: 'alert', children: `Spec Digest unavailable: ${state.error}` }, 'error') : null,
+    !state.loading && !state.error && state.nodes.length === 0 ? jsx('p', { children: 'No specification nodes yet.' }, 'empty') : null,
+    jsx('div', { className: 'flex flex-col gap-1', children: state.nodes.map((node) => jsx('button', {
       type: 'button', onClick: () => setSelectedNode(node), className: 'text-left',
       children: `${node.kind}: ${node.title}`,
     }, node.id)) }, 'nodes'),

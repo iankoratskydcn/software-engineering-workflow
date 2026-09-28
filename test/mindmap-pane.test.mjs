@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 const source = await readFile(resolve('plugin.js'), 'utf8')
 
 assert.match(source, /id: ['"]decision-hud-map-route['"][\s\S]*?path: ['"]\/decision-hud\/map['"][\s\S]*?render: \(\) => jsx\(HierarchyMapPane/)
-assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'Map'/)
+assert.match(source, /ENGINEERING_TABS[\s\S]*?label: 'MindMap'/)
 assert.doesNotMatch(source, /id: ['"]decision-hud-map-nav['"]/)
 
 assert.match(source, /host\.request\('cli\.exec', \{ argv: \['decision', 'node', 'tree', '--project', projectId\]/)
