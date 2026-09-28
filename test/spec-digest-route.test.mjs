@@ -23,7 +23,7 @@ host.request = async (method, params) => {
   }
   if (argv[0] === 'spec' && argv[1] === 'list') {
     const requestedProject = argv[argv.indexOf('--project-id') + 1]
-    return { code: 0, output: JSON.stringify([{ id: 'spec-1', kind: 'requirement', title: 'Seeded requirement', criteria_json: JSON.stringify(criteriaByProject[requestedProject]) }]) }
+    return { code: 0, output: JSON.stringify({ ok: true, nodes: [{ id: 'spec-1', kind: 'requirement', title: 'Seeded requirement', criteria_json: JSON.stringify(criteriaByProject[requestedProject]) }] }) }
   }
   return { code: 0, output: '[]' }
 }

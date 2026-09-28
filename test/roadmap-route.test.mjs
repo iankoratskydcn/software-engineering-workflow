@@ -24,8 +24,8 @@ test('Roadmap registers a route and is surfaced inside Software Engineering tabs
 
 test('Roadmap loads project-scoped data and ignores delayed stale responses', () => {
   const pane = roadmapSource()
-  assert.match(pane, /['"]roadmap['"],\s*['"]list['"],\s*['"]--project-id['"],\s*projectId/)
-  assert.match(pane, /let active = true/)
+  assert.match(pane, /\['roadmap',\s*['"]list['"],\s*['"]--project-id['"],\s*projectId/)
+  assert.match(pane, /const roadmap = res\?\.roadmap \|\| res \|\| \{\}/)
   assert.match(pane, /return \(\) => \{?\s*active = false/)
   assert.match(pane, /if \(!active\) return/)
   assert.match(pane, /\[projectId\]/)

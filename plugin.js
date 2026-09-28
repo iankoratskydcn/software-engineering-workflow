@@ -6285,7 +6285,8 @@ function RoadmapPane() {
     cliExec(roadmapListCommand)
       .then((res) => {
         if (!active) return
-        setState({ loading: false, lanes: res?.lanes || [], items: res?.items || [], error: null })
+        const roadmap = res?.roadmap || res || {}
+        setState({ loading: false, lanes: Array.isArray(roadmap.lanes) ? roadmap.lanes : [], items: Array.isArray(roadmap.items) ? roadmap.items : [], error: null })
       })
       .then(null, (error) => {
         if (!active) return
@@ -6974,8 +6975,8 @@ function SpecDigest({ projectId }) {
     if (!projectId) return
     host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
       try {
-        const parsed = JSON.parse(output?.output || output?.stdout || '[]')
-        setNodes(Array.isArray(parsed) ? parsed : [])
+        const parsed = JSON.parse(output?.output || output?.stdout || '{}')
+        setNodes(Array.isArray(parsed) ? parsed : Array.isArray(parsed?.nodes) ? parsed.nodes : [])
       } catch {
         setNodes([])
       }
