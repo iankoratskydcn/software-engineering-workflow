@@ -21,7 +21,7 @@ host.request = async (method, params) => {
   if (argv[0] === 'kanban' && argv[1] === 'boards' && argv[2] === 'list') {
     return { code: 0, output: JSON.stringify([{ slug: 'selected-board', project_id: 'canonical-project' }]) }
   }
-  if (argv[0] === 'spec' && argv[1] === 'list') {
+  if (argv[0] === 'decision' && argv[1] === 'spec' && argv[2] === 'list') {
     const requestedProject = argv[argv.indexOf('--project-id') + 1]
     return { code: 0, output: JSON.stringify({ ok: true, nodes: [{ id: 'spec-1', kind: 'requirement', title: 'Seeded requirement', criteria_json: JSON.stringify(criteriaByProject[requestedProject]) }] }) }
   }
@@ -45,7 +45,7 @@ try {
   mounted = mount(render)
   await flush()
   assert.match(mounted.container.textContent, /Seeded requirement/)
-  assert.ok(requests.some((argv) => argv[0] === 'spec' && argv[1] === 'list' && argv.includes('--project-id') && argv.includes('canonical-project')), 'route must fetch selected canonical project nodes')
+  assert.ok(requests.some((argv) => argv[0] === 'decision' && argv[1] === 'spec' && argv[2] === 'list' && argv.includes('--project-id') && argv.includes('canonical-project')), 'route must fetch selected canonical project nodes')
   const nodeButton = mounted.container.querySelector('button')
   assert.ok(nodeButton)
   click(nodeButton, mounted.dom)

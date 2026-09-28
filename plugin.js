@@ -6793,19 +6793,6 @@ function DecisionHudPane({ rest }) {
   // the same defaults loadSidebarSettings() itself returns on a bad parse
   // keeps this component from being a second place that bug can hide.
   const safeSidebarSettings = sidebarSettings && typeof sidebarSettings === 'object' ? sidebarSettings : DEFAULT_SIDEBAR_SETTINGS
-  const metricsSidebar = metricsReady
-    ? jsx(DeferredMetricsSidebar, {
-        side: safeSidebarSettings.side,
-        widthPx: safeSidebarSettings.widthPx,
-        projectId: selectedBoardProjectId,
-        rest,
-        onMetrics: handleMetricsChange,
-      })
-    : jsx('div', {
-        className: `flex shrink-0 items-center justify-center border-(--ui-stroke-secondary) text-xs text-(--ui-text-tertiary) ${safeSidebarSettings.side === 'right' ? 'border-l pl-3' : 'border-r pr-3'}`,
-        style: { width: `${safeSidebarSettings.widthPx}px`, maxWidth: `${safeSidebarSettings.widthPx}px` },
-        children: 'Metrics loading…',
-      })
   const mainColumn = jsxs('div', {
     className: 'relative flex min-w-0 flex-1 flex-col gap-3',
     children: [
@@ -6892,13 +6879,8 @@ function DecisionHudPane({ rest }) {
   })
 
   return jsx('div', {
-    className: 'relative flex h-full gap-3 p-3 text-sm',
-    // Sidebar renders on whichever side the user picked in settings — left
-    // is the historical default (sidebar first in the children array),
-    // right means the main column renders first instead.
-    children: safeSidebarSettings.side === 'right'
-      ? [mainColumn, metricsSidebar]
-      : [metricsSidebar, mainColumn],
+    className: 'relative flex h-full min-w-0 p-3 text-sm',
+    children: mainColumn,
   })
 }
 
@@ -6988,7 +6970,7 @@ function MindMapPane({ projectId }) {
       return () => { active = false }
     }
     setState({ loading: true, nodes: [], error: null })
-    host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
+    host.request('cli.exec', { argv: ['decision', 'spec', 'list', '--project-id', projectId] }).then((output) => {
       if (!active) return
       try {
         if (output?.code !== undefined && output.code !== 0) throw new Error(`MindMap CLI exited ${output.code}`)
@@ -7057,7 +7039,7 @@ function SpecDigest({ projectId }) {
       return () => { active = false }
     }
     setState({ loading: true, nodes: [], error: null })
-    host.request('cli.exec', { argv: ['spec', 'list', '--project-id', projectId] }).then((output) => {
+    host.request('cli.exec', { argv: ['decision', 'spec', 'list', '--project-id', projectId] }).then((output) => {
       if (!active) return
       try {
         if (output?.code !== undefined && output.code !== 0) throw new Error(`Spec Digest CLI exited ${output.code}`)

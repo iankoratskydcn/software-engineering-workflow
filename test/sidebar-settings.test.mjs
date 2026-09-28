@@ -37,10 +37,9 @@ assert.match(
   'MetricsSidebar must accept a width-related prop instead of a hardcoded class',
 )
 
-// 3. DecisionHudPane must read/write these settings the same way gridLayout
-// does, and pass side/width through, and the row of children must place
-// MetricsSidebar on the side the setting says (left is the append-order
-// default -- 'right' means MetricsSidebar renders AFTER the main column).
+// 3. DecisionHudPane may retain persisted settings for compatibility, but the
+// workflow page must no longer render the Agent Health metrics sidebar. The
+// main workflow column owns the full available width.
 const paneMatch = source.match(/function DecisionHudPane\(\{ rest \}\) \{[\s\S]*?\n\}\n/)
 assert.ok(paneMatch, 'DecisionHudPane function must exist')
 const pane = paneMatch[0]
@@ -54,10 +53,9 @@ assert.match(
   /const safeSidebarSettings = sidebarSettings[\s\S]{0,120}DEFAULT_SIDEBAR_SETTINGS/,
   'DecisionHudPane must derive a null/undefined-safe view of sidebarSettings before reading its fields (regression: a malformed persisted value must never crash the render — see sidebar-settings-crash.test.mjs)',
 )
-assert.match(
-  pane,
-  /(?:jsx\(DeferredMetricsSidebar,\s*\{[^}]*side:\s*safeSidebarSettings\.side|jsx\(MetricsSidebar,\s*\{[^}]*side:\s*safeSidebarSettings\.side)/,
-  'MetricsSidebar must be rendered with side: safeSidebarSettings.side (the null-safe view), not the raw possibly-malformed sidebarSettings',
-)
+assert.doesNotMatch(pane, /jsx\(DeferredMetricsSidebar/)
+assert.doesNotMatch(pane, /children:\s*safeSidebarSettings\.side === 'right'/)
+assert.match(pane, /className: 'relative flex h-full min-w-0 p-3 text-sm'/)
+assert.match(pane, /children: mainColumn/)
 
 console.log('sidebar-settings (position + size persisted) structural test passed')
