@@ -6169,6 +6169,29 @@ function deriveFlowLayout(steps) {
   return rows.map((step, index) => ({ ...step, x: (depths.get(step.id) || 0) * 180, y: index * 72 }))
 }
 
+function StarterWorkflowButton({ projectId, onGenerated }) {
+  const [busy, setBusy] = React.useState(false)
+  const [message, setMessage] = React.useState(null)
+  const run = async () => {
+    if (!projectId || busy) return
+    setBusy(true)
+    setMessage(null)
+    try {
+      await cliExec(['decision', 'workflow', 'seed-demo', '--project-id', projectId])
+      setMessage('Starter workflow generated')
+      onGenerated?.()
+    } catch (error) {
+      setMessage(String(error.message || error))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return jsxs('div', { className: 'flex items-center gap-2', children: [
+    jsx('button', { type: 'button', disabled: busy || !projectId, onClick: run, className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50', children: busy ? 'Generating…' : 'Generate starting workflow' }),
+    message ? jsx('span', { role: 'status', className: message === 'Starter workflow generated' ? 'text-(--ui-success,#59c18a)' : 'text-(--ui-danger,#e5484d)', children: message }) : null,
+  ] })
+}
+
 function FlowchartsPane() {
   const [boardSlug] = React.useState(loadSelectedBoardSlug)
   const { boards, loading: boardsLoading, error: boardsError } = useKanbanBoards()
@@ -6400,20 +6423,6 @@ function HierarchyMapPane() {
     return () => { active = false }
   }, [projectId, treeRevision])
 
-  const [starterBusy, setStarterBusy] = React.useState(false)
-  const generateStarterWorkflow = async () => {
-    if (!projectId || starterBusy) return
-    setStarterBusy(true)
-    try {
-      const res = await host.request('cli.exec', { argv: ['decision', 'workflow', 'seed-demo', '--project-id', projectId], timeout: 30 })
-      if (res && res.code !== 0) throw new Error(res.output || 'Starter workflow generation failed')
-      setTreeRevision((value) => value + 1)
-    } catch (error) {
-      setState((current) => ({ ...current, error: String(error.message || error) }))
-    } finally {
-      setStarterBusy(false)
-    }
-  }
   const attachedDecisions = selectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, selectedNode.id)) : []
   const inspectedDecisions = inspectedNode ? decisions.filter((decision) => hierarchyDecisionMatchesNode(decision, inspectedNode.id)) : []
   const content = boardsLoading || state.loading
@@ -6424,7 +6433,7 @@ function HierarchyMapPane() {
         ? jsx('section', { className: 'flex max-w-xl flex-col gap-3 rounded border border-(--ui-stroke-secondary) p-4', children: [
             jsx('div', { className: 'font-medium', children: 'No workflow data yet' }),
             jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Generate the project-scoped starter MindMap, roadmap, flowchart, architecture, risk, tradeoff, and Scrum Planning items.' }),
-            jsx('button', { type: 'button', className: 'w-fit rounded bg-(--ui-accent) px-3 py-2 text-sm font-medium text-white disabled:opacity-60', disabled: starterBusy || !projectId, onClick: generateStarterWorkflow, children: starterBusy ? 'Generating starter workflow…' : 'Generate starter workflow' }),
+            jsx(StarterWorkflowButton, { projectId, onGenerated: () => setTreeRevision((value) => value + 1) }),
           ] })
         : jsx('div', {
             role: 'tree',
@@ -6553,6 +6562,7 @@ function DecisionHudPane({ rest }) {
   // plus a same-origin 'storage' listener is the cross-pane channel.
   const [selectedBoard, setSelectedBoardState] = React.useState(loadSelectedBoardSlug)
   const [activeTab, setActiveTab] = React.useState('decision')
+  const [starterRevision, setStarterRevision] = React.useState(0)
   const setSelectedBoard = React.useCallback((slug) => {
     setSelectedBoardState(slug)
     saveSelectedBoardSlug(slug)
@@ -6801,19 +6811,24 @@ function DecisionHudPane({ rest }) {
         role: 'tablist',
         'aria-label': 'Software Engineering sections',
         className: 'flex shrink-0 gap-1 overflow-x-auto border-b border-(--ui-stroke-secondary) pb-1',
-        children: ENGINEERING_TABS.map((tab) => jsx('button', {
-          type: 'button',
-          role: 'tab',
-          'aria-selected': activeTab === tab.id,
-          onClick: () => setActiveTab(tab.id),
-          className: cn(
-            'flex shrink-0 items-center gap-1 rounded px-2.5 py-1.5 text-[0.78rem] transition-colors',
-            activeTab === tab.id
-              ? 'bg-(--chrome-action-active) text-(--ui-text-primary)'
-              : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover)',
-          ),
-          children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
-        }, tab.id)),
+        children: [
+          ...ENGINEERING_TABS.map((tab) => jsx('button', {
+            type: 'button',
+            role: 'tab',
+            'aria-selected': activeTab === tab.id,
+            onClick: () => setActiveTab(tab.id),
+            className: cn(
+              'flex shrink-0 items-center gap-1 rounded px-2.5 py-1.5 text-[0.78rem] transition-colors',
+              activeTab === tab.id
+                ? 'bg-(--chrome-action-active) text-(--ui-text-primary)'
+                : 'text-(--ui-text-secondary) hover:bg-(--chrome-action-hover)',
+            ),
+            children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
+          }, tab.id)),
+          activeTab !== 'decision'
+            ? jsx(StarterWorkflowButton, { projectId: selectedBoardProjectId, onGenerated: () => setStarterRevision((value) => value + 1) }, 'starter-workflow')
+            : null,
+        ],
       }),
       jsx('div', {
         className: 'flex min-h-0 flex-1 flex-col overflow-y-auto',
@@ -6837,16 +6852,16 @@ function DecisionHudPane({ rest }) {
                   ),
               }))
           : activeTab === 'spec'
-            ? jsx(SpecDigest, { projectId: selectedBoardProjectId })
+            ? jsx(SpecDigest, { key: `spec-${starterRevision}`, projectId: selectedBoardProjectId })
             : activeTab === 'map'
-              ? jsx(HierarchyMapPane, {})
+              ? jsx(HierarchyMapPane, { key: `map-${starterRevision}` })
               : activeTab === 'flowcharts'
-                ? jsx(FlowchartsPane, {})
+                ? jsx(FlowchartsPane, { key: `flowcharts-${starterRevision}` })
                 : activeTab === 'planning'
-                  ? jsx(ScrumPlanningPane, {})
+                  ? jsx(ScrumPlanningPane, { key: `planning-${starterRevision}` })
                   : activeTab === 'roadmap'
-                    ? jsx(RoadmapPane, {})
-                    : jsx(AgentDashboardCombinedPage, { rest }),
+                    ? jsx(RoadmapPane, { key: `roadmap-${starterRevision}` })
+                    : jsx(AgentDashboardCombinedPage, { key: `retrospective-${starterRevision}`, rest }),
       }),
       jsx(SettingsFullscreen, {
         isOpen: settingsFullscreenOpen,
