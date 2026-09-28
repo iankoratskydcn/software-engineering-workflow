@@ -6169,7 +6169,7 @@ function deriveFlowLayout(steps) {
   return rows.map((step, index) => ({ ...step, x: (depths.get(step.id) || 0) * 180, y: index * 72 }))
 }
 
-function StarterWorkflowButton({ projectId, onGenerated }) {
+function StarterWorkflowButton({ projectId, boardName, onGenerated }) {
   const [busy, setBusy] = React.useState(false)
   const [message, setMessage] = React.useState(null)
   const run = async () => {
@@ -6177,7 +6177,7 @@ function StarterWorkflowButton({ projectId, onGenerated }) {
     setBusy(true)
     setMessage(null)
     try {
-      await cliExec(['decision', 'workflow', 'seed-demo', '--project-id', projectId])
+      await cliExec(['decision', 'workflow', 'seed-demo', '--project-id', projectId, ...(boardName ? ['--root-title', boardName] : [])])
       setMessage('Starter workflow generated')
       onGenerated?.()
     } catch (error) {
@@ -6390,6 +6390,10 @@ function HierarchyMapPane() {
     const board = boards.find((item) => item && item.slug === effectiveBoardSlug)
     return board ? board.project_id || null : null
   }, [boards, effectiveBoardSlug])
+  const boardName = React.useMemo(() => {
+    const board = boards.find((item) => item && item.slug === effectiveBoardSlug)
+    return board?.name || effectiveBoardSlug || null
+  }, [boards, effectiveBoardSlug])
   const [state, setState] = React.useState({ loading: true, tree: null, error: null })
   const [treeRevision, setTreeRevision] = React.useState(0)
   const [selectedNode, setSelectedNode] = React.useState(null)
@@ -6433,7 +6437,7 @@ function HierarchyMapPane() {
         ? jsx('section', { className: 'flex max-w-xl flex-col gap-3 rounded border border-(--ui-stroke-secondary) p-4', children: [
             jsx('div', { className: 'font-medium', children: 'No workflow data yet' }),
             jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Generate the project-scoped starter MindMap, roadmap, flowchart, architecture, risk, tradeoff, and Scrum Planning items.' }),
-            jsx(StarterWorkflowButton, { projectId, onGenerated: () => setTreeRevision((value) => value + 1) }),
+            jsx(StarterWorkflowButton, { projectId, boardName, onGenerated: () => setTreeRevision((value) => value + 1) }),
           ] })
         : jsx('div', {
             role: 'tree',
@@ -6591,6 +6595,11 @@ function DecisionHudPane({ rest }) {
     if (!boardForControls) return null
     const board = boards.find((b) => b && b.slug === boardForControls)
     return board ? board.project_id || null : null
+  }, [boards, boardForControls])
+
+  const selectedBoardName = React.useMemo(() => {
+    const board = boards.find((b) => b && b.slug === boardForControls)
+    return board?.name || boardForControls || null
   }, [boards, boardForControls])
 
   const { decisions, loading, error, refresh } = useDecisionQueue(selectedBoardProjectId, gridLayout.cols * gridLayout.rows)
@@ -6826,7 +6835,7 @@ function DecisionHudPane({ rest }) {
             children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
           }, tab.id)),
           activeTab !== 'decision'
-            ? jsx(StarterWorkflowButton, { projectId: selectedBoardProjectId, onGenerated: () => setStarterRevision((value) => value + 1) }, 'starter-workflow')
+            ? jsx(StarterWorkflowButton, { projectId: selectedBoardProjectId, boardName: selectedBoardName, onGenerated: () => setStarterRevision((value) => value + 1) }, 'starter-workflow')
             : null,
         ],
       }),

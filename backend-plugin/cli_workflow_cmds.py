@@ -1,6 +1,7 @@
 """Idempotent starter data for the Software Engineering Workflow surfaces."""
 from __future__ import annotations
 
+import copy
 import json
 
 try:
@@ -30,11 +31,14 @@ def _story_id(tree):
     return None
 
 
-def seed_starter_workflow(conn, project_id: str) -> dict:
+def seed_starter_workflow(conn, project_id: str, root_title: str | None = None) -> dict:
     project_id = db._spec_project(project_id)
     root = db.get_spec_tree(conn, project_id=project_id)
     if root is None:
-        _seed_demo_node(db, conn, project_id, _DEMO_MINDMAP)
+        demo = copy.deepcopy(_DEMO_MINDMAP)
+        if root_title and root_title.strip():
+            demo["title"] = root_title.strip()
+        _seed_demo_node(db, conn, project_id, demo)
         root = db.get_spec_tree(conn, project_id=project_id)
     story_id = _story_id(root)
 
@@ -119,7 +123,7 @@ def seed_starter_workflow(conn, project_id: str) -> dict:
 def _cmd_workflow_seed_demo(args):
     connection = db.connect()
     try:
-        result = seed_starter_workflow(connection, args.project_id)
+        result = seed_starter_workflow(connection, args.project_id, args.root_title)
         print(json.dumps({"ok": True, "starter_workflow": result}))
     except Exception:
         connection.rollback()

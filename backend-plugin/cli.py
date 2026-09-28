@@ -432,6 +432,7 @@ def setup(p) -> None:
     workflow_verbs = workflow.add_subparsers(dest="workflow_verb", required=True)
     v = workflow_verbs.add_parser("seed-demo", help="Create idempotent starter data across every workflow surface")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--root-title", default=None, dest="root_title")
     v.set_defaults(func=_cmd_workflow_seed_demo)
 
     p.set_defaults(func=lambda args: p.print_help())
