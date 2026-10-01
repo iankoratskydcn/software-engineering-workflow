@@ -180,13 +180,23 @@ Append-only record of everything the retro reads.
 - **Write path:** only via an append command (`hermes decision observe add ...`) used by
   the human UI and agents. No edit or delete commands exist.
 - **Corrections:** a new record with `supersedes: <id>`. The original stays.
-- **Tamper evidence:** each record carries a monotonic `seq`; the retro reader rejects
-  gaps or reordering.
+- **Single writer:** `observe add` takes an exclusive interprocess file lock (flock /
+  Windows `msvcrt.locking`) around read-tail, seq allocation, append, and fsync, so
+  concurrent writers (human UI + many agents) cannot emit duplicate `seq` values.
+- **Tamper evidence:** each record carries a monotonic `seq` and `prev_hash` (SHA-256 of
+  the previous line), forming a hash chain. In-place edits, deletions, and reordering
+  break the chain. Truncation or a full rewrite with a fresh valid chain is caught by
+  **checkpoints**: each retro records the log head (`seq`, hash) in the Decision HUD
+  database via a human-confirmed action, and the reader verifies the log still
+  extends the last checkpoint.
+- **Threat model:** this detects accidental or careless agent writes, not a determined
+  adversary with full filesystem and DB access, and records written after the last
+  checkpoint can still be truncated undetected. True write isolation is out of scope.
 
 Record shape:
 
 ```json
-{"id": "obs_...", "seq": 412, "ts": "2026-10-01T14:55:02Z",
+{"id": "obs_...", "seq": 412, "prev_hash": "sha256:...", "ts": "2026-10-01T14:55:02Z",
  "day": "2026-10-01", "block": 2, "hour": 3,
  "kind": "estimate_actual", "feature_id": "spec_node_id or null",
  "author": "human | scrum_master | team_lead | qa | reviewer",
@@ -231,7 +241,7 @@ first so every later slice is verified.
 | # | Slice | Acceptance |
 |---|---|---|
 | 0 | **CI** for this repo; frontend test deps pinned so a fresh clone is green | Fresh clone, `npm test` and `pytest` pass in CI |
-| 1 | **Observation log** | `observe add` appends; no edit path exists; `supersedes` works; seq gaps are detected |
+| 1 | **Observation log** | `observe add` appends; no edit path exists; `supersedes` works; concurrent writers yield unique, gap-free `seq`; edited, deleted, reordered, or truncated records fail verification against the hash chain and last checkpoint |
 | 2 | **Day screen + planner** | Enter hours, get the R+N layout; live phase countdown; phase transitions logged |
 | **Manual trial** | Run one 1+2 block with slices 1-2 and Claude/Hermes sessions as the fleet | Log contains a full block; R produces at least one process change |
 | 3 | **One tree + Kanban link + DoR check** | Story created in Map shows in Spec; links to a Kanban card; commit blocked unless DoR passes |
@@ -253,7 +263,7 @@ Dogfooding: once slices 0-2 exist, all later slices are built using the cadence 
   show it; the size rule is explicitly "for now."
 - **Ping storms break focus.** Mitigation: ping count is logged; retro attacks the spec
   gaps behind them.
-- **Log tampering by agents.** Mitigation: append-only command, seq check.
+- **Log tampering by agents.** Mitigation: locked append-only command, hash chain, retro checkpoints.
 - **Scope of the consolidation itself.** Mitigation: thin slices; nothing is deleted
   before its replacement slice lands.
 
