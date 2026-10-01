@@ -85,7 +85,7 @@ ranked roadmap, showing which features realistically land today.
 |---|---|---|---|
 | :00-:05 | Sprint planning | Commit Ready feature(s) for this hour, within review capacity | Team leads decompose into Kanban cards, dispatch |
 | :05-:35 | Refinement | Spec N+1: map, criteria, diagrams, risks | Build N |
-| :15 / :30 / :45 | Standup (scrum of scrums) | Read one digest card | Scrum master rolls up all teams |
+| every 20 min | Standup (scrum of scrums) | Read one standup report | Observer gathers status across all teams (section 5.1) |
 | :35-:50 | Review / demo | Accept or reject N-1 against criteria + PR | QA agent pre-verified criteria |
 | :50-:55 | Decision sweep | Clear any decision cards not already handled | — |
 | :55-:60 | Mini retro | Log estimate vs actual; mark carryovers | Scrum master writes hour summary to log |
@@ -113,7 +113,8 @@ is logged with original estimate and hours consumed; it feeds the next forecast
 | Role | Who | Responsibility |
 |---|---|---|
 | Product owner / architect | Human | Spec, rank, accept/reject, decide |
-| Scrum master | Agent | Runs the clock, nudges phase changes, writes digests and hour summaries, enforces DoR/DoD |
+| Scrum master | Agent | Runs the clock, nudges phase changes, writes hour summaries, enforces DoR/DoD |
+| Observer | Agent (read-only) | Every 20 minutes, gathers a standup report on sprint progress (section 5.1) |
 | Team lead | Agent per feature | Decomposes a feature into cards, coordinates workers |
 | Dev workers | Subagents | Implement cards |
 | QA | Agent | Verifies acceptance criteria before human review |
@@ -121,7 +122,25 @@ is logged with original estimate and hours consumed; it feeds the next forecast
 
 Existing Hermes plumbing to reuse: Kanban dispatch, `auto_decompose_enabled`,
 `review_dispatch_enabled`, Kanban-block to Decision-card escalation, `host.notify`.
-New: the scrum master role and the clock it runs.
+New: the scrum master and observer roles, and the clock they run on.
+
+### 5.1 Observer: standup reports
+
+A read-only agent that gathers a report on how the sprint is progressing.
+
+- **When:** every 20 minutes while the human is online, i.e. a day is in progress and
+  the human is present (Day screen open and not idle). Paused during the R
+  (retro/plan) hour. Stops when the human goes offline; resumes on return.
+- **Reads:** Kanban cards per team, the current hour's committed features, elapsed time,
+  open blockers, the review buffer, and the observation log.
+- **Reports, per team:** feature, cards done / in progress / blocked, on-track vs the
+  hour (progress against time elapsed), open blockers, and anything at risk of
+  carryover. Plus fleet-wide: review buffer depth and forecast impact.
+- **Delivery:** one low-priority digest card plus a quiet desktop notification. It
+  never preempts a blocker ping.
+- **Read-only:** it never dispatches, reassigns, unblocks, or edits. Its only write is
+  appending the report to the observation log as a `standup` record, which the retro
+  can later compare against what actually happened.
 
 ## 6. Estimation
 
@@ -205,7 +224,7 @@ Record shape:
 ```
 
 Kinds (initial): `plan`, `estimate_actual`, `carryover`, `accept`, `reject`, `rework`,
-`blocker_raised`, `blocker_answered`, `hat_switch`, `fleet_idle`, `note`,
+`blocker_raised`, `blocker_answered`, `standup`, `hat_switch`, `fleet_idle`, `note`,
 `retro_finding`, `process_change`.
 
 ## 9. Screens
@@ -243,12 +262,13 @@ first so every later slice is verified.
 | 0 | **CI** for this repo; frontend test deps pinned so a fresh clone is green | Fresh clone, `npm test` and `pytest` pass in CI |
 | 1 | **Observation log** | `observe add` appends; no edit path exists; `supersedes` works; concurrent writers yield unique, gap-free `seq`; edited, deleted, reordered, or truncated records fail verification against the hash chain and last checkpoint |
 | 2 | **Day screen + planner** | Enter hours, get the R+N layout; live phase countdown; phase transitions logged |
-| **Manual trial** | Run one 1+2 block with slices 1-2 and Claude/Hermes sessions as the fleet | Log contains a full block; R produces at least one process change |
+| 2b | **Observer standups** | Fires every 20 min only while a day is active and the human present; silent during R; report appended as `standup`; makes no other writes |
+| **Manual trial** | Run one 1+2 block with slices 1-2b and Claude/Hermes sessions as the fleet | Log contains a full block; R produces at least one process change |
 | 3 | **One tree + Kanban link + DoR check** | Story created in Map shows in Spec; links to a Kanban card; commit blocked unless DoR passes |
 | 4 | **Plan screen** | Ranked features; hour slots; carryover moves work forward and logs it; forecast reads velocity from log |
 | 5 | **Blocker pings** | Kanban block becomes a context-complete Decision card plus a desktop notification; return-to-context works; ping logged |
 | 6 | **Review screen + buffer cap** | Accept/reject logged; dispatch refuses new work when buffer is full (policy A) |
-| 7 | **Scrum master agent** | Digest at :15/:30/:45; phase nudges; hour summary written to log |
+| 7 | **Scrum master agent** | Phase nudges; hour summary written to log |
 | 8 | **Retro screen** | Reads log for a block or day; shows estimate error, carryovers, blockers to spec gaps; records findings |
 | 9 | **Typed diagrams** | Create with kind; template per kind; renders; attaches to a node |
 | 10 | **Risks/tradeoffs on nodes** | Shown in Refine on the selected node |
