@@ -128,9 +128,11 @@ New: the scrum master and observer roles, and the clock they run on.
 
 A read-only agent that gathers a report on how the sprint is progressing.
 
-- **When:** every 20 minutes while the human is online, i.e. a day is in progress and
-  the human is present (Day screen open and not idle). Paused during the R
-  (retro/plan) hour. Stops when the human goes offline; resumes on return.
+- **When:** every 20 minutes while the human is online. Paused during the R
+  (retro/plan) hour.
+- **Online switch:** a manual on/off toggle on the Day screen. It turns off
+  automatically after 1 hour with no interaction in the app. Toggling on, toggling off,
+  and auto-off are each appended to the log as `presence` records.
 - **Reads:** Kanban cards per team, the current hour's committed features, elapsed time,
   open blockers, the review buffer, and the observation log.
 - **Reports, per team:** feature, cards done / in progress / blocked, on-track vs the
@@ -224,7 +226,7 @@ Record shape:
 ```
 
 Kinds (initial): `plan`, `estimate_actual`, `carryover`, `accept`, `reject`, `rework`,
-`blocker_raised`, `blocker_answered`, `standup`, `hat_switch`, `fleet_idle`, `note`,
+`blocker_raised`, `blocker_answered`, `standup`, `presence`, `hat_switch`, `fleet_idle`, `note`,
 `retro_finding`, `process_change`.
 
 ## 9. Screens
@@ -262,7 +264,7 @@ first so every later slice is verified.
 | 0 | **CI** for this repo; frontend test deps pinned so a fresh clone is green | Fresh clone, `npm test` and `pytest` pass in CI |
 | 1 | **Observation log** | `observe add` appends; no edit path exists; `supersedes` works; concurrent writers yield unique, gap-free `seq`; edited, deleted, reordered, or truncated records fail verification against the hash chain and last checkpoint |
 | 2 | **Day screen + planner** | Enter hours, get the R+N layout; live phase countdown; phase transitions logged |
-| 2b | **Observer standups** | Fires every 20 min only while a day is active and the human present; silent during R; report appended as `standup`; makes no other writes |
+| 2b | **Observer standups** | Fires every 20 min only while the online switch is on; switch turns off after 1 h without interaction; silent during R; report appended as `standup`; makes no other writes |
 | **Manual trial** | Run one 1+2 block with slices 1-2b and Claude/Hermes sessions as the fleet | Log contains a full block; R produces at least one process change |
 | 3 | **One tree + Kanban link + DoR check** | Story created in Map shows in Spec; links to a Kanban card; commit blocked unless DoR passes |
 | 4 | **Plan screen** | Ranked features; hour slots; carryover moves work forward and logs it; forecast reads velocity from log |
