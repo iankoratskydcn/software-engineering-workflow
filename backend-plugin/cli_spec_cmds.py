@@ -151,7 +151,7 @@ def _cmd_spec_list(args):
     def action(db, conn):
         project = db._spec_project(args.project_id)
         rows = conn.execute(
-            "SELECT id, project_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, created_at, updated_at "
+            "SELECT id, project_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, kanban_task_id, estimate, created_at, updated_at "
             "FROM spec_nodes WHERE project_id = ?" + (" AND kind = ?" if args.kind else "") +
             " ORDER BY kind, created_at, id",
             (project, args.kind) if args.kind else (project,),
@@ -162,7 +162,7 @@ def _cmd_spec_list(args):
 
 def _cmd_spec_update_node(args):
     def action(db, conn):
-        fields = {k: v for k, v in {"title": args.title, "status": args.status, "note": args.note, "metadata_json": args.metadata_json}.items() if v is not None}
+        fields = {k: v for k, v in {"title": args.title, "status": args.status, "note": args.note, "metadata_json": args.metadata_json, "estimate": args.estimate}.items() if v is not None}
         node = db.update_spec_node(conn, args.id, project_id=args.project_id, **fields)
         _print({"ok": True, "node": node})
     _run(args, action)
@@ -218,4 +218,18 @@ def _cmd_spec_delete_node(args):
         project = db._spec_project(args.project_id)
         _delete_node(conn, args.id, project)
         _print({"ok": True, "id": args.id, "project_id": project})
+    _run(args, action)
+
+
+def _cmd_spec_link_kanban(args):
+    """Link a spec node to a Kanban card; an empty --task-id unlinks it."""
+    def action(db, conn):
+        node = db.update_spec_node(conn, args.id, project_id=args.project_id, kanban_task_id=args.task_id.strip() or None)
+        _print({"ok": True, "node": node})
+    _run(args, action)
+
+
+def _cmd_spec_check_ready(args):
+    def action(db, conn):
+        _print({"ok": True, "node_id": args.id, "readiness": db.spec_node_readiness(conn, args.id, project_id=args.project_id)})
     _run(args, action)

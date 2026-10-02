@@ -147,7 +147,7 @@ COORDINATE_MAX = 100000
 
 # Newest schema version init_db migrates to. Bump together with the newest
 # _migrate_vN; the tests assert init_db lands exactly here.
-LATEST_SCHEMA_VERSION = 15
+LATEST_SCHEMA_VERSION = 16
 
 
 class BoundaryError(ValueError):
@@ -1328,6 +1328,35 @@ def _migrate_v15_days(conn: sqlite3.Connection) -> None:
         raise
 
 
+_SPEC_ESTIMATES = (1, 2, 3, 5, 8, 13)
+
+
+def _migrate_v16_spec_readiness(conn: sqlite3.Connection) -> None:
+    """Add the Kanban card link and the point estimate to spec nodes."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= 16:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(spec_nodes)")}
+        if "kanban_task_id" not in columns:
+            conn.execute("ALTER TABLE spec_nodes ADD COLUMN kanban_task_id TEXT")
+        if "estimate" not in columns:
+            conn.execute(
+                "ALTER TABLE spec_nodes ADD COLUMN estimate INTEGER "
+                f"CHECK (estimate IS NULL OR estimate IN {_SPEC_ESTIMATES})"
+            )
+        # A card is linked to at most one node in a project.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_kanban_task "
+            "ON spec_nodes(project_id, kanban_task_id) WHERE kanban_task_id IS NOT NULL"
+        )
+        conn.execute("PRAGMA user_version = 16")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -1441,6 +1470,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v13_scrum_planning(conn)
     _migrate_v14_observation_checkpoints(conn)
     _migrate_v15_days(conn)
+    _migrate_v16_spec_readiness(conn)
     conn.commit()
 
 
@@ -2638,6 +2668,49 @@ def _spec_validate_decision(conn: sqlite3.Connection, project_id: str, decision_
         raise BoundaryError("not_found", "decision does not belong to project")
 
 
+_READY_KINDS = ("feature", "story")
+MAX_READY_ESTIMATE = 5  # points; bigger than this does not fit one hour of fleet work (a hypothesis the trial tunes)
+
+
+def spec_readiness(*, kind: str, criteria_json: str | None, estimate: int | None) -> dict[str, Any]:
+    """Definition of Ready for a spec node: can it be committed to an hour?
+
+    Applies to features and stories only; a theme or epic is never "ready".
+    Checks acceptance criteria, an estimate, and the size rule. Not checked yet:
+    dependencies (they move onto spec nodes with the Plan screen) and noted risks
+    (they attach to nodes later), so a node can pass here and still need those.
+    """
+    if kind not in _READY_KINDS:
+        return {"applies": False, "ready": True, "checks": []}
+    try:
+        parsed = json.loads(criteria_json) if criteria_json else []
+    except (TypeError, ValueError):
+        parsed = None
+    valid = isinstance(parsed, list) and bool(parsed) and all(isinstance(c, str) and c.strip() for c in parsed)
+    checks = [{
+        "name": "criteria", "passed": valid,
+        "detail": f"{len(parsed)} acceptance criteria" if valid else "needs at least one acceptance criterion",
+    }, {
+        "name": "estimate", "passed": estimate is not None,
+        "detail": f"{estimate} points" if estimate is not None else "needs an estimate",
+    }]
+    if estimate is not None:
+        fits = estimate <= MAX_READY_ESTIMATE
+        checks.append({
+            "name": "size", "passed": fits,
+            "detail": f"fits one hour (at most {MAX_READY_ESTIMATE} points)" if fits
+            else f"{estimate} points is too big for one hour; split it to {MAX_READY_ESTIMATE} or fewer",
+        })
+    return {"applies": True, "ready": all(check["passed"] for check in checks), "checks": checks}
+
+
+def spec_node_readiness(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is None or (project_id is not None and row["project_id"] != _spec_project(project_id)):
+        raise BoundaryError("not_found", "resource not found")
+    return spec_readiness(kind=row["kind"], criteria_json=row["criteria_json"], estimate=row["estimate"])
+
+
 def create_spec_node(
     conn: sqlite3.Connection, *, project_id: str, kind: str, title: str,
     parent_id: str | None = None, level: int | None = None, status: str = "draft",
@@ -2687,7 +2760,7 @@ def create_spec_node(
 
 
 def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, **fields: Any) -> dict[str, Any]:
-    allowed = {"title", "status", "note", "description", "rationale", "criteria_json", "metadata_json", "parent_id", "level", "kind", "decision_id"}
+    allowed = {"title", "status", "note", "description", "rationale", "criteria_json", "metadata_json", "parent_id", "level", "kind", "decision_id", "kanban_task_id", "estimate"}
     unknown = set(fields) - allowed
     if unknown:
         raise BoundaryError("invalid_input", f"immutable or unsupported node fields: {sorted(unknown)}")
@@ -2716,7 +2789,29 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
             raise BoundaryError("invalid_input", "level must be an integer from 0 through 3")
         if "decision_id" in fields:
             _spec_validate_decision(conn, row["project_id"], fields["decision_id"])
+        if "estimate" in fields and fields["estimate"] is not None and (
+            isinstance(fields["estimate"], bool) or not isinstance(fields["estimate"], int)
+            or fields["estimate"] not in _SPEC_ESTIMATES
+        ):
+            raise BoundaryError("invalid_input", f"estimate must be one of {list(_SPEC_ESTIMATES)}")
+        if "kanban_task_id" in fields and fields["kanban_task_id"] is not None:
+            fields["kanban_task_id"] = validate_text(fields["kanban_task_id"], field="kanban_task_id", max_chars=ID_LIMIT)
+            holder = conn.execute(
+                "SELECT id, title FROM spec_nodes WHERE project_id = ? AND kanban_task_id = ? AND id != ?",
+                (row["project_id"], fields["kanban_task_id"], node_id),
+            ).fetchone()
+            if holder is not None:
+                raise BoundaryError("conflict", f"that Kanban task is already linked to {holder['title']!r} ({holder['id']})")
         effective_kind = fields.get("kind", row["kind"])
+        if fields.get("status") == "ready" and row["status"] != "ready":
+            readiness = spec_readiness(
+                kind=effective_kind,
+                criteria_json=fields.get("criteria_json", row["criteria_json"]),
+                estimate=fields.get("estimate", row["estimate"]),
+            )
+            if not readiness["ready"]:
+                failed = "; ".join(f"{c['name']}: {c['detail']}" for c in readiness["checks"] if not c["passed"])
+                raise BoundaryError("constraint", f"not ready: {failed}")
         effective_level = fields.get("level", row["level"])
         if effective_level != _SPEC_KINDS.index(effective_kind):
             raise BoundaryError("invalid_input", "kind and level must match")
