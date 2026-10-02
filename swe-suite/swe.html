@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
 <title>Software Engineering Workflow</title>
 <style>
   * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
@@ -49,6 +50,40 @@
 </div>
 <script>
 'use strict';
+// <core.js>
+// Pure logic shared by swe.html. No DOM, no I/O, no clock.
+// Mirror of backend-plugin/db.py (spec_readiness); vectors/readiness.json, generated
+// from the Python side, keeps the two in step. After editing, run `node swe-suite/build.mjs`
+// to re-embed this file into swe.html.
+const SweCore = (() => {
+  const READY_KINDS = ['feature', 'story'];
+  const MAX_READY_ESTIMATE = 5;
+  const ESTIMATES = [1, 2, 3, 5, 8, 13];
+
+  /** Definition of Ready: can this node be committed to an hour? `criteria_json` is a JSON string. */
+  function readiness({ kind, criteria_json, estimate }) {
+    if (!READY_KINDS.includes(kind)) return { applies: false, ready: true, checks: [] };
+    let parsed;
+    try { parsed = criteria_json ? JSON.parse(criteria_json) : []; } catch { parsed = null; }
+    const valid = Array.isArray(parsed) && parsed.length > 0 && parsed.every((c) => typeof c === 'string' && c.trim() !== '');
+    const hasEstimate = estimate !== null && estimate !== undefined;
+    const checks = [
+      { name: 'criteria', passed: valid, detail: valid ? `${parsed.length} acceptance criteria` : 'needs at least one acceptance criterion' },
+      { name: 'estimate', passed: hasEstimate, detail: hasEstimate ? `${estimate} points` : 'needs an estimate' },
+    ];
+    if (hasEstimate) {
+      const fits = estimate <= MAX_READY_ESTIMATE;
+      checks.push({
+        name: 'size', passed: fits,
+        detail: fits ? `fits one hour (at most ${MAX_READY_ESTIMATE} points)` : `${estimate} points is too big for one hour; split it to ${MAX_READY_ESTIMATE} or fewer`,
+      });
+    }
+    return { applies: true, ready: checks.every((c) => c.passed), checks };
+  }
+
+  return { readiness, ESTIMATES, MAX_READY_ESTIMATE };
+})();
+// </core.js>
 // ---- constants -------------------------------------------------------------
 const TABS = [
   ['mindmap', 'MindMap'], ['roadmap', 'Roadmap'], ['risk', 'Risk & Tradeoffs'], ['flow', 'Flowcharts'],
@@ -110,6 +145,8 @@ async function loadSuite(storage) {
     if (typeof n.title !== 'string' || !n.title || n.title.length > LIMITS.text) { bad('invalid title'); continue; }
     if (n.parent_id != null && typeof n.parent_id !== 'string') { bad('invalid parent_id'); continue; }
     if (n.criteria != null && (!Array.isArray(n.criteria) || n.criteria.length > LIMITS.criteria || !n.criteria.every((c) => typeof c === 'string' && c.length <= LIMITS.text))) { bad('criteria must be an array of strings'); continue; }
+    if (n.estimate != null && !SweCore.ESTIMATES.includes(n.estimate)) { bad(`estimate must be one of ${SweCore.ESTIMATES.join(', ')}`); continue; }
+    if (n.task_ref != null && (typeof n.task_ref !== 'string' || n.task_ref.length > 200)) { bad('task_ref must be a short string'); continue; }
     seen.add(n.id);
     const md = await storage.read(p.replace(/\.json$/, '.md'));
     nodes.push({ ...n, criteria: n.criteria || [], description: md && md.length <= LIMITS.text ? md : null });
@@ -183,6 +220,12 @@ function nodeDetail(n, byId) {
     el('div', { style: 'font-size:15px;font-weight:600;color:#fff;margin-bottom:6px' }, n.title),
     el('div', { class: 'path mono', style: 'margin-bottom:8px' }, pathOf(n, byId) + (n.status ? `  ·  ${n.status}` : '')),
   ];
+  const ready = SweCore.readiness({ kind: n.kind, criteria_json: JSON.stringify(n.criteria), estimate: n.estimate ?? null });
+  if (ready.applies) {
+    out.push(el('div', { 'data-testid': 'readiness', class: ready.ready ? 'muted' : 'warn' },
+      ready.ready ? 'Ready to commit' : 'Not ready: ' + ready.checks.filter((c) => !c.passed).map((c) => c.detail).join('; ')));
+  }
+  if (n.task_ref) out.push(el('div', { class: 'muted mono' }, `task ${n.task_ref}`));
   if (n.note) out.push(el('div', { class: 'muted' }, n.note));
   if (n.description) out.push(el('pre', {}, n.description));
   if (n.criteria.length) out.push(el('h4', { class: 'muted' }, 'Acceptance criteria'), el('ul', {}, n.criteria.map((c) => el('li', {}, c))));

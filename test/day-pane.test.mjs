@@ -107,6 +107,11 @@ test('the Day pane is a route and the first workflow tab, not another sidebar en
   assert.ok(!routes.some((item) => /day/.test(item.id) && item.area === 'sidebar.nav'))
 })
 
+// flush() is a fixed number of event-loop turns, which is too few when the machine is busy.
+async function until(mounted, pattern) {
+  for (let i = 0; i < 100 && !pattern.test(text(mounted)); i++) await flush()
+}
+
 test('with no active day it previews the layout for the hours entered and starts the day', async () => {
   let started = false
   await withHost((argv) => {
@@ -116,13 +121,13 @@ test('with no active day it previews the layout for the hours entered and starts
     throw new Error(`unexpected argv ${argv.join(' ')}`)
   }, async (calls) => {
     const mounted = mount(() => dayRoute.render())
-    await flush()
+    await until(mounted, /Layout: 1\+4/)
     assert.deepEqual(mounted.errors, [])
     assert.match(text(mounted), /Layout: 1\+4/)  // the default of 5 hours
     assert.ok(hasCall(calls, 'decision', 'day', 'plan', '--hours', '5'))
 
     setInputValue(mounted, mounted.container.querySelector('input'), '12')
-    await flush()
+    await until(mounted, /Layout: 1\+5, 1\+5/)
     assert.match(text(mounted), /Layout: 1\+5, 1\+5/)
 
     setInputValue(mounted, mounted.container.querySelector('input'), '3')
