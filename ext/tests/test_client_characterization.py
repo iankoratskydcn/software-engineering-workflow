@@ -1,7 +1,8 @@
-"""Characterization of the copied OMH Jev client (behavior as received, before Laya rewire).
+"""Characterization of the OMH Jev client safety properties we keep.
 
-These pin the safety properties we are keeping. They must pass on the
-unmodified copy; a later change that breaks one is a deliberate decision.
+Written against the unmodified copy (commit ef9668b, all green), then moved to
+the `endpoint=` API when routes were replaced by LayaEndpoint. A later change
+that breaks one is a deliberate decision.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ class Script:
 def ask(script, **kw):
     sleeps = []
     out = c.send_ask(
-        route=c.ROUTE_TYPESAFE,
+        endpoint=c.LayaEndpoint("10.0.0.5"),
         key=KEY,
         body=BODY,
         user_agent="t",
@@ -162,17 +163,6 @@ def test_request_has_exactly_three_body_keys_and_bearer_header():
     req = script.requests[0]
     assert set(json.loads(req.data)) == {"model", "state", "questions"}
     assert req.get_method() == "POST"
-
-
-def test_non_https_route_refused(monkeypatch):
-    monkeypatch.setitem(c.ROUTES, "x", ("http://h/v1/systemone", "K"))
-    with pytest.raises(c.AskRequestError):
-        c.send_ask(route="x", key=KEY, body=BODY, user_agent="t", transport=Script())
-
-
-def test_unknown_route_refused():
-    with pytest.raises(c.AskRequestError):
-        c.send_ask(route="nope", key=KEY, body=BODY, user_agent="t", transport=Script())
 
 
 # --- key redaction -----------------------------------------------------------

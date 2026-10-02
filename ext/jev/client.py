@@ -1,49 +1,27 @@
-"""The one network client in `src/`: POST typed questions to Jev and classify the reply.
+"""Hardened client for our LAN Laya (local Jev). Adapted from OMH's jev_ask_client.
 
-`omh_jev_ask` is the only caller (`tests/test_handoff_safety_contract_enforcement.py`
-pins that no other module imports this one). Everything here exists to keep a
-single explicit, user-requested call narrow:
+Derived from rlaope/oh-my-hermes@4ab239b `jev_ask_client.py` (MIT); see
+`vendor/omh/PROVENANCE.json`. What changed: the two public routes are gone and
+replaced by `LayaEndpoint`, which only accepts a LAN host so the bearer key
+cannot be pointed at the internet; an optional private CA file backs TLS; a
+successful reply is scrubbed of the key before it is returned.
 
-* Two routes, fixed in `ROUTES`. The URL never comes from an argument or an
-  environment variable. `TYPESAFE_BASE_URL` is deliberately ignored: honoring
-  it would let one variable send the user's key to any host.
+Kept as received:
+
 * HTTPS only, default certificate verification, and every 3xx refused.
   CPython's redirect handler copies `Authorization` onto the redirected
-  request, including to another host, so a redirect is a non-answer here.
+  request, so a redirect is a non-answer here.
 * Bounded both ways: a request body above `MAX_REQUEST_BYTES` is refused
-  before a socket opens, and a response is read to `MAX_RESPONSE_BYTES` at
-  most.
-* A retry only follows a reply that says the request was NOT processed: 429
-  (rate limited) and 503/529 (overloaded), within `TOTAL_DEADLINE_SECONDS`.
-  Any other 5xx -- 500, 502, 520-523 -- may come after the origin received
-  and billed the request, so it is reported as `server_error` and the caller
-  decides, the same way a timeout or a connection failure is never retried.
-  A gateway timeout (504, 524) is a timeout in that sense -- the gateway gave
-  up after the origin may have received the request -- so it is reported as
-  `timeout`.
-* The deadline also bounds the read: the body is read in chunks, the
-  deadline is checked between them, and before each read the socket's own
-  timeout is set to the time left, because urllib's timeout applies per
-  socket operation and a server that trickles bytes would otherwise hold the
-  turn a full attempt timeout past it. Residual: name resolution
-  (`getaddrinfo`) has no timeout in the standard library, and the status line
-  and headers are read inside `urlopen` under the per-operation attempt
-  timeout; neither is bounded by the deadline.
-* The key lives in one local variable of `send_ask`. It is never returned,
-  never put in an error string, and any server text echoed back -- an error
-  excerpt, the served model id -- has JSON escapes decoded and then every run
-  that matches a substring of the key at least `MIN_KEY_FRAGMENT_CHARS` long,
-  compared case-insensitively, redacted before it leaves this module; an echo
-  that spells such a substring with whitespace between its characters
-  redacts the whole excerpt.
+  before a socket opens, and a response is read to `MAX_RESPONSE_BYTES` at most.
+* A retry only follows a reply that says the request was NOT processed: 429,
+  503, 529, within `TOTAL_DEADLINE_SECONDS`. Other 5xx may have been processed,
+  so they are reported, never retried; a gateway timeout is a timeout.
+* The deadline bounds the read as well as the connect.
+* The key lives in `send_ask` only and is never returned or put in an error
+  string; any server text echoed back is scrubbed of every key substring of
+  `MIN_KEY_FRAGMENT_CHARS` or more.
 
-Wire facts are `documented_not_observed` (docs.typesafe.ai/api.md and
-openrouter.ai/docs/guides/community/typesafe-sdk.md, read 2026-09-23). Proxy
-variables such as `HTTPS_PROXY` are honored by urllib, so a configured proxy
-sees the destination host; `omh doctor` says so.
-
-Stdlib and intra-bundle imports only: Hermes loads this directory with its own
-interpreter.
+Stdlib only.
 """
 
 from __future__ import annotations
@@ -52,6 +30,8 @@ import json
 import math
 import random
 import re
+import ipaddress
+import ssl
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -59,36 +39,58 @@ from typing import Any, Final
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
-ROUTE_TYPESAFE: Final = "typesafe"
-ROUTE_OPENROUTER: Final = "openrouter"
+ENDPOINT_PATH: Final = "/v1/systemone"
+# A key-bearing request may only go to a host that cannot be the public internet:
+# a private/loopback IP literal, or a name under one of these LAN-only suffixes.
+LAN_HOST_SUFFIXES: Final = (".lan", ".local", ".internal", ".home.arpa")
+_HOST_LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 
-# route id -> (URL, key variable name). A third route is a code change with a
-# cited source, not configuration.
-ROUTES: Final[dict[str, tuple[str, str]]] = {
-    ROUTE_TYPESAFE: ("https://api.typesafe.ai/v1/systemone", "TYPESAFE_API_KEY"),
-    ROUTE_OPENROUTER: ("https://openrouter.ai/api/v1/systemone", "OPENROUTER_API_KEY"),
-}
 
-# Mirror of `MODEL_CONTRACTS["jev-1.13.0"]["served_ids"]` plus every declared
-# projection row whose contract is `jev-1.13.0` (`src/coding/model_contracts.py`).
-# The bundle cannot import that module; `tests/test_jev_ask_tool.py` pins the
-# mirror.
-FIRST_PARTY_MODEL_IDS: Final = ("jev-1.13.0", "jev-latest", "jev-preview")
-# OpenRouter's documented spelling of the pinned version
-# (openrouter.ai/docs/guides/community/typesafe-sdk.md, read 2026-09-23:
-# `jev-1.13` maps to `typesafe/jev-1.13`). Accepted on that route only.
-OPENROUTER_ONLY_MODEL_IDS: Final = ("jev-1.13",)
-DEFAULT_MODEL: Final = "jev-latest"
-# The version a threshold was written against. The vendor advises pinning a
-# version when thresholds are tuned (docs.typesafe.ai/models.md); presets do.
-PINNED_MODEL_BY_ROUTE: Final[dict[str, str]] = {
-    ROUTE_TYPESAFE: "jev-1.13.0",
-    ROUTE_OPENROUTER: "jev-1.13",
-}
+@dataclass(frozen=True)
+class LayaEndpoint:
+    """Where Laya lives. Construction fails closed unless the host is LAN-only."""
 
-# Mirror of `_JEV_1_13["pricing_usd_per_mtok"]["input"]`, read 2026-09-21.
-INPUT_PRICE_USD_PER_MTOK: Final = 0.042
-PRICE_READ_ON: Final = "2026-09-21"
+    host: str
+    port: int = 443
+    ca_file: str | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.port, bool) or not isinstance(self.port, int) or not 1 <= self.port <= 65535:
+            raise AskRequestError("port must be an integer from 1 to 65535")
+        if not _is_lan_host(self.host):
+            raise AskRequestError("host must be a private/loopback IP or a .lan/.local/.internal/.home.arpa name")
+        if self.ca_file is not None:
+            try:
+                ssl.create_default_context(cafile=self.ca_file)
+            except (OSError, ssl.SSLError, TypeError, ValueError) as error:
+                raise AskRequestError("ca_file could not be loaded") from error
+
+    @property
+    def url(self) -> str:
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return f"https://{host}:{self.port}{ENDPOINT_PATH}"
+
+
+def _is_lan_host(host: object) -> bool:
+    if not isinstance(host, str) or not host or host != host.strip() or not host.isascii():
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if address.is_unspecified or address.is_multicast:
+            return False
+        return bool(address.is_private or address.is_loopback)
+    lowered = host.lower()
+    if lowered != host:
+        return False
+    for suffix in LAN_HOST_SUFFIXES:
+        if host.endswith(suffix) and len(host) > len(suffix):
+            labels = host[: -len(suffix)].split(".")
+            return all(_HOST_LABEL.match(label) for label in labels)
+    return False
+
 
 MAX_REQUEST_BYTES: Final = 256 * 1024
 MAX_RESPONSE_BYTES: Final = 1024 * 1024
@@ -179,7 +181,16 @@ class _RefuseRedirects(HTTPRedirectHandler):
         return None
 
 
-def _default_transport(request: Request, timeout: float) -> TransportReply:
+def _make_transport(endpoint: LayaEndpoint) -> Transport:
+    context = ssl.create_default_context(cafile=endpoint.ca_file)
+
+    def transport(request: Request, timeout: float) -> TransportReply:
+        return _default_transport(request, timeout, context)
+
+    return transport
+
+
+def _default_transport(request: Request, timeout: float, context: ssl.SSLContext | None = None) -> TransportReply:
     """Send through a stdlib opener that follows no redirect.
 
     `build_opener` still installs the default proxy handler, so `HTTPS_PROXY`
@@ -188,7 +199,7 @@ def _default_transport(request: Request, timeout: float) -> TransportReply:
     rather than raised.
     """
     deadline = time.monotonic() + timeout
-    opener = build_opener(_RefuseRedirects(), HTTPSHandler())
+    opener = build_opener(_RefuseRedirects(), HTTPSHandler(context=context))
     try:
         with opener.open(request, timeout=timeout) as response:
             body = _read_bounded(response, deadline)
@@ -247,7 +258,7 @@ def _bound_socket_timeout(response: Any, seconds: float) -> None:
 
 def _header_view(headers: object) -> dict[str, str]:
     view: dict[str, str] = {}
-    for name in ("retry-after", "retry-after-ms", "x-typesafe-request-id"):
+    for name in ("retry-after", "retry-after-ms", "x-request-id"):
         value = headers.get(name) if hasattr(headers, "get") else None
         if value is not None:
             view[name] = str(value)[:64]
@@ -265,7 +276,7 @@ def build_request_body(model: str, state: object, questions: Mapping[str, Any]) 
 
 def send_ask(
     *,
-    route: str,
+    endpoint: LayaEndpoint,
     key: str,
     body: bytes,
     user_agent: str,
@@ -281,12 +292,8 @@ def send_ask(
     not in the result and not in any message: a server excerpt is scrubbed of
     it before it is returned.
     """
-    if route not in ROUTES:
-        raise AskRequestError(f"route must be one of {', '.join(ROUTES)}")
-    url, _ = ROUTES[route]
-    if not url.startswith("https://"):
-        raise AskRequestError("only HTTPS routes are sent")
-    send = transport or _default_transport
+    url = endpoint.url
+    send = transport or _make_transport(endpoint)
     started = clock()
     deadline = started + TOTAL_DEADLINE_SECONDS
     attempts = 0
@@ -321,7 +328,7 @@ def send_ask(
             if parsed is None:
                 return _outcome(STATUS_MALFORMED_RESPONSE, attempts, started, clock, api_status=reply.status)
             result = _outcome(STATUS_ANSWERED, attempts, started, clock, api_status=reply.status)
-            result["reply"] = parsed
+            result["reply"] = _scrub_value(parsed, key)
             return result
         retry_after = _retry_after_seconds(reply.headers)
         extra: dict[str, Any] = {"api_status": reply.status}
@@ -340,6 +347,17 @@ def send_ask(
             return _outcome(status, attempts, started, clock, **extra)
         sleep(wait)
         backoff *= 2
+
+
+def _scrub_value(value: Any, key: str) -> Any:
+    """`value` with every string (and mapping key) in it scrubbed of the key."""
+    if isinstance(value, str):
+        return scrub_key(value, key)
+    if isinstance(value, list):
+        return [_scrub_value(item, key) for item in value]
+    if isinstance(value, dict):
+        return {scrub_key(str(k), key): _scrub_value(v, key) for k, v in value.items()}
+    return value
 
 
 def _outcome(
@@ -670,38 +688,20 @@ def _probability_map(value: object, keys: list[str], question_id: str) -> dict[s
     return {key: _unit(value[key], question_id) for key in keys}
 
 
-def cost_for(route: str, usage: Mapping[str, Any]) -> dict[str, Any]:
-    """Cost of one answered ask, with where the number came from; never a silent 0."""
-    if route == ROUTE_OPENROUTER:
-        gateway_cost = usage.get("gateway_cost")
-        if gateway_cost is None:
-            return {"cost_usd": None, "cost_source": "unknown", "price_read_on": PRICE_READ_ON}
-        return {"cost_usd": float(gateway_cost), "cost_source": "reported_by_gateway", "price_read_on": PRICE_READ_ON}
-    tokens = usage.get("input_tokens")
-    if not isinstance(tokens, int):
-        return {"cost_usd": None, "cost_source": "unknown", "price_read_on": PRICE_READ_ON}
-    return {
-        "cost_usd": round(tokens * INPUT_PRICE_USD_PER_MTOK / 1_000_000, 9),
-        "cost_source": "estimated_from_list_price",
-        "price_read_on": PRICE_READ_ON,
-    }
+def cost_for(usage: Mapping[str, Any]) -> dict[str, Any]:
+    """Laya runs on our own hardware: no per-token spend."""
+    return {"cost_usd": 0.0, "cost_source": "local"}
 
 
 __all__ = [
     "ASK_STATUSES",
     "AskRequestError",
-    "DEFAULT_MODEL",
-    "FIRST_PARTY_MODEL_IDS",
-    "INPUT_PRICE_USD_PER_MTOK",
+    "ENDPOINT_PATH",
+    "LayaEndpoint",
     "MAX_REQUEST_BYTES",
     "MAX_RESPONSE_BYTES",
     "MalformedReply",
-    "OPENROUTER_ONLY_MODEL_IDS",
-    "PINNED_MODEL_BY_ROUTE",
     "RETRYABLE_STATUSES",
-    "ROUTES",
-    "ROUTE_OPENROUTER",
-    "ROUTE_TYPESAFE",
     "SUCCESS_STATUS",
     "TransportReply",
     "build_request_body",

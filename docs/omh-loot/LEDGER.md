@@ -61,8 +61,20 @@ Looted code sits in `vendor/omh/` (frozen verbatim). Rewired code goes elsewhere
 
 `vendor/omh/` stays verbatim; these are fixed only in the rewired copy.
 
+## Status: batch 1 rewired for Laya (`ext/jev/`)
+
+Test-first: 61 characterization tests green on the unmodified copy (`ef9668b`), then red tests
+for the target (50 failing), then implementation, now 113 green (`cd ext && python -m pytest`).
+
+- `LayaEndpoint(host, port, ca_file)`: LAN-only (private/loopback IP, or `.lan/.local/.internal/.home.arpa`). Public IPs and hostnames, userinfo, ports in host, and bad ports are refused at construction. Real TLS round trip tested on loopback with a private CA; untrusted cert is a `network_error` and the key never reaches the server.
+- External routes, pricing and model-pin constants removed.
+- Review defect 1 fixed: success reply deep-scrubbed of the key.
+- Review defect 2 fixed: `done_check/v1` returns `objection_unsupported` when supports < 0.5.
+- Rescan of `ext/jev`: score 0, no issues (partial coverage, parser limit on `client.py`).
+- Still open: Laya model id and any wire differences from `/v1/systemone` (assumed same wire); `jev_consent` decision; preset thresholds are unmeasured and `action_check/v1` numbers came from another plugin's different questions.
+
 ## Next steps
 
-1. Characterization tests for batch 1 (`jev_ask_client` first: redirect refusal, size/deadline bounds, key redaction, retry matrix).
-2. Rewire `ROUTES` to local Jev (test-first), add fail-closed "unavailable != approval" test.
+1. Add fail-closed "Laya unavailable != approval" test at the tool/policy boundary (`policy_result` already maps non-answers to the preset's fail outcome; test it end to end with the client).
+2. Decide `jev_consent`.
 3. Size/scan closure for `verification_plan`/`handoff_contract` (batch 2), then `approval_receipts`.

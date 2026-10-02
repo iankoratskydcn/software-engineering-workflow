@@ -299,6 +299,11 @@ def _done_check_ladder(
         return "objection_contradicted", "contradicts>=0.5", []
     if float(probabilities.get("says_nothing", 0.0)) >= 0.5:
         return "objection_unsupported", "says_nothing>=0.5", []
+    # Review finding: uncertainty split across both objection categories left
+    # every cut below 0.5 and read as no objection. Without positive support
+    # the claim is unsupported.
+    if float(probabilities.get("supports", 0.0)) < 0.5:
+        return "objection_unsupported", "supports<0.5", []
     if _noul_value(answers, "addresses_stated_goal") < 0.3:
         return "objection_off_goal", "addresses_stated_goal<0.3", []
     return "no_objection", "no rule fired", []
