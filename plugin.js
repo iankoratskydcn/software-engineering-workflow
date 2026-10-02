@@ -4715,7 +4715,183 @@ function ScrumPlanningPane() {
   ] })
 }
 
+const DAY_HATS = [
+  { id: 'spec', label: 'Spec' },
+  { id: 'review', label: 'Review' },
+  { id: 'decide', label: 'Decide' },
+  { id: 'retro', label: 'Retro' },
+]
+
+const DAY_CEREMONY_LABELS = {
+  sprint_planning: 'Sprint planning',
+  refinement: 'Refinement',
+  review: 'Review',
+  decision_sweep: 'Decision sweep',
+  mini_retro: 'Mini retro',
+  retro_review: 'Retro: review the log',
+  process_changes: 'Retro: process changes',
+  block_planning: 'Retro: plan the block',
+  ready_first_feature: 'Retro: ready the first feature',
+}
+
+function formatCountdown(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')
+  const rest = String(seconds % 60).padStart(2, '0')
+  return hours > 0 ? `${hours}:${minutes}:${rest}` : `${minutes}:${rest}`
+}
+
+function formatClockTime(iso) {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function DayPane() {
+  const [snapshot, setSnapshot] = React.useState({ loading: true, error: null, data: null, fetchedAt: 0 })
+  const [nowMs, setNowMs] = React.useState(0)
+  const [revision, setRevision] = React.useState(0)
+  const [busy, setBusy] = React.useState(false)
+  const [hours, setHours] = React.useState('5')
+  const [preview, setPreview] = React.useState({ plan: null, error: null })
+  const data = snapshot.data
+  const active = data?.active === true
+
+  React.useEffect(() => {
+    let live = true
+    cliExec(['decision', 'day', 'status']).then((result) => {
+      if (!live) return
+      const at = Date.now()
+      setNowMs(at)
+      setSnapshot({ loading: false, error: null, data: result, fetchedAt: at })
+    }).catch((error) => {
+      if (live) setSnapshot((current) => ({ ...current, loading: false, error: String(error.message || error) }))
+    })
+    return () => { live = false }
+  }, [revision])
+
+  // Seconds until the running phase (or the day's start) ends, counted down locally
+  // from the moment the status arrived. When it reaches zero the status is refetched.
+  const deadline = !active ? null
+    : data.state === 'in_progress' ? data.current?.phase?.seconds_remaining ?? null
+      : data.state === 'not_started' ? data.starts_in_seconds ?? null
+        : null
+  const remaining = deadline == null ? null : deadline - Math.floor((nowMs - snapshot.fetchedAt) / 1000)
+
+  React.useEffect(() => {
+    if (deadline == null) return undefined
+    const timer = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [deadline, snapshot.fetchedAt])
+
+  React.useEffect(() => {
+    if (remaining != null && remaining <= 0 && nowMs - snapshot.fetchedAt >= 900) setRevision((value) => value + 1)
+  }, [remaining])
+
+  const hoursValue = Number.parseInt(hours, 10)
+  React.useEffect(() => {
+    let live = true
+    if (!data || active || snapshot.loading || Number.isNaN(hoursValue)) {
+      setPreview({ plan: null, error: null })
+      return () => { live = false }
+    }
+    cliExec(['decision', 'day', 'plan', '--hours', String(hoursValue)]).then((result) => {
+      if (live) setPreview({ plan: result?.plan ?? null, error: null })
+    }).catch((error) => {
+      if (live) setPreview({ plan: null, error: String(error.message || error) })
+    })
+    return () => { live = false }
+  }, [hoursValue, active, snapshot.loading, data == null])
+
+  const act = async (argv) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cliExec(argv)
+      setRevision((value) => value + 1)
+    } catch (error) {
+      setSnapshot((current) => ({ ...current, error: String(error.message || error) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const button = 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50'
+  let body
+  if (snapshot.loading) {
+    body = jsx('p', { children: 'Loading Day…' })
+  } else if (!data) {
+    // The day's state is unknown, so offering to start one could duplicate it.
+    body = jsx('button', {
+      type: 'button', className: `${button} self-start`,
+      onClick: () => { setSnapshot((current) => ({ ...current, loading: true, error: null })); setRevision((value) => value + 1) },
+      children: 'Retry',
+    })
+  } else if (!active) {
+    body = jsxs('div', { className: 'flex flex-col gap-3', children: [
+      jsxs('label', { className: 'flex items-center gap-2', children: [
+        'Hours available today',
+        jsx('input', {
+          type: 'number', min: 3, max: 24, value: hours, 'aria-label': 'Hours available today',
+          onChange: (event) => setHours(event.target.value),
+          className: 'w-20 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1',
+        }),
+      ] }),
+      preview.error ? jsx('p', { role: 'alert', children: preview.error }) : null,
+      preview.plan ? jsx('p', { 'data-testid': 'day-layout', children: `Layout: ${preview.plan.layout} (retro + work hours per block)` }) : null,
+      jsx('button', {
+        type: 'button', className: `${button} self-start`, disabled: busy || !preview.plan,
+        onClick: () => act(['decision', 'day', 'start', '--hours', String(hoursValue)]),
+        children: 'Start day',
+      }),
+    ] })
+  } else {
+    const current = data.current
+    const phase = current?.phase
+    const blockCount = data.day.blocks
+    const blocks = []
+    for (const hour of data.day.hours) {
+      if (!blocks[hour.block - 1]) blocks[hour.block - 1] = []
+      blocks[hour.block - 1].push(hour)
+    }
+    body = jsxs('div', { className: 'flex flex-col gap-3', children: [
+      current && phase ? jsxs('section', { className: 'flex flex-col gap-1 rounded border border-(--ui-stroke-secondary) p-3', 'aria-label': 'Current phase', children: [
+        jsx('div', { className: 'text-base font-medium', children: DAY_CEREMONY_LABELS[phase.ceremony] || phase.ceremony }),
+        jsx('div', { className: 'text-(--ui-text-tertiary)', children: `Block ${current.block} of ${blockCount} · ${current.kind === 'retro' ? 'Retro hour' : `Work hour ${current.hour - 1}`}` }),
+        jsx('div', { 'data-testid': 'day-countdown', children: `${formatCountdown(remaining ?? phase.seconds_remaining)} left in this phase` }),
+        jsx('div', { children: phase.next_best_action }),
+      ] }) : null,
+      data.state === 'not_started' ? jsx('p', { 'data-testid': 'day-countdown', children: `The day starts in ${formatCountdown(remaining ?? data.starts_in_seconds)}` }) : null,
+      data.state === 'finished' ? jsx('p', { children: "Today's schedule is complete." }) : null,
+      jsxs('div', { className: 'flex flex-wrap items-center gap-2', role: 'group', 'aria-label': 'Hat', children: [
+        jsx('span', { children: 'You are wearing:' }),
+        ...DAY_HATS.map((hat) => jsx('button', {
+          key: hat.id, type: 'button', disabled: busy, 'aria-pressed': data.current_hat === hat.id,
+          className: `${button} ${data.current_hat === hat.id ? 'bg-(--chrome-action-hover)' : ''}`,
+          onClick: () => act(['decision', 'day', 'hat', '--hat', hat.id]),
+          children: phase?.suggested_hat === hat.id ? `${hat.label} (suggested)` : hat.label,
+        })),
+      ] }),
+      jsx('div', { className: 'flex flex-col gap-2', 'aria-label': 'Timeline', children: blocks.map((blockHours, index) => jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+        jsx('span', { className: 'text-(--ui-text-tertiary)', children: `Block ${index + 1} (${blockHours.length - 1} work)` }),
+        ...blockHours.map((hour) => jsx('span', {
+          key: `${hour.block}-${hour.hour}`,
+          className: `rounded border border-(--ui-stroke-secondary) px-2 py-0.5 ${current && hour.block === current.block && hour.hour === current.hour ? 'bg-(--chrome-action-hover) font-medium' : ''}`,
+          children: `${hour.kind === 'retro' ? 'R' : `W${hour.hour - 1}`} ${formatClockTime(hour.start)}`,
+        })),
+      ] }, index)) }),
+      jsx('button', { type: 'button', className: `${button} self-start`, disabled: busy, onClick: () => act(['decision', 'day', 'end']), children: 'End day' }),
+    ] })
+  }
+  return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
+    jsx('div', { className: 'font-medium', children: active ? `Day · ${data.day.date} · ${data.day.layout}` : 'Day' }),
+    snapshot.error ? jsx('p', { role: 'alert', children: snapshot.error }) : null,
+    body,
+  ] })
+}
+
 const ENGINEERING_TABS = [
+  { id: 'day', label: 'Day', codicon: 'clock' },
   { id: 'mindmap', label: 'MindMap', codicon: 'type-hierarchy-sub' },
   { id: 'roadmap', label: 'Roadmap', codicon: 'milestone' },
   { id: 'riskTradeoff', label: 'Risk & Tradeoffs', codicon: 'warning' },
@@ -4730,7 +4906,7 @@ function DecisionHudPane({ rest }) {
   // intentionally one-to-one.
   // Initialized from + persisted to SELECTED_BOARD_STORAGE_KEY so routed workflow panes
   const [selectedBoard, setSelectedBoardState] = React.useState(loadSelectedBoardSlug)
-  const [activeTab, setActiveTab] = React.useState('mindmap')
+  const [activeTab, setActiveTab] = React.useState('day')
   const [starterRevision, setStarterRevision] = React.useState(0)
   const setSelectedBoard = React.useCallback((slug) => {
     setSelectedBoardState(slug)
@@ -4968,14 +5144,16 @@ function DecisionHudPane({ rest }) {
             ),
             children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
           }, tab.id)),
-          activeTab !== 'mindmap'
+          activeTab !== 'mindmap' && activeTab !== 'day'
             ? jsx(StarterWorkflowButton, { projectId: selectedBoardProjectId, boardName: selectedBoardName, onGenerated: () => setStarterRevision((value) => value + 1) }, 'starter-workflow')
             : null,
         ],
       }),
       jsx('div', {
         className: 'flex min-h-0 flex-1 flex-col overflow-y-auto',
-        children: activeTab === 'mindmap'
+        children: activeTab === 'day'
+          ? jsx(DayPane, {}, 'day')
+          : activeTab === 'mindmap'
           ? jsx(MindMapPane, { key: `mindmap-${starterRevision}`, projectId: selectedBoardProjectId })
           : activeTab === 'spec'
             ? jsx(SpecDigest, { key: `spec-${starterRevision}`, projectId: selectedBoardProjectId })
@@ -5228,6 +5406,12 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 40,
         data: { codicon: 'checklist', label: 'Software Engineering', path: '/decision-hud' },
+      },
+      {
+        id: 'decision-hud-day-route',
+        area: ROUTES_AREA,
+        data: { path: '/decision-hud/day' },
+        render: () => jsx(DayPane, {}),
       },
       {
         id: 'spec-digest-route',
