@@ -1,0 +1,66 @@
+{
+  "reviewed_sha": "0d8216ddee152c172300c3140526e7785e697dc2",
+  "verdict": "PASS",
+  "findings": [
+    {
+      "severity": "info",
+      "title": "Separate telemetry backend integration suite requires unavailable PostgreSQL environment",
+      "evidence": "backend pytest run: 56 passed, 2 skipped, 11 errors; all errors failed setup because DASHBOARD_TEST_DATABASE_URL was not set.",
+      "impact": "Does not affect backend-plugin Risk & Tradeoffs review. PostgreSQL integration coverage remains unverified in this environment."
+    }
+  ],
+  "commands_results": [
+    {
+      "command": "git status --porcelain=v1 --branch && git rev-list --parents -n 1 0d8216ddee152c172300c3140526e7785e697dc2",
+      "result": "## stage2-integration; worktree clean; 0d8216ddee152c172300c3140526e7785e697dc2 parent is 1c6731e60c342eedd1320205fffb9b7fe47d1523"
+    },
+    {
+      "command": "git merge-base --is-ancestor fed6d229e854d21fb009c3021e45dab76a0f722e 0d8216ddee152c172300c3140526e7785e697dc2",
+      "result": "exit=0; required base is ancestor"
+    },
+    {
+      "command": "git diff --check 1c6731e60c342eedd1320205fffb9b7fe47d1523 0d8216ddee152c172300c3140526e7785e697dc2",
+      "result": "exit=0"
+    },
+    {
+      "command": "uv run --python 3.14 --with pytest python3 -m pytest -q tests/test_risk_tradeoff_canonical.py tests/test_risk_tradeoff_cli_canonical.py tests/test_boundary_contracts.py",
+      "result": "41 passed in 0.49s"
+    },
+    {
+      "command": "uv run --python 3.14 --with pytest python3 -m pytest -q",
+      "result": "backend-plugin: 105 passed, 1 skipped in 2.24s"
+    },
+    {
+      "command": "Adversarial migration probe: initialize valid schema twice",
+      "result": "user_version=8; sqlite dump stable; idempotent"
+    },
+    {
+      "command": "Adversarial migration tests: pre-existing v7 unconstrained schemas and invalid legacy kind",
+      "result": "included in canonical suite; incompatible schemas refuse before mutation or rebuild preserving legacy rows and enforcing CHECK/FK constraints"
+    },
+    {
+      "command": "CLI connection/migration failure contract tests",
+      "result": "included in canonical suite; nested {ok:false,error:{code,message}} envelope emitted with constraint exit code 6; operation-time invalid_input envelope exits 2"
+    },
+    {
+      "command": "uv run --python 3.14 --with pytest python3 -m pytest -q (backend/)",
+      "result": "56 passed, 2 skipped, 11 errors during PostgreSQL integration setup because DASHBOARD_TEST_DATABASE_URL was unset"
+    }
+  ],
+  "coverage_assessment": {
+    "verified": [
+      "Exact SHA, clean worktree, parent and base ancestry",
+      "Prior migration blocker tests now pass",
+      "Incompatible pre-existing v7 risk/tradeoff schemas refuse before mutation or rebuild correctly",
+      "Valid schemas remain idempotent",
+      "CLI connection/migration failures use nested JSON envelope and correct exit code",
+      "Full backend-plugin regression suite passes"
+    ],
+    "not_verified": [
+      "Separate backend/ PostgreSQL integration tests requiring DASHBOARD_TEST_DATABASE_URL"
+    ]
+  },
+  "report_path": "/home/ian-koratsky/.hermes/cache/scratch/stage2-risk-review-0d8216d.json",
+  "worktree": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "summary": "PASS: exact remediation SHA is clean and correctly descended; migration safety, idempotence, nested CLI error envelopes, targeted hostile tests, and all 105 backend-plugin tests pass. Separate backend PostgreSQL integration tests were environment-blocked by missing DASHBOARD_TEST_DATABASE_URL."
+}

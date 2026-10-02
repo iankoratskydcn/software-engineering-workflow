@@ -1,181 +1,144 @@
-# Behavior-Analysis Widgets on Real Intervention Events — Implementation Plan
+# Agent Matrix behavior-analysis extension — implementation plan
 
-Status: locked spec, ready for Kanban dispatch pending owner confirm. No code
-changed. Produced from a 10-agent read-only research fan-out (2026-09-23)
-against this repo, `~/.hermes/*.db`, `~/GitHub/sidecars`, and
-`~/GitHub/Programming-Harness/decision-hub-integration`.
+**Status:** owner decisions resolved; Wave 0a contract implementation may be unblocked. Downstream implementation remains gated on RED contract tests and live producer evidence.
 
-## 0. What triggered this
+**Target:** extend the existing Agent Matrix inside Decision HUD. Do not rebuild existing widgets or create a duplicate route. The attached HTML mockup is a reference for interaction ideas, not a production route.
 
-`Decision Hub — Linked Widgets` mockup (`~/Downloads/dashboard (1).html`) —
-10 linked widgets over synthetic model×task data, admittedly fake:
-multi-baseline/reversal/schedule-shape "intentionally bake in a step-change
-... rather than pretending real deployment data already has one" (mockup's
-own comment). Owner wants real data wired in, folded into the existing
-Agent Matrix pane, no duplicate nav — per this repo's precedent
-(commit `7a3e90f` "consolidate Agent Dashboard/Agent Matrix into one nav
-entry").
+## 1. Existing system
 
-## 1. Ladder check — does most of this need building at all?
+`plugin.js` already has six real-data widgets with shared selection state:
 
-**No.** `~/GitHub/decision-hud/plugin.js`'s `AgentMetricsWidgetsBody`
-(commit `203bc91`) already ships 6 of the mockup's 10 widgets, on real
-Kanban-derived data, with the exact cross-filter behavior the mockup
-demos (click-to-isolate, shared `selected` state, dim/highlight):
-
-| Mockup widget | Already built? | Real source |
+| Widget | Existing implementation | Source |
 |---|---|---|
-| Heatmap | ✅ `AgentMetricsHeatmap` plugin.js:806 | `agent_metrics_snapshot.py` (Kanban task_runs) |
-| Scatter | ✅ plugin.js:847 | same |
-| Parallel coords | ✅ plugin.js:869 | same |
-| Treemap | ✅ plugin.js:906 | same |
-| Radar | ✅ plugin.js:942 | same |
-| Sankey (handoffs) | ✅ `AgentMetricsSankey` plugin.js:985 | `task_links` parent↔child assignee pairs (623 real rows) |
-| Multi-baseline | ❌ none | — |
-| ABC alluvial | ❌ none | — |
-| Fogg B=MAP | ❌ none | — |
-| COM-B | ❌ none | — |
+| Heatmap | `AgentMetricsHeatmap` | `agent_metrics_snapshot.py` |
+| Scatter | `AgentMetricsScatter` | same |
+| Parallel coordinates | `AgentMetricsParallelCoordinates` | same |
+| Treemap | `AgentMetricsTreemap` | same |
+| Radar | `AgentMetricsRadar` | same |
+| Sankey | `AgentMetricsSankey` | `task_links` parent/child assignee links |
 
-**Scope of this plan: the 4 missing widgets only.** Rebuilding the other 6
-against the mockup's data shape would be strictly worse than what's live —
-ladder rung 2, reuse what's already here. Close the mockup as
-reference-only once this lands.
+Do not rebuild these six from the mockup. `task_links` is a structural parent/child source, not a dedicated handoff log; `task_events` is the durable task-lifecycle log. The raw-link count must not be reported as rendered handoff volume because same-assignee links are excluded by the current snapshot adapter.
 
-## 2. Why the 4 remaining widgets are genuinely blocked
+Keep `assignee`, `profile`, `agent`, `model`, `provider`, `task`, and `session` distinct. No implicit fallback between identities.
 
-All four are behavior-analysis views over a **discrete intervention event**
-(multi-baseline: staggered intervention per model; ABC: antecedent→behavior→
-consequence; Fogg: ability×motivation vs action threshold; COM-B:
-capability/opportunity/motivation levers). None of that has meaning without
-a real "something changed here, on purpose" timestamp per agent/model.
+## 2. Four candidate views and validity boundary
 
-Confirmed (read-only, 7 sources checked): **no such event log exists
-anywhere in this stack.**
+The missing views are multi-baseline, ABC alluvial, Fogg B=MAP, and COM-B. Current data can support operational telemetry, but field relabeling does not prove behavioral constructs or causal intervention effects.
 
-- `decision_hud/queue.db`: decisions/problem_reports/hud_settings only, no
-  routing/model concept.
-- `state.db`: `gateway_routing` and `context_events` tables exist in schema
-  but have **0 rows** — dead plumbing, not a real log.
-- `~/.hermes/logs/agent.log`: has literal fallback-chain lines
-  (`"main fallback chain to fallback_providers[0](openai-codex)"`) but is
-  log-rotated, ephemeral, not queryable, gone after 3 rotations.
-- `~/.hermes/cron/usage_audit.jsonl`: durable, timestamped, shows multiple
-  models used over time — but it's a usage ledger, not a change-event log
-  (no before/after, no reason code).
-- Nearest reusable real signal: `session_model_usage.first_seen`/`last_seen`
-  per (session, model) — reconstructible "model appeared/disappeared"
-  timing, not an intentional swap marker.
+Owner decision: the familiar ABC/Fogg/COM-B names may appear in the UI as **experimental proxies**, with a visible experimental/proxy badge and explanatory text. They must not claim validated construct measurement or causality. Neutral operational source labels remain mandatory in details and API payloads.
 
-**This needs new instrumentation.** Not a data-mapping exercise — genuinely
-new telemetry, per the owner's own decision on this ("we'll need to do that
-for real").
+- **Multi-baseline:** event-aligned outcome view; blocked until verified live intervention events exist.
+- **ABC:** descriptive task-state/run-flow view unless ordered antecedent/behavior/consequence events are later instrumented.
+- **Fogg:** failure/completion diagnostic unless an owner-approved bounded scoring model defines cap, clipping, denominator, window, and missing-data rules.
+- **COM-B:** operational factor profile unless each axis has a defensible source, normalization, and run/model join.
 
-## 3. Data source map (per-widget, real sources only)
+Inferred observations may appear in the main views with a lower-confidence badge, but they are never eligible for intervention-window or causal calculations. Live and inferred provenance must remain separate in data, UI, and tests.
 
-| Widget | Antecedent/x-axis | Behavior/y-axis | Real source | Gap |
-|---|---|---|---|---|
-| Multi-baseline | intervention window per model | rolling task-outcome rate | new `intervention_events` (below) for the window marker; `tasks`/`task_runs` outcome series for the line | needs intervention events |
-| ABC alluvial | `tasks.block_kind` (capability/dependency/needs_input/scope/transient) as antecedent | retried? = `task_runs` count > 1 per task, or `block_recurrences > 0` | `tasks.block_kind`, `tasks.block_recurrences`, `tasks.consecutive_failures` | **none — fully real today, no new telemetry needed** |
-| Fogg B=MAP | ability = 1 − (`consecutive_failures`/cap) | motivation = task completion rate | `tasks.consecutive_failures`, `task_runs.outcome` | none — real today |
-| COM-B | capability/opportunity/motivation per model | same rollup, 3-axis relabel | `tasks.block_kind` (capability), `session_model_usage` cost (opportunity), completion rate (motivation) | none — real today |
+## 3. Source authority, identity, and time contract
 
-**Correction to the MCQ framing**: only multi-baseline strictly needs the
-new intervention-event log. ABC/Fogg/COM-B can ship on data that already
-exists in `kanban.db` + `state.db` — no new telemetry required for 3 of
-the 4. This changes the wave scope below (smaller than assumed).
+| Dimension | Source | Constraint |
+|---|---|---|
+| Task/run outcome | Kanban `tasks`, `task_runs` | query with an explicit time window; no silent all-history default |
+| Block reason | `tasks.block_kind` | current/post-hoc state, not an antecedent event |
+| Retry/failure | ordered `task_runs`, `block_recurrences`, `consecutive_failures` | counters are mutable; expose raw semantics and denominator |
+| Model | `task_runs`/`tasks.model_override` plus Hermes usage | no proven one-to-one mapping to assignee/profile |
+| Profile/assignee | `task_runs.profile`, `tasks.assignee` | distinct from model/provider |
+| Usage/cost | Hermes `sessions`, `session_model_usage` | session-linkage and Codex-cost gaps remain |
+| Intervention | deliberate producer event only | absent until live capture is observed |
 
-## 4. New telemetry: `intervention_events`
+Every read contract includes typed `subject_type` and `subject_id`, authenticated project scope, source timestamp, provenance, freshness/coverage, and status: `ready`, `empty`, `stale`, `unavailable`, or `insufficient_sample`.
 
-Minimal, additive table in the existing decision-hud Postgres
-(`agent_telemetry` schema — reuses the wave-1a owner decision, no new DB).
+Windows are UTC, `since` inclusive and `until` exclusive. Task/run event timestamps define inclusion. Running/incomplete rows are excluded by default. Each metric states unit of analysis, numerator, denominator, minimum sample count, and treatment of missing data.
 
-```sql
-CREATE TABLE intervention_events (
-    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    scope        text NOT NULL,          -- project_id, matches telemetry_snapshots.scope
-    subject_id   text NOT NULL,          -- model name or assignee/profile name
-    kind         text NOT NULL,          -- 'model_swap' | 'routing_change' | 'config_change' | 'provider_failover'
-    reason       text,                   -- free text, optional
-    occurred_at  timestamptz NOT NULL,
-    payload      jsonb NOT NULL DEFAULT '{}',
-    created_at   timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX ON intervention_events (scope, subject_id, occurred_at);
-```
+Cross-source joins require a stable correlation key and matching window. If a join is not defensible, return `unavailable`; never blend unrelated project/session/model rows.
 
-Write path (per owner's "A+B" answer — both a real capture point AND a
-backfill sweep):
+## 4. Candidate payload semantics
 
-- **A — real-time capture**: append a row at the actual fallback/model-switch
-  call site (`agent.auxiliary_client`'s fallback-chain logic — same place
-  `agent.log`'s fallback lines already originate) and at
-  `hermes provider switch`/cron-edit-schedule call sites already wired
-  through `cliExec` for other decision-hud controls. Fail-open, mirrors
-  `usage_audit.jsonl`'s append-only posture — never blocks the real call.
-- **B — retroactive backfill**: one-time script deriving synthetic-but-real
-  markers from existing signal for history before instrumentation existed:
-  `session_model_usage` grouped by `(session.profile, model)` ordered by
-  `first_seen` — a model's first appearance for a profile after a gap
-  becomes a `model_swap` row with `payload.inferred=true`. Labeled
-  inferred, never presented as identical confidence to a real capture.
+### Event-aligned outcome view
 
-## 5. Wave plan (matches this repo's established convention exactly)
+The backend must return subject identity, event identity/kind/time, live versus inferred provenance, baseline and post-event windows with numerator/denominator, coverage gaps, and status. Inferred events may be displayed as context but cannot satisfy live intervention acceptance.
 
-Per repo convention (`AGENT_DASHBOARD_CONSOLIDATION_PLAN.md`,
-`t_<8-hex>-wave-<N><letter>-<slug>` branches, `feat(waveNa): ...` commits,
-isolated worktree per lane, sequential Wave 0/3, parallel Wave 1/2):
+### ABC proxy
 
-- **Wave 0 — canonical seam** (sequential, blocks everything):
-  `intervention_events` migration + `write_intervention_event()` /
-  `query_intervention_events(scope, subject_id, since)` repository methods,
-  mirroring `PostgresMetricsRepository`'s existing method shapes.
-- **Wave 1 — parallel backend** (isolated lanes, forked off Wave 0):
-  - 1a: real-time capture call site + fail-open wiring
-  - 1b: backfill script (inferred markers) + `history_begins_at`-style marker
-  - 1c: `agent_metric_series` from `.hermes/plans/agent-health-timeseries-proposal-C.md` — design-complete, zero open questions, direct prerequisite for any sparkline on the new widgets. Build now, don't re-plan.
-- **Wave 2 — parallel frontend** (isolated lanes, forked off Wave 0):
-  - 2a: Multi-baseline widget (consumes `intervention_events` + task outcome series)
-  - 2b: ABC alluvial widget (real today — `block_kind`/`block_recurrences`, no Wave 0/1 dependency, can start immediately)
-  - 2c: Fogg B=MAP widget (real today — same, no dependency)
-  - 2d: COM-B widget (real today — same, no dependency)
-  - All 4 must join the existing cross-filter contract
-    (`metricsRecordMatchesSelection`, `EMPTY_METRICS_SELECTION`,
-    `AgentMetricsSelectionBar`) — not a separate selection mechanism.
-- **Wave 3 — verify/merge gate** (sequential): full backend suite, frontend
-  test sweep, `git diff --check`, merge each branch onto main one at a
-  time with `git log origin/main` readback (per this repo's own R-I006
-  lesson — a branch looking merged isn't proof), written acceptance-gate
-  note distinguishing newly-real data from previously-validated data and
-  any known-absent-field caveats (e.g. `payload.inferred=true` backfill
-  rows are lower-confidence than live-captured ones).
+`block_kind` is a task-state reason, not an antecedent. `COUNT(task_runs)>1` is not automatically retry behavior because runs have different outcomes and step keys. If shipped, label the view descriptive and expose `state_reason`, ordered run outcomes, terminal outcome, and denominators.
 
-**Note**: 2b/2c/2d have no hard dependency on Wave 0/1 — they can be
-dispatched in parallel with Wave 0 if the owner wants faster wall-clock,
-at the cost of the repo's normal sequencing discipline. Default: keep
-Wave 0 first per convention unless told otherwise.
+### Fogg proxy
 
-## 6. Explicitly out of scope for this plan
+Do not use `1 - consecutive_failures/cap` until `cap`, clipping, reset behavior, window, denominator, and minimum sample are fixed. Initial implementation should expose raw failure/completion statistics, not claim ability or motivation.
 
-- **Sidecar cost/quality/latency data**: write path exists
-  (`sidecar_service` → `telemetry_snapshots`, `producer=sidecars`) but has
-  **zero real rows** — no live sidecar traffic has hit this DB. Not
-  fixable by this plan; needs actual sidecar execution volume. Any widget
-  that would show sidecar comparison stays labeled unavailable until rows
-  exist.
-- **Codex cost gap** (Gap B, `COST_COVERAGE_IMPLEMENTATION_PLAN.md`): owned
-  by hermes-agent core (`agent/usage_pricing.py`), not this repo. Blocks
-  ~60% of usage-row cost data. Not re-scoped here.
-- **Usage burndown panel**: separate feature, 3 unresolved owner decisions
-  (budget scope, week boundary, provider API key availability) — not
-  re-asked here, stays parked in `USAGE_BURNDOWN_IMPLEMENTATION_PLAN.md`.
-- **Session-linkage gap** (Gap A, same doc): needs a hermes-agent-side
-  trace this repo can't do alone. Not re-scoped here.
+### COM-B proxy
 
-## 7. Acceptance gate (Wave 3 checklist)
+Block causes are operational causes, not capability. Session cost is not opportunity, and session totals must not be copied onto every task/run in a multi-model session. Until valid axes and joins exist, expose a neutral operational profile with explicit source names.
 
-- [ ] ABC/Fogg/COM-B render real, non-fabricated numbers from `kanban.db` over an actual time window (not the mockup's seeded-random data)
-- [ ] Multi-baseline renders real `intervention_events` rows; backfilled rows visibly marked inferred vs. live-captured
-- [ ] All 4 widgets participate in the existing shared cross-filter (click one, others dim/isolate) — proven with one test exercising cross-widget selection
-- [ ] Missing/unavailable data (no intervention events for a scope, no sidecar rows) renders an explicit unavailable state, never a fabricated zero
-- [ ] Old mockup file is not referenced anywhere as a live route
-- [ ] Full backend + frontend test suites pass; `git log origin/main` confirms every wave branch actually merged
+## 5. Live intervention seam
+
+No dedicated intervention/change-event stream currently exists. `kanban.db.task_events` is lifecycle history, not an explicit before/after routing-change log. `state.db.gateway_routing` and `context_events` have no usable history. Rotated agent logs and `usage_audit.jsonl` are not authoritative event sources.
+
+Owner decision: use **Option B**. Canonical live events are deliberate model/config interventions only:
+
+- explicit user/admin model or provider switch;
+- explicit persisted routing-policy/config mutation;
+- other owner-authorized route assignment changes with before/after state.
+
+Automatic fallback/failover, retries, credential rotation, routine route resolution, and inferred history are separate non-causal telemetry. They may be added later as operational event classes but cannot be treated as interventions.
+
+First test whether a typed marker fits existing `telemetry_snapshots` plus `metric_history`. Add a separate event table only if a contract spike proves reuse insufficient.
+
+If a separate store is approved, require: stable idempotency key; canonical project scope; typed subject; allowlisted kind; producer/source; actor/system identity; before/after state; bounded reason; UTC `occurred_at`; server `created_at`; `provenance=live|inferred`; derivation version/evidence interval; bounded redacted object payload; deterministic bounded reads; retention policy; authenticated project-scoped HTTP access; fresh-database-safe migration.
+
+Producer ownership is cross-repository:
+
+- Hermes core: deliberate model-switch/config seams are separate from fallback recovery; actual checkout is `/home/ian-koratsky/hermes-agent`.
+- Sidecars: retain `sidecar.measurement` telemetry. It becomes intervention telemetry only when an operation actually changes an authoritative route/result/state; prediction or shadow output is not an intervention.
+
+Producer scope must derive server-side from canonical project/board context or a scoped capability. Never trust arbitrary task payload scope. Capture must be non-blocking, bounded, and loss-accounted; a telemetry failure must not block the primary operation or make an incomplete analysis look complete.
+
+Inferred backfill, if retained, joins `session_model_usage.session_id` to `sessions.id`, obtains `sessions.profile_name`, records gap bounds and derivation version, carries `inferred=true`, and displays a lower-confidence badge. It cannot generate an intervention window.
+
+## 6. TDD delivery waves
+
+### Wave 0a — contract seam
+
+Implement the owner-approved source, identity, UTC-window, status-envelope, experimental-label, provenance, and selection contracts. Write RED tests first; observe expected failures; implement minimally; run focused GREEN tests. Do not finalize DDL until telemetry-snapshot reuse versus a new table is proven.
+
+### Wave 0b — producer prerequisite
+
+Instrument deliberate model/config interventions in Hermes core at the actual successful state-mutation chokepoints. Emit before/after identity, source, actor, reason code, correlation/idempotency key, and provenance. Add Sidecars only if the frozen contract requires applied sidecar effects. Add RED tests for exactly-once event emission, no event on failed/rolled-back changes, secret redaction, and non-blocking failure behavior. Verify a live canary reaches the authorized Decision-HUD read path.
+
+### Wave 1 — backend read models
+
+Build bounded task/run descriptive aggregates, failure/completion diagnostics, and event-aligned outcome payloads only when live event evidence exists. Reuse existing `metric_history` unless a failing test proves it insufficient. Preserve explicit unavailable/empty/stale/insufficient states. No heuristic causal backfill.
+
+### Wave 2 — frontend integration
+
+Use one shared integration lane for `plugin.js`, selection state, status envelopes, experimental badges, and regression tests. Each view declares its grain. Cross-filter only through canonical common keys: project scope plus subject/task/run identity. Do not coerce model/profile/assignee. Each view owns its own status state and renders no fabricated zero geometry.
+
+### Wave 3 — merge and acceptance gate
+
+Merge one lane at a time. Verify backend, frontend, Hermes core, and any Sidecars changes independently. Run focused RED/GREEN tests, full suites, fresh/populated database migration/read-back canaries, authenticated scope tests, producer live canary, route/reference scan, `compileall`, `git diff --check`, and exact remote SHA read-back. No push or merge beyond repository policy without authorization.
+
+## 7. Acceptance gate
+
+- [ ] Experimental ABC/Fogg/COM-B labels have visible proxy/experimental treatment and no unsupported causal claim.
+- [ ] Every metric has source, identity grain, scope, UTC window, timestamp, numerator, denominator, provenance, and status.
+- [ ] Live and inferred observations are distinguishable; inferred rows cannot drive intervention windows.
+- [ ] Model/profile/assignee/provider identities remain distinct and tested.
+- [ ] Fresh and populated database migration/read-back behavior is proven if new storage is approved.
+- [ ] Event writes are idempotent; same-key/different-content conflicts fail closed.
+- [ ] Reads are bounded, deterministic, authenticated, and server-scope-derived.
+- [ ] Producer failures preserve the primary operation and expose capture loss/incomplete state.
+- [ ] Each view has ready/empty/stale/unavailable/insufficient rendering with no fabricated zeros.
+- [ ] Cross-filter tests assert matching/nonmatching DOM state, clear, partial selections, and stale-selection reset.
+- [ ] The attached mockup is not a live route; canonical Agent Matrix remains registered.
+- [ ] Full relevant suites pass and all unresolved evidence is documented.
+
+## 8. Owner decisions recorded
+
+1. ABC/Fogg/COM-B names are allowed as experimental proxies, not validated claims.
+2. Identities remain typed and distinct; no implicit fallback.
+3. Windows are UTC `[since, until)`; running rows excluded; minimum samples yield `insufficient_sample`.
+4. Reuse `telemetry_snapshots`/`metric_history` first; new storage requires proof.
+5. Canonical live events are deliberate model/config interventions; fallback/retry/failover are non-causal operational telemetry. Sidecars remain measurement telemetry unless they apply an authoritative effect.
+6. Inferred observations may appear in main views with a lower-confidence badge, but never drive intervention-window or causal calculations.
+
+Wave 0a may now be unblocked. Downstream cards remain dependency-gated until the contract tests and live producer evidence pass.

@@ -10,8 +10,9 @@ const source = await readFile(resolve(here, '..', 'plugin.js'), 'utf8')
 // Kanban. They must not regress to docked-pane-only registrations.
 assert.match(source, /id:\s*'decision-hud-page'[\s\S]{0,160}area:\s*ROUTES_AREA/)
 assert.match(source, /id:\s*'decision-hud-nav'[\s\S]{0,180}area:\s*SIDEBAR_NAV_AREA/)
-assert.match(source, /id:\s*'agent-metrics-widgets-route'[\s\S]{0,160}area:\s*ROUTES_AREA/)
-assert.match(source, /label:\s*'Agent Matrix'/)
+assert.doesNotMatch(source, /agent-metrics|agent-dashboard|agent-matrix/)
+assert.doesNotMatch(source, /ENGINEERING_TABS[\s\S]*?label: 'Retrospective'/)
+assert.doesNotMatch(source, /id:\s*'agent-dashboard-nav'/)
 assert.doesNotMatch(
   source,
   /id:\s*PANE_ID,\s*area:\s*'panes'/,

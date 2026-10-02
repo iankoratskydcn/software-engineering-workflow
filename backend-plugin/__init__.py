@@ -121,6 +121,18 @@ def _on_pre_tool_call(tool_name, args, **_kwargs):
         return None
 
     if tool_name == "kanban_create":
+        # hermes-agent's sidecar label router (hermes_cli/kanban_sidecar_route.py,
+        # STEP 4) gates purely on title == "sidecar:<op>" (or that prefix + a space)
+        # plus a body that parses as strict JSON matching the operation's own
+        # registry schema -- no free text allowed, by design (no guessing from
+        # prose). Appending the ponytail rule after the JSON breaks json.loads()
+        # for every sidecar-routed task, silently falling that task through to a
+        # full agent spawn instead of the cheap deterministic op it asked for.
+        # Skip injection for this one title shape; every other kanban_create is
+        # unaffected.
+        title = args.get("title", "")
+        if isinstance(title, str) and title.startswith("sidecar:"):
+            return None
         new_body = _inject(args.get("body", ""), rule)
         existing_skills = args.get("skills")
         existing_skills = existing_skills if isinstance(existing_skills, list) else []

@@ -1,0 +1,33 @@
+{
+  "release_status": "verified",
+  "final_sha": "e147b9641368e2f49ac439b3730f4a42826f4a88",
+  "parent_base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "migration_version": 13,
+  "changed_surface_manifests": [
+    "manifests/shared-boundary-helpers.json",
+    "manifests/risk-tradeoffs.json",
+    "manifests/flowcharts.json",
+    "manifests/architecture.json",
+    "manifests/roadmap-backend-cli.json",
+    "manifests/roadmap-ui.json",
+    "manifests/mindmap.json",
+    "manifests/scrum-planning.json"
+  ],
+  "test_counts": {
+    "backend_plugin": "162 passed, 1 skipped",
+    "backend_postgresql": "69 passed",
+    "frontend": "48 passed",
+    "focused_hostile_migration": "38 passed"
+  },
+  "baseline": {
+    "baseline_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+    "frontend_baseline": "29/37 passed, 8 failed",
+    "frontend_current": "48/48 passed",
+    "backend_baseline": "pytest unavailable in baseline environment",
+    "changed_failure_signatures": []
+  },
+  "rollback": "Forward-only rollback: stop service, restore validated pre-migration SQLite backup, verify schema version and row hashes, then deploy prior commit.",
+  "known_limitations": ["One backend-plugin test skipped by delegated context", "npm test uses the repository-documented local React/jsdom/plugin-SDK test setup"],
+  "release_gate": "PASS",
+  "independent_review": "PASS at exact final SHA"
+}

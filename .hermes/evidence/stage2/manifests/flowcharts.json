@@ -1,0 +1,20 @@
+{
+  "surface": "flowcharts",
+  "source_sha": "4a423c8",
+  "implementation_sha": "b2376dc816ab5c3ac8f3203bdb0aba8a4069c235",
+  "test_update_sha": "554ffb5f5a5ad7aff967b0442c91bddeab0a2000",
+  "canonical_parent_sha": "99316e10a7b20c305c5da4ceb7c5641bf5399b8f",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "reviewed_sha": "554ffb5f5a5ad7aff967b0442c91bddeab0a2000",
+  "worktree_path": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "reviewer_report": ".hermes/evidence/stage2/reviews/stage2-flow-review-final.json",
+  "reviewer_verdict": "PASS",
+  "focused_tests": {
+    "backend": "15 flow acceptance tests passed",
+    "ui": "flowcharts acceptance passed",
+    "contract_regression": "70 passed"
+  },
+  "full_backend_plugin_tests": "108 passed, 1 skipped",
+  "migration_version": 9,
+  "known_environment_gap": "Full Node suite remains blocked by absent node_modules/@hermes/plugin-sdk; baseline records the same failure."
+}

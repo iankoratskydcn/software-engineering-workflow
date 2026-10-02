@@ -1,7 +1,7 @@
 {
   "name": "decision-hud",
-  "label": "Decision HUD",
-  "description": "Decision HUD dashboard API",
+  "label": "Software Engineering Workflow",
+  "description": "Software Engineering Workflow decision and planning API",
   "version": "0.1.0",
   "tab": { "path": "/decision-hud", "hidden": true },
   "api": "plugin_api.py"

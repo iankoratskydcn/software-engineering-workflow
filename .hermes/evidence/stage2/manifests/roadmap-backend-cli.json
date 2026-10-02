@@ -1,0 +1,14 @@
+{
+  "surface": "roadmap-backend-cli",
+  "source_sha": "91ff8b800fac5b058cfb66c43557b635c233c0b3",
+  "remediation_sha": "4bdc985623cf099c7ef756eb3d9a35458cb479f3",
+  "canonical_parent_sha": "4a617e3ee21c388be77cfe1b8216f5beac64b6da",
+  "reviewed_sha": "6fa86f95c06accd2f8d5d92715e63f2bf20cc978",
+  "base_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "migration": {"from_version": 10, "target_version": 11, "fresh": "passed", "v10_upgrade": "passed", "idempotence": "passed", "malformed_partial_refusal": "passed"},
+  "focused_tests": {"command": "pytest -q backend-plugin/tests/test_roadmap_acceptance.py", "result": "13 passed"},
+  "backend_plugin_full": {"command": "pytest -q backend-plugin", "result": "143 passed, 1 skipped"},
+  "frontend_full": {"command": "npm test", "result": "38 passed, 0 failed"},
+  "review": {"verdict": "PASS", "reviewer": "independent adversarial worker", "findings": []},
+  "verification": {"ancestry": "passed", "clean_tree": "passed", "compile": "passed", "diff_check": "passed", "raw_sqlite_probes": "passed"}
+}

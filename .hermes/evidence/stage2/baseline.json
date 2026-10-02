@@ -1,0 +1,63 @@
+{
+  "baseline_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e",
+  "canonical_worktree": "/home/ian-koratsky/GitHub/decision-hud-stage2",
+  "plan_path": ".hermes/plans/2026-09-26_020842-swe-workflow-completion.md",
+  "plan_sha256": "949f8dbac3d841ca7722dd0670c79151c31472276d65ab41c3a9af96713ea863",
+  "runtime": {
+    "python": "3.14.4",
+    "node": "v22.22.1",
+    "npm": "9.2.0",
+    "sqlite_python": "3.46.1"
+  },
+  "schema": {
+    "user_version": 7,
+    "foreign_keys_on_fresh_connection": false
+  },
+  "commands": [
+    {
+      "name": "pytest",
+      "command": "python3 -m pytest -q backend-plugin/tests",
+      "exit_code": 1,
+      "log": "baseline-logs/pytest.log",
+      "normalized_failures": [
+        "pytest unavailable: No module named pytest"
+      ]
+    },
+    {
+      "name": "npm_test",
+      "command": "npm run test",
+      "exit_code": 1,
+      "log": "baseline-logs/npm-test.log",
+      "normalized_failures": [
+        "missing jsdom dependency",
+        "missing @hermes/plugin-sdk dependency",
+        "DecisionHudPane structural test failure"
+      ]
+    }
+  ],
+  "historical_stage2_shas": {
+    "risk_tradeoffs": "723514d8f46a2c070d2de98941dd00d6a69cc7cd",
+    "flowcharts": "4a423c85c9a7f4dd933af8e9f2e991473220f46d",
+    "architecture": "27afff425af9ee8f6681914b128a13bb6db8a6a5",
+    "roadmap": "91ff8b800fac5b058cfb66c43557b635c233c0b3",
+    "mindmap": "adf525c46f537c66c62995eda6b4f25638e0649d",
+    "scrum_planning": "a6960b8a3b15fd65849959f1ba2200a2a04693eb",
+    "retrospective": "25bcae9cd67cc19f9a327feb0da62ec406cddf6d"
+  },
+  "source_remediation_mappings": {
+    "risk_tradeoffs": {
+      "source_sha": "723514d8f46a2c070d2de98941dd00d6a69cc7cd",
+      "remediation_sha": "de09bb21a2aee53172b6aa39e0da0effd656b8c7",
+      "canonical_parent_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e"
+    },
+    "flowcharts": {
+      "source_sha": "4a423c85c9a7f4dd933af8e9f2e991473220f46d",
+      "remediation_sha": "f1038bba7a35533520d183814c4e04e79030dc7e",
+      "canonical_parent_sha": "fed6d229e854d21fb009c3021e45dab76a0f722e"
+    }
+  },
+  "notes": [
+    "Baseline intentionally records repository setup gaps; no implementation merged.",
+    "Current db.init_db leaves PRAGMA foreign_keys=0 on a fresh direct connection; this is a Task 1 proof obligation."
+  ]
+}

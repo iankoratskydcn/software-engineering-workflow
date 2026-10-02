@@ -57,7 +57,7 @@ assert.match(
 // 5. SubagentRulesTab must exist and drive the decision-hud CLI settings
 //    bridge (subagent skill injection settings live in the same plugin now)
 //    via useSubagentRuleSettings' save() closure.
-const subagentTabDef = source.match(/function SubagentRulesTab\(\{ availableMetrics \}\)[\s\S]*?\n\}\n/)
+const subagentTabDef = source.match(/function SubagentRulesTab\(\)[\s\S]*?\n\}\n/)
 assert.ok(subagentTabDef, 'SubagentRulesTab component must be defined')
 assert.match(
   subagentTabDef[0],
