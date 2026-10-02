@@ -275,6 +275,7 @@ def setup(p) -> None:
     v.add_argument("--note", default=None)
     v.add_argument("--metadata-json", default=None, dest="metadata_json")
     v.add_argument("--estimate", type=int, default=None, help="story points: 1, 2, 3, 5, 8 or 13")
+    v.add_argument("--clear-estimate", action="store_true", dest="clear_estimate", help="remove the estimate")
     v.set_defaults(func=_cmd_spec_update_node)
     v = spec_verbs.add_parser("set-criteria")
     v.add_argument("--project-id", required=True, dest="project_id")

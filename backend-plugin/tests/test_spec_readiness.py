@@ -252,6 +252,10 @@ def test_cli_reports_a_link_conflict_and_a_bad_estimate(conn, capsys):
     code, out = run(capsys, "link-kanban", "--project-id", "p_1", "--id", second["id"], "--task-id", "t_1")
     assert code == 4 and out["error"]["code"] == "conflict" and first["id"] in out["error"]["message"]
 
+    base = ["--project-id", "p_1", "--id", second["id"]]
+    assert run(capsys, "update-node", *base, "--estimate", "5")[1]["node"]["estimate"] == 5
+    assert run(capsys, "update-node", *base, "--clear-estimate")[1]["node"]["estimate"] is None
+
     code, out = run(capsys, "update-node", "--project-id", "p_1", "--id", second["id"], "--estimate", "4")
     assert code == 2 and out["error"]["code"] == "invalid_input"
     code, out = run(capsys, "check-ready", "--project-id", "p_1", "--id", "sn_missing")

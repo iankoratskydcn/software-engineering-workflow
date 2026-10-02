@@ -226,7 +226,12 @@ findings).
 ### 7.1 Definitions
 
 - **Definition of Ready** (to commit at :00): acceptance criteria present, estimate
-  present, fits the size rule, dependencies resolved, risks noted.
+  present, fits the size rule, dependencies resolved, risks noted. Enforced today for
+  features and stories (`decision spec check-ready`, and moving a node to `ready` is
+  refused until it passes): criteria, estimate, and the size rule, which is currently at
+  most 5 points as a hypothesis for the manual trial to tune. Dependencies and risks are
+  not checked yet; they move onto spec nodes with the Plan screen and slice 10. The
+  estimate lives on the spec node itself.
 - **Definition of Done** (to accept): criteria verified by QA agent and human, tests
   pass, PR reviewed, merged.
 

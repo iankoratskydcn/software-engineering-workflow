@@ -163,6 +163,8 @@ def _cmd_spec_list(args):
 def _cmd_spec_update_node(args):
     def action(db, conn):
         fields = {k: v for k, v in {"title": args.title, "status": args.status, "note": args.note, "metadata_json": args.metadata_json, "estimate": args.estimate}.items() if v is not None}
+        if args.clear_estimate:
+            fields["estimate"] = None
         node = db.update_spec_node(conn, args.id, project_id=args.project_id, **fields)
         _print({"ok": True, "node": node})
     _run(args, action)

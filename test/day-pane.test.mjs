@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mock, test } from 'node:test'
+import { afterEach, mock, test } from 'node:test'
 
 import { JSDOM } from 'jsdom'
 
@@ -12,7 +12,19 @@ import { host } from '@hermes/plugin-sdk'
 const bootstrap = new JSDOM('<!doctype html><html><body></body></html>')
 globalThis.window = bootstrap.window
 globalThis.document = bootstrap.window.document
-const { click, flush, installLocalStorageStub, mount } = await import('./dom-harness.mjs')
+const { click, flush, installLocalStorageStub, mount: mountPane } = await import('./dom-harness.mjs')
+
+// A failing assertion skips the test's own unmount, and a mounted pane's timers would then
+// keep the process alive, hanging the run instead of failing it. Unmount whatever is left.
+const mounted = new Set()
+function mount(renderFn) {
+  const pane = mountPane(renderFn)
+  mounted.add(pane)
+  const unmount = pane.unmount
+  pane.unmount = async () => { if (mounted.delete(pane)) await unmount() }
+  return pane
+}
+afterEach(async () => { for (const pane of [...mounted]) await pane.unmount() })
 const { default: plugin } = await import('../plugin.js')
 
 installLocalStorageStub()

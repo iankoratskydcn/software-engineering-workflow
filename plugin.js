@@ -4987,6 +4987,7 @@ function DecisionHudPane({ rest }) {
   // Initialized from + persisted to SELECTED_BOARD_STORAGE_KEY so routed workflow panes
   const [selectedBoard, setSelectedBoardState] = React.useState(loadSelectedBoardSlug)
   const [activeTab, setActiveTab] = React.useState('day')
+  const [selectedSpecNodeId, setSelectedSpecNodeId] = React.useState(null)
   const [starterRevision, setStarterRevision] = React.useState(0)
   const setSelectedBoard = React.useCallback((slug) => {
     setSelectedBoardState(slug)
@@ -5235,9 +5236,9 @@ function DecisionHudPane({ rest }) {
         children: activeTab === 'day'
           ? jsx(DayPane, {}, 'day')
           : activeTab === 'mindmap'
-          ? jsx(MindMapPane, { key: `mindmap-${starterRevision}`, projectId: selectedBoardProjectId })
+          ? jsx(MindMapPane, { key: `mindmap-${starterRevision}`, projectId: selectedBoardProjectId, boardSlug: boardForControls || undefined, selectedNodeId: selectedSpecNodeId, onSelectNode: setSelectedSpecNodeId })
           : activeTab === 'spec'
-            ? jsx(SpecDigest, { key: `spec-${starterRevision}`, projectId: selectedBoardProjectId })
+            ? jsx(SpecDigest, { key: `spec-${starterRevision}`, projectId: selectedBoardProjectId, boardSlug: boardForControls || undefined, selectedNodeId: selectedSpecNodeId, onSelectNode: setSelectedSpecNodeId })
             : activeTab === 'flowcharts'
                 ? jsx(FlowchartsPane, { key: `flowcharts-${starterRevision}` })
                 : activeTab === 'planning'
@@ -5345,33 +5346,166 @@ function stableSpecCriteriaKey(item, index, items, occurrences) {
   return `spec-criterion:${JSON.stringify(item)}:${occurrence}`
 }
 
-function MindMapPane({ projectId }) {
-  const [mindQuery, setMindQuery] = React.useState('')
-  const [selectedMindNode, setSelectedMindNode] = React.useState(null)
-  const [state, setState] = React.useState({ loading: false, nodes: [], error: null })
+const SPEC_ESTIMATE_POINTS = [1, 2, 3, 5, 8, 13]
 
+// Selection is held by the parent when it passes selectedNodeId/onSelectNode, so the Map
+// and Spec views share it; a view used on its own keeps its own.
+function useNodeSelection(selectedNodeId, onSelectNode) {
+  const [localId, setLocalId] = React.useState(null)
+  const shared = onSelectNode !== undefined
+  return [shared ? selectedNodeId ?? null : localId, shared ? onSelectNode : setLocalId]
+}
+
+// Loads the spec tree for a project. A refresh after an edit keeps the nodes on screen
+// instead of clearing them, so the selection does not flicker.
+function useSpecNodes(projectId, label, revision) {
+  const [state, setState] = React.useState({ loading: false, nodes: [], error: null })
+  const loadedProject = React.useRef(null)
   React.useEffect(() => {
     let active = true
     if (!projectId) {
       setState({ loading: false, nodes: [], error: 'No project selected' })
       return () => { active = false }
     }
-    setState({ loading: true, nodes: [], error: null })
+    const refresh = loadedProject.current === projectId
+    loadedProject.current = projectId
+    setState((current) => (refresh ? { ...current, error: null } : { loading: true, nodes: [], error: null }))
     host.request('cli.exec', { argv: ['decision', 'spec', 'list', '--project-id', projectId] }).then((output) => {
       if (!active) return
       try {
-        if (output?.code !== undefined && output.code !== 0) throw new Error(`MindMap CLI exited ${output.code}`)
+        if (output?.code !== undefined && output.code !== 0) throw new Error(`${label} CLI exited ${output.code}`)
         const parsed = parseTrailingJson(output?.output || output?.stdout || '')
-        if (parsed?.ok === false) throw new Error(parsed.error?.message || parsed.error || 'MindMap unavailable')
+        if (parsed && parsed.ok === false) throw new Error(parsed.error?.message || parsed.error || `${label} unavailable`)
         const nodes = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.nodes) ? parsed.nodes : null
-        if (!nodes) throw new Error('MindMap returned an invalid nodes payload')
+        if (!nodes) throw new Error(`${label} returned an invalid nodes payload`)
         setState({ loading: false, nodes, error: null })
       } catch (error) {
         setState({ loading: false, nodes: [], error: String(error.message || error) })
       }
     }).catch((error) => active && setState({ loading: false, nodes: [], error: String(error.message || error) }))
     return () => { active = false }
-  }, [projectId])
+  }, [projectId, revision])
+  return state
+}
+
+// What it takes to commit a feature or story to an hour: readiness, the estimate, and the
+// Kanban card that builds it. Themes and epics are not units of work, so they get nothing.
+function SpecNodeActions({ node, projectId, boardSlug, onChanged }) {
+  const [readiness, setReadiness] = React.useState(null)
+  const [task, setTask] = React.useState(null)
+  const [linkDraft, setLinkDraft] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState(null)
+  const applies = node.kind === 'feature' || node.kind === 'story'
+
+  React.useEffect(() => {
+    let live = true
+    setReadiness(null)
+    if (!applies) return () => { live = false }
+    cliExec(['decision', 'spec', 'check-ready', '--project-id', projectId, '--id', node.id])
+      .then((result) => { if (live) setReadiness(result.readiness) })
+      .catch((failure) => { if (live) setError(String(failure.message || failure)) })
+    return () => { live = false }
+  }, [projectId, node.id, node.status, node.estimate, node.criteria_json, applies])
+
+  React.useEffect(() => {
+    let live = true
+    setTask(null)
+    if (!applies || !boardSlug || !node.kanban_task_id) return () => { live = false }
+    cliExec(['kanban', '--board', boardSlug, 'show', node.kanban_task_id, '--json'])
+      .then((result) => { if (live) setTask(result?.task || result) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [boardSlug, node.kanban_task_id, applies])
+
+  if (!applies) return null
+
+  const run = async (argv) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cliExec(argv)
+      setError(null)
+      onChanged()
+    } catch (failure) {
+      setError(String(failure.message || failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const nodeArgs = ['--project-id', projectId, '--id', node.id]
+  const link = async () => {
+    const taskId = linkDraft.trim()
+    if (!taskId || busy) return
+    setBusy(true)
+    try {
+      if (boardSlug) {
+        try {
+          await cliExec(['kanban', '--board', boardSlug, 'show', taskId, '--json'])
+        } catch {
+          throw new Error(`Kanban card ${taskId} was not found on board ${boardSlug}`)
+        }
+      }
+      await cliExec(['decision', 'spec', 'link-kanban', ...nodeArgs, '--task-id', taskId])
+      setLinkDraft('')
+      setError(null)
+      onChanged()
+    } catch (failure) {
+      setError(String(failure.message || failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const failing = readiness ? readiness.checks.filter((check) => !check.passed) : []
+  const control = 'rounded border border-(--ui-stroke-secondary) px-2 py-1 disabled:opacity-50'
+  return jsxs('section', { 'aria-label': 'Readiness and delivery', className: 'flex flex-col gap-2 border-t border-(--ui-stroke-secondary) pt-3', children: [
+    readiness
+      ? readiness.ready
+        ? jsx('div', { 'data-testid': 'readiness', children: 'Ready to commit' })
+        : jsxs('div', { 'data-testid': 'readiness', children: [
+          jsx('div', { children: 'Not ready:' }),
+          jsx('ul', { className: 'list-disc pl-5', children: failing.map((check) => jsx('li', { children: check.detail }, check.name)) }),
+        ] })
+      : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Checking readiness…' }),
+    jsxs('label', { className: 'flex items-center gap-2', children: [
+      'Estimate',
+      jsx('select', {
+        value: node.estimate == null ? '' : String(node.estimate), disabled: busy, 'aria-label': 'Estimate',
+        onChange: (event) => run(event.target.value === ''
+          ? ['decision', 'spec', 'update-node', ...nodeArgs, '--clear-estimate']
+          : ['decision', 'spec', 'update-node', ...nodeArgs, '--estimate', event.target.value]),
+        children: [
+          jsx('option', { value: '', children: 'Not estimated' }, 'none'),
+          ...SPEC_ESTIMATE_POINTS.map((points) => jsx('option', { value: String(points), children: `${points} points` }, points)),
+        ],
+      }),
+    ] }),
+    node.status === 'ready'
+      ? jsx('button', { type: 'button', className: `${control} self-start`, disabled: busy, onClick: () => run(['decision', 'spec', 'update-node', ...nodeArgs, '--status', 'draft']), children: 'Back to draft' })
+      : jsx('button', { type: 'button', className: `${control} self-start`, disabled: busy || !readiness?.ready, onClick: () => run(['decision', 'spec', 'update-node', ...nodeArgs, '--status', 'ready']), children: 'Mark ready' }),
+    node.kanban_task_id
+      ? jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+        jsx('span', { 'data-testid': 'linked-card', children: `Kanban card ${node.kanban_task_id}${task ? ` · ${task.status || 'unknown'} · ${task.title || ''}` : ''}` }),
+        jsx('button', { type: 'button', className: control, disabled: busy, onClick: () => run(['decision', 'spec', 'link-kanban', ...nodeArgs, '--task-id', '']), children: 'Unlink' }),
+      ] })
+      : jsxs('div', { className: 'flex items-center gap-2', children: [
+        jsx('input', {
+          type: 'text', value: linkDraft, placeholder: 'Kanban card id', 'aria-label': 'Kanban card id',
+          onChange: (event) => setLinkDraft(event.target.value),
+          className: 'w-40 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1',
+        }),
+        jsx('button', { type: 'button', className: control, disabled: busy || !linkDraft.trim(), onClick: link, children: 'Link' }),
+      ] }),
+    error ? jsx('p', { role: 'alert', children: error }) : null,
+  ] })
+}
+
+function MindMapPane({ projectId, boardSlug, selectedNodeId, onSelectNode }) {
+  const [mindQuery, setMindQuery] = React.useState('')
+  const [revision, setRevision] = React.useState(0)
+  const [selectedId, selectNode] = useNodeSelection(selectedNodeId, onSelectNode)
+  const state = useSpecNodes(projectId, 'MindMap', revision)
+  const selectedMindNode = state.nodes.find((node) => node.id === selectedId) || null
 
   const results = React.useMemo(() => {
     const query = mindQuery.trim().toLowerCase()
@@ -5394,7 +5528,7 @@ function MindMapPane({ projectId }) {
         state.error ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: `MindMap unavailable: ${state.error}` }) : null,
         !state.loading && !state.error && results.length === 0 ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No matching stories.' }) : null,
         jsx('div', { className: 'flex flex-col gap-1.5 overflow-auto', children: results.map((node) => jsx('button', {
-          type: 'button', onClick: () => setSelectedMindNode(node), className: 'rounded border border-(--ui-stroke-secondary) p-2 text-left hover:bg-(--chrome-action-hover)',
+          type: 'button', onClick: () => selectNode(node.id), className: 'rounded border border-(--ui-stroke-secondary) p-2 text-left hover:bg-(--chrome-action-hover)',
           children: [
             jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: node.kind }),
             jsx('div', { className: 'text-xs text-(--ui-text-primary)', children: node.title }),
@@ -5411,37 +5545,18 @@ function MindMapPane({ projectId }) {
               : criteria.items.length > 0
                 ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) })] })
                 : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No acceptance criteria recorded.' }),
+            jsx(SpecNodeActions, { node: selectedMindNode, projectId, boardSlug, onChanged: () => setRevision((value) => value + 1) }, selectedMindNode.id),
           ] })
         : jsx('div', { className: 'flex h-full min-h-48 items-center justify-center text-(--ui-text-tertiary)', children: 'Select a story to inspect it.' }) }),
     ],
   })
 }
 
-function SpecDigest({ projectId }) {
-  const [state, setState] = React.useState({ loading: false, nodes: [], error: null })
-  const [selectedNode, setSelectedNode] = React.useState(null)
-  React.useEffect(() => {
-    let active = true
-    if (!projectId) {
-      setState({ loading: false, nodes: [], error: 'No project selected' })
-      return () => { active = false }
-    }
-    setState({ loading: true, nodes: [], error: null })
-    host.request('cli.exec', { argv: ['decision', 'spec', 'list', '--project-id', projectId] }).then((output) => {
-      if (!active) return
-      try {
-        if (output?.code !== undefined && output.code !== 0) throw new Error(`Spec Digest CLI exited ${output.code}`)
-        const parsed = parseTrailingJson(output?.output || output?.stdout || '')
-        if (parsed && parsed.ok === false) throw new Error(parsed.error?.message || parsed.error || 'Spec Digest unavailable')
-        const nodes = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.nodes) ? parsed.nodes : null
-        if (!nodes) throw new Error('Spec Digest returned an invalid nodes payload')
-        setState({ loading: false, nodes, error: null })
-      } catch (error) {
-        setState({ loading: false, nodes: [], error: String(error.message || error) })
-      }
-    }).catch((error) => active && setState({ loading: false, nodes: [], error: String(error.message || error) }))
-    return () => { active = false }
-  }, [projectId])
+function SpecDigest({ projectId, boardSlug, selectedNodeId, onSelectNode }) {
+  const [revision, setRevision] = React.useState(0)
+  const [selectedId, selectNode] = useNodeSelection(selectedNodeId, onSelectNode)
+  const state = useSpecNodes(projectId, 'Spec Digest', revision)
+  const selectedNode = state.nodes.find((node) => node.id === selectedId) || null
   const criteria = parseSpecCriteria(selectedNode?.criteria_json)
   const criteriaOccurrences = new Map()
   return jsxs('div', { className: 'flex flex-col gap-3 p-4', children: [
@@ -5450,7 +5565,7 @@ function SpecDigest({ projectId }) {
     state.error ? jsx('p', { role: 'alert', children: `Spec Digest unavailable: ${state.error}` }, 'error') : null,
     !state.loading && !state.error && state.nodes.length === 0 ? jsx('p', { children: 'No specification nodes yet.' }, 'empty') : null,
     jsx('div', { className: 'flex flex-col gap-1', children: state.nodes.map((node) => jsx('button', {
-      type: 'button', onClick: () => setSelectedNode(node), className: 'text-left',
+      type: 'button', onClick: () => selectNode(node.id), className: 'text-left',
       children: `${node.kind}: ${node.title}`,
     }, node.id)) }, 'nodes'),
     selectedNode && jsx('section', { children: [
@@ -5458,6 +5573,7 @@ function SpecDigest({ projectId }) {
       criteria.error
         ? jsx('p', { role: 'alert', children: 'malformed criteria' }, 'criteria-error')
         : jsx('ul', { children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) }, 'criteria-items'),
+      jsx(SpecNodeActions, { node: selectedNode, projectId, boardSlug, onChanged: () => setRevision((value) => value + 1) }, 'actions'),
     ] }, 'selected-node'),
   ] })
 }
@@ -5466,7 +5582,7 @@ function SpecDigestRoute({ projectId: overrideProjectId } = {}) {
   const { boards } = useKanbanBoards()
   const selectedBoard = loadSelectedBoardSlug() || pickDefaultBoardSlug(boards)
   const projectId = boards.find((board) => board && board.slug === selectedBoard)?.project_id || null
-  return jsx(SpecDigest, { projectId: overrideProjectId || projectId })
+  return jsx(SpecDigest, { projectId: overrideProjectId || projectId, boardSlug: selectedBoard || undefined })
 }
 
 export default {
