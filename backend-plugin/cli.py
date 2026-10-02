@@ -25,6 +25,10 @@ try:
         _cmd_spec_tree, _cmd_spec_seed_demo,
     )
     from .cli_workflow_cmds import _cmd_workflow_seed_demo
+    from .cli_observe_cmds import (
+        _cmd_observe_add, _cmd_observe_list, _cmd_observe_verify, _cmd_observe_checkpoint,
+        OBSERVE_AUTHORS, OBSERVE_KINDS,
+    )
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -40,6 +44,10 @@ except ImportError:
         _cmd_spec_tree, _cmd_spec_seed_demo,
     )
     from cli_workflow_cmds import _cmd_workflow_seed_demo  # type: ignore[import-not-found]
+    from cli_observe_cmds import (  # type: ignore[import-not-found]
+        _cmd_observe_add, _cmd_observe_list, _cmd_observe_verify, _cmd_observe_checkpoint,
+        OBSERVE_AUTHORS, OBSERVE_KINDS,
+    )
 
 _TRIAGE_SYSTEM_PROMPT = (
     "You triage raw problem reports into a bounded owner decision for a human "
@@ -434,6 +442,31 @@ def setup(p) -> None:
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--root-title", default=None, dest="root_title")
     v.set_defaults(func=_cmd_workflow_seed_demo)
+
+    observe = verbs.add_parser("observe", help="Append-only observation log (no edit or delete verbs exist)")
+    observe_verbs = observe.add_subparsers(dest="observe_verb", required=True)
+    v = observe_verbs.add_parser("add", help="Append one record; to correct one, append with --supersedes")
+    v.add_argument("--kind", required=True, choices=OBSERVE_KINDS)
+    v.add_argument("--author", required=True, choices=OBSERVE_AUTHORS)
+    v.add_argument("--data", default=None, help="JSON object")
+    v.add_argument("--feature-id", default=None, dest="feature_id")
+    v.add_argument("--day", default=None, help="YYYY-MM-DD")
+    v.add_argument("--block", type=int, default=None)
+    v.add_argument("--hour", type=int, default=None)
+    v.add_argument("--supersedes", default=None, help="id of the record this one corrects")
+    v.set_defaults(func=_cmd_observe_add)
+    v = observe_verbs.add_parser("list", help="List records, oldest first")
+    v.add_argument("--kind", default=None)
+    v.add_argument("--feature-id", default=None, dest="feature_id")
+    v.add_argument("--since-seq", type=int, default=None, dest="since_seq")
+    v.add_argument("--limit", type=int, default=None, help="keep only the newest N")
+    v.set_defaults(func=_cmd_observe_list)
+    v = observe_verbs.add_parser("verify", help="Check the hash chain and every confirmed checkpoint")
+    v.set_defaults(func=_cmd_observe_verify)
+    v = observe_verbs.add_parser("checkpoint", help="Confirm the log's current head (requires --actor-token)")
+    v.add_argument("--actor-token", required=True, dest="actor_token",
+                   help="Capability token from 'hermes decision issue-token'; refused in delegated-child processes")
+    v.set_defaults(func=_cmd_observe_checkpoint)
 
     p.set_defaults(func=lambda args: p.print_help())
 

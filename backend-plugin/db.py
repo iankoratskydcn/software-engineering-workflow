@@ -147,7 +147,7 @@ COORDINATE_MAX = 100000
 
 # Newest schema version init_db migrates to. Bump together with the newest
 # _migrate_vN; the tests assert init_db lands exactly here.
-LATEST_SCHEMA_VERSION = 13
+LATEST_SCHEMA_VERSION = 14
 
 
 class BoundaryError(ValueError):
@@ -1248,6 +1248,35 @@ def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_v14_observation_checkpoints(conn: sqlite3.Connection) -> None:
+    """Add the human-confirmed checkpoints that anchor the observation log's hash chain."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= 14:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observation_checkpoints (
+                id TEXT PRIMARY KEY,
+                seq INTEGER NOT NULL CHECK(seq >= 1),
+                head_hash TEXT NOT NULL,
+                confirmed_by TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                UNIQUE(seq, head_hash)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observation_checkpoints_seq "
+            "ON observation_checkpoints(seq, created_at)"
+        )
+        conn.execute("PRAGMA user_version = 14")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -1359,6 +1388,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v11_roadmap(conn)
     _migrate_v12_mindmap(conn)
     _migrate_v13_scrum_planning(conn)
+    _migrate_v14_observation_checkpoints(conn)
     conn.commit()
 
 
@@ -3080,3 +3110,49 @@ def set_prioritized_side(conn: sqlite3.Connection, *, project_id: str, tradeoff_
     conn.execute("UPDATE tradeoffs SET prioritized_side = ?, updated_at = ? WHERE id = ? AND project_id = ?", (side, time.time(), tradeoff_id, project))
     conn.commit()
     return dict(conn.execute("SELECT * FROM tradeoffs WHERE id = ?", (tradeoff_id,)).fetchone())
+
+# --- observation log checkpoints ---------------------------------------------
+# The log itself lives in observation_log.py (a JSONL file beside queue.db).
+# A checkpoint records "the log's head was (seq, hash) when a human looked", and
+# is stored here, outside that file, so a rewritten or truncated log can be
+# caught. Creating one is gated exactly like resolving a decision.
+
+def add_observation_checkpoint(
+    conn: sqlite3.Connection, *, seq: int, head_hash: str, actor_token: str
+) -> dict[str, Any]:
+    """Record a human-confirmed checkpoint of the observation log head.
+    Idempotent for an identical (seq, head_hash)."""
+    if _is_delegated_child_process_context():
+        raise NotAuthorized(
+            "add_observation_checkpoint() refused: running in a delegated-child process context "
+            f"({_DELEGATED_CHILD_ENV_MARKER} is set); only the interactive owner may confirm a checkpoint")
+    actor = _validate_actor_token(actor_token)
+    if actor is None:
+        raise NotAuthorized(
+            "add_observation_checkpoint() refused: missing, unknown, or expired actor_token; obtain "
+            "one via `hermes decision issue-token` before confirming a checkpoint")
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+        raise BoundaryError("invalid_input", "seq must be a positive integer")
+    prefix = "sha256:"
+    digest = head_hash[len(prefix):] if isinstance(head_hash, str) and head_hash.startswith(prefix) else ""
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise BoundaryError("invalid_input", "head_hash must be sha256:<64 lowercase hex characters>")
+    existing = conn.execute(
+        "SELECT * FROM observation_checkpoints WHERE seq = ? AND head_hash = ?", (seq, head_hash)
+    ).fetchone()
+    if existing is not None:
+        return dict(existing)
+    checkpoint_id = "ocp_" + secrets.token_hex(6)
+    conn.execute(
+        "INSERT INTO observation_checkpoints (id, seq, head_hash, confirmed_by, created_at) VALUES (?, ?, ?, ?, ?)",
+        (checkpoint_id, seq, head_hash, actor, time.time()),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM observation_checkpoints WHERE id = ?", (checkpoint_id,)).fetchone())
+
+
+def list_observation_checkpoints(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in conn.execute("SELECT * FROM observation_checkpoints ORDER BY seq, created_at, id").fetchall()
+    ]
