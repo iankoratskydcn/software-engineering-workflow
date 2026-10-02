@@ -32,6 +32,10 @@ try:
     from .cli_day_cmds import (
         _cmd_day_plan, _cmd_day_start, _cmd_day_status, _cmd_day_hat, _cmd_day_end, DAY_HATS,
     )
+    from .cli_presence_cmds import (
+        _cmd_presence_status, _cmd_presence_on, _cmd_presence_off, _cmd_presence_touch,
+    )
+    from .cli_observer_cmds import _cmd_observer_standup, _cmd_observer_latest
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -54,6 +58,10 @@ except ImportError:
     from cli_day_cmds import (  # type: ignore[import-not-found]
         _cmd_day_plan, _cmd_day_start, _cmd_day_status, _cmd_day_hat, _cmd_day_end, DAY_HATS,
     )
+    from cli_presence_cmds import (  # type: ignore[import-not-found]
+        _cmd_presence_status, _cmd_presence_on, _cmd_presence_off, _cmd_presence_touch,
+    )
+    from cli_observer_cmds import _cmd_observer_standup, _cmd_observer_latest  # type: ignore[import-not-found]
 
 _TRIAGE_SYSTEM_PROMPT = (
     "You triage raw problem reports into a bounded owner decision for a human "
@@ -492,6 +500,26 @@ def setup(p) -> None:
     v.set_defaults(func=_cmd_day_hat)
     v = day_verbs.add_parser("end", help="End the active day")
     v.set_defaults(func=_cmd_day_end)
+
+    presence_group = verbs.add_parser("presence", help="The online switch (turns itself off after an hour idle)")
+    presence_verbs = presence_group.add_subparsers(dest="presence_verb", required=True)
+    for name, handler, text in (
+        ("status", _cmd_presence_status, "Show whether you are online (settles an idle expiry)"),
+        ("on", _cmd_presence_on, "Go online"),
+        ("off", _cmd_presence_off, "Go offline"),
+        ("touch", _cmd_presence_touch, "Heartbeat: you interacted (never turns the switch on)"),
+    ):
+        v = presence_verbs.add_parser(name, help=text)
+        v.add_argument("--now", default=None, help="ISO-8601 time to use (default: now)")
+        v.set_defaults(func=handler)
+
+    observer_group = verbs.add_parser("observer", help="Read-only standup reports (one record per 20-minute slot)")
+    observer_verbs = observer_group.add_subparsers(dest="observer_verb", required=True)
+    v = observer_verbs.add_parser("standup", help="Report this slot's standup if due; skips when offline, in a retro hour, or already reported")
+    v.add_argument("--now", default=None, help="ISO-8601 time to use (default: now)")
+    v.set_defaults(func=_cmd_observer_standup)
+    v = observer_verbs.add_parser("latest", help="The newest standup of the active day")
+    v.set_defaults(func=_cmd_observer_latest)
 
     p.set_defaults(func=lambda args: p.print_help())
 
