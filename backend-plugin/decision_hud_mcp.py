@@ -46,7 +46,13 @@ def decision_push(project_id: str, question: str, choices: list[str],
 
     Use this INSTEAD of inline chat clarification when the decision is a genuine
     owner-policy call that can wait for the user to clear it from their queue
-    (not an urgent blocking question in the current live conversation).
+    (not an urgent blocking question in the current live conversation). This
+    also applies whenever the decision has a natural card shape (a range, a
+    split of a fixed total, a tradeoff between options, items to group/order/
+    map) — prefer this push over inline clarify so it renders as the matching
+    card_type instead of a plain button list; call decision_classify_card_type
+    first (or walk card-type-gate's discriminant table for shapes it doesn't
+    recognize) rather than defaulting to no card_type.
 
     Args:
         project_id: id of a real project from `hermes project list` (v6: no
@@ -96,6 +102,41 @@ def decision_push(project_id: str, question: str, choices: list[str],
         return json.dumps({"ok": False, "error": str(exc)})
     finally:
         conn.close()
+
+
+@mcp.tool()
+def decision_classify_card_type(question: str, choices: list[str]) -> str:
+    """Suggest a card_type for a decision_push call, without writing anything.
+
+    Call this BEFORE decision_push instead of manually re-deriving the
+    card-type-gate discriminant table by hand. It only recognizes the small
+    subset of card types whose shape is fully encoded in (question, choices)
+    alone — quad_choice (choices include an explicit "Both"/"Neither"),
+    zone_select (every choice is an ordered tier label like low/medium/high),
+    balance_scale (exactly 2 choices and the question itself names a
+    tradeoff/comparison). Returns {"ok": true, "card_type": None} when
+    nothing confidently matches (most of the taxonomy — ranges, splits,
+    grids, trees, sequences, mappings, slots — needs structure that only
+    exists in card_payload, which you build yourself when you already know
+    the shape; this tool never guesses that structure).
+
+    On a hit, the returned card_type/card_type_bucket/card_type_answers can
+    be passed straight through to decision_push — they are pre-verified
+    against the same engine push_decision enforces, so the push cannot fail
+    _verify_card_type.
+
+    Args:
+        question: the exact text you intend to pass to decision_push.
+        choices: the exact 2-4 choices you intend to pass to decision_push.
+    """
+    try:
+        import card_type_classifier
+        result = card_type_classifier.classify(question, choices)
+    except Exception as exc:  # classifier failure must never block the push path
+        return json.dumps({"ok": False, "error": str(exc)})
+    if result is None:
+        return json.dumps({"ok": True, "card_type": None})
+    return json.dumps({"ok": True, **result})
 
 
 @mcp.tool()
