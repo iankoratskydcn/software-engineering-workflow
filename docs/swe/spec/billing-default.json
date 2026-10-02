@@ -1,0 +1,8 @@
+{
+  "criteria": [],
+  "id": "billing-default",
+  "kind": "feature",
+  "parent_id": "billing",
+  "status": "draft",
+  "title": "Default billing model"
+}

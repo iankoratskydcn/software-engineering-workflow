@@ -1,0 +1,13 @@
+{
+  "criteria": [
+    "Login succeeds with valid credentials.",
+    "Invalid credentials are rejected with a generic error.",
+    "Session cookie is signed and expires after 30 days."
+  ],
+  "id": "login-email",
+  "kind": "story",
+  "note": "Sessions persist 30 days.",
+  "parent_id": "login",
+  "status": "approved",
+  "title": "Customers can log in with email + password."
+}

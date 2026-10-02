@@ -1,0 +1,8 @@
+{
+  "criteria": [],
+  "id": "sync",
+  "kind": "feature",
+  "parent_id": "inventory",
+  "status": "draft",
+  "title": "Warehouse sync reliability"
+}

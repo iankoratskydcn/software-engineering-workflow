@@ -1,0 +1,2879 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin:0; background:#141414; }
+  * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+  .mono { font-family:"SF Mono",Consolas,Monaco,monospace; }
+</style>
+</helmet>
+
+<div style="background:#141414;color:#e6e6e6;min-height:100vh;padding:24px 32px 60px;">
+
+  <div style="margin-bottom:20px;">
+    <div style="font-size:22px;font-weight:600;">Software Engineering Workflow</div>
+  </div>
+
+  <div style="display:flex;gap:4px;border-bottom:1px solid #2c2c2c;margin-bottom:24px;">
+    <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="5">
+      <div onClick="{{ t.select }}" style="{{ t.style }}">{{ t.label }}</div>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{ isMindMap }}" hint-placeholder-val="{{ true }}">
+    <div>
+      <sc-if value="{{ mindIsMap }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:280px 1fr;gap:20px;">
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          <input type="text" value="{{ mindQuery }}" onChange="{{ onMindQueryChange }}" placeholder="Search stories..." style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:13px;padding:8px 10px;">
+
+          <sc-if value="{{ hasMindQuery }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <sc-for list="{{ mindResults }}" as="r" hint-placeholder-count="3">
+                <div onClick="{{ r.select }}" style="{{ r.style }}">
+                  <div class="mono" style="font-size:9px;color:#666;">{{ r.path }}</div>
+                  <div style="font-size:12px;color:#ddd;">{{ r.oneLiner }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:14px;">
+          <sc-if value="{{ hasMindInfo }}" hint-placeholder-val="{{ false }}">
+            <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:{{ mindInfo.color }};border:1px solid {{ mindInfo.color }};padding:1px 8px;border-radius:999px;width:fit-content;margin-bottom:8px;">{{ mindInfo.kindLabel }}</div>
+            <div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:8px;">{{ mindInfo.label }}</div>
+
+            <sc-if value="{{ mindInfo.hasCounts }}" hint-placeholder-val="{{ false }}">
+              <div class="mono" style="font-size:11px;color:#777;">{{ mindInfo.countsLabel }}</div>
+            </sc-if>
+
+            <sc-if value="{{ mindInfo.hasDecision }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top:1px solid #2c2c2c;margin-top:10px;padding-top:10px;">
+                <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#3d7fff;border:1px solid #3d7fff;border-radius:999px;padding:1px 8px;width:fit-content;margin-bottom:8px;">{{ mindInfo.decision.hudLabel }}</div>
+                <div style="font-size:12px;color:#e6e6e6;margin-bottom:8px;">{{ mindInfo.decision.prompt }}</div>
+
+                <sc-if value="{{ mindInfo.decision.isChoice }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:6px;">
+                    <sc-for list="{{ mindInfo.decision.options }}" as="opt" hint-placeholder-count="3">
+                      <div onClick="{{ opt.select }}" style="{{ opt.style }}">
+                        <div style="font-size:12px;font-weight:600;">{{ opt.label }}</div>
+                        <div class="mono" style="font-size:9px;color:#888;margin-top:2px;">{{ opt.desc }}</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ mindInfo.decision.isRank }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:5px;">
+                    <sc-for list="{{ mindInfo.decision.ranked }}" as="r" hint-placeholder-count="3">
+                      <div style="{{ r.style }}">
+                        <div class="mono" style="font-size:10px;color:#3d7fff;width:14px;">{{ r.pos }}</div>
+                        <div style="flex:1;font-size:12px;">{{ r.label }}</div>
+                        <div onClick="{{ r.up }}" class="mono" style="font-size:10px;color:#999;cursor:pointer;padding:0 4px;">▲</div>
+                        <div onClick="{{ r.down }}" class="mono" style="font-size:10px;color:#999;cursor:pointer;padding:0 4px;">▼</div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ mindInfo.decision.isSlider }}" hint-placeholder-val="{{ false }}">
+                  <div>
+                    <div class="mono" style="font-size:18px;font-weight:600;color:#3d7fff;">{{ mindInfo.decision.valueLabel }}</div>
+                    <input type="range" min="{{ mindInfo.decision.min }}" max="{{ mindInfo.decision.max }}" value="{{ mindInfo.decision.value }}" onChange="{{ mindInfo.decision.onSlide }}" style="width:100%;margin-top:4px;">
+                    <div style="display:flex;justify-content:space-between;font-size:10px;color:#888;margin-top:4px;">
+                      <span>{{ mindInfo.decision.minLabel }}</span>
+                      <span>{{ mindInfo.decision.maxLabel }}</span>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ mindInfo.decision.answered }}" hint-placeholder-val="{{ false }}">
+                  <div class="mono" style="font-size:10px;color:#3d7fff;margin-top:10px;">✓ Confirmed — {{ mindInfo.decision.answerSummary }}</div>
+                </sc-if>
+                <sc-if value="{{ mindInfo.decision.canConfirm }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ mindInfo.decision.confirm }}" style="margin-top:10px;display:inline-block;background:#3d7fff;color:#0d0d0e;font-size:11px;font-weight:600;padding:5px 12px;border-radius:6px;cursor:pointer;">{{ mindInfo.decision.confirmLabel }}</div>
+                </sc-if>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ mindInfo.hasStory }}" hint-placeholder-val="{{ false }}">
+              <div style="border-top:1px solid #2c2c2c;margin-top:10px;padding-top:10px;">
+                <div style="font-size:12px;color:#aaa;line-height:1.6;">{{ mindInfo.story.fullText }}</div>
+                <div class="mono" style="font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:#777;margin:8px 0 4px;">Acceptance criteria</div>
+                <ul style="margin:0;padding-left:16px;font-size:12px;color:#ccc;line-height:1.6;">
+                  <sc-for list="{{ mindInfo.story.criteria }}" as="c" hint-placeholder-count="2"><li>{{ c }}</li></sc-for>
+                </ul>
+              </div>
+            </sc-if>
+          </sc-if>
+          <sc-if value="{{ noMindInfo }}" hint-placeholder-val="{{ true }}">
+            <div class="mono" style="font-size:11px;color:#666;text-align:center;padding:6px 0;">Search and select a story to see its details.</div>
+          </sc-if>
+          </div>
+        </div>
+
+        <div style="border:1px dashed #333;border-radius:2px;background:#161616;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:320px;gap:8px;">
+          <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#666;">Mind map</div>
+          <div style="font-size:13px;color:#888;text-align:center;max-width:280px;">Interactive mind map view — being built as a separate component. Placeholder shown here.</div>
+        </div>
+      </div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isFlow }}" hint-placeholder-val="{{ false }}">
+    <div>
+      <div style="display:grid;grid-template-columns:220px minmax(0,1fr);gap:20px;">
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <input type="text" value="{{ flowSearchQuery }}" onChange="{{ onFlowSearchChange }}" placeholder="Search flows..." style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:13px;padding:8px 10px;">
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <sc-for list="{{ flowList }}" as="fl" hint-placeholder-count="3">
+              <div style="{{ fl.rowStyle }}">
+                <div onClick="{{ fl.select }}" style="flex:1;min-width:0;cursor:pointer;">
+                  <div style="font-size:13px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ fl.title }}</div>
+                  <div class="mono" style="font-size:9px;color:#666;">{{ fl.linkedLabel }}</div>
+                </div>
+                <div onClick="{{ fl.remove }}" class="mono" style="font-size:11px;color:#666;cursor:pointer;">✕</div>
+              </div>
+            </sc-for>
+          </div>
+          <div onClick="{{ addFlow }}" style="border:1px dashed #3d7fff;color:#3d7fff;font-size:12px;padding:8px;border-radius:2px;text-align:center;cursor:pointer;">+ Add flow</div>
+        </div>
+
+        <div>
+          <sc-if value="{{ hasSelectedFlow }}" hint-placeholder-val="{{ true }}">
+            <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:18px 20px;">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+                <div>
+                  <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:8px;">Connected to</div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <select value="{{ selectedFlow.linkedThemeId }}" onChange="{{ selectedFlow.onLinkThemeChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 10px;">
+                      <sc-for list="{{ selectedFlow.themeOptions }}" as="lo" hint-placeholder-count="4">
+                        <option value="{{ lo.value }}">{{ lo.label }}</option>
+                      </sc-for>
+                    </select>
+                    <select value="{{ selectedFlow.linkedEpicId }}" onChange="{{ selectedFlow.onLinkEpicChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 10px;">
+                      <sc-for list="{{ selectedFlow.epicOptions }}" as="lo" hint-placeholder-count="2">
+                        <option value="{{ lo.value }}">{{ lo.label }}</option>
+                      </sc-for>
+                    </select>
+                    <select value="{{ selectedFlow.linkedFeatureId }}" onChange="{{ selectedFlow.onLinkFeatureChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 10px;">
+                      <sc-for list="{{ selectedFlow.featureOptions }}" as="lo" hint-placeholder-count="2">
+                        <option value="{{ lo.value }}">{{ lo.label }}</option>
+                      </sc-for>
+                    </select>
+                    <select value="{{ selectedFlow.linkedStoryId }}" onChange="{{ selectedFlow.onLinkStoryChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 10px;">
+                      <sc-for list="{{ selectedFlow.storyOptions }}" as="lo" hint-placeholder-count="2">
+                        <option value="{{ lo.value }}">{{ lo.label }}</option>
+                      </sc-for>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:8px;text-align:left;">Type</div>
+                  <select value="{{ selectedFlow.viewType }}" onChange="{{ selectedFlow.onViewTypeChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 10px;">
+                    <sc-for list="{{ flowViewOptions }}" as="v" hint-placeholder-count="4">
+                      <option value="{{ v.key }}">{{ v.label }}</option>
+                    </sc-for>
+                  </select>
+                </div>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:4px;">
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ selectedFlow.onTitleBlur }}" style="font-size:15px;font-weight:600;outline:none;flex:1;">{{ selectedFlow.title }}</div>
+                <span class="mono" style="font-size:11px;color:#666;flex-shrink:0;">✎</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:16px;">
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ selectedFlow.onDescBlur }}" style="font-size:13px;color:#aaa;line-height:1.6;outline:none;flex:1;">{{ selectedFlow.description }}</div>
+                <span class="mono" style="font-size:11px;color:#666;flex-shrink:0;">✎</span>
+              </div>
+              <sc-if value="{{ isDiagramView }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;align-items:flex-start;gap:0;overflow-x:auto;">
+                  <sc-for list="{{ selectedFlow.steps }}" as="step" hint-placeholder-count="4">
+                    <div style="display:flex;align-items:flex-start;flex-shrink:0;">
+                      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                        <div style="display:flex;gap:6px;">
+                          <div onClick="{{ step.moveLeft }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;">◀</div>
+                          <div onClick="{{ step.remove }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;">✕</div>
+                          <div onClick="{{ step.moveRight }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;">▶</div>
+                        </div>
+                        <sc-if value="{{ step.isEditing }}" hint-placeholder-val="{{ false }}">
+                          <input type="text" value="{{ step.draft }}" onChange="{{ step.onDraftChange }}" onBlur="{{ step.commit }}" onKeyDown="{{ step.onKeyDown }}" style="width:150px;background:#1e1e1e;border:1px solid #3d7fff;border-radius:2px;color:#fff;font-size:11px;padding:8px;min-height:76px;">
+                        </sc-if>
+                        <sc-if value="{{ step.notEditing }}" hint-placeholder-val="{{ true }}">
+                          <div onClick="{{ step.startEdit }}" style="border:1px dashed #444;background:repeating-linear-gradient(135deg,#1c1c1c,#1c1c1c 6px,#232323 6px,#232323 12px);border-radius:2px;width:150px;min-height:76px;padding:10px;display:flex;flex-direction:column;justify-content:center;gap:4px;cursor:pointer;">
+                            <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;">screen</div>
+                            <div style="font-size:12px;color:#ddd;line-height:1.4;">{{ step.label }}</div>
+                          </div>
+                        </sc-if>
+                      </div>
+                      <sc-if value="{{ step.hasArrow }}" hint-placeholder-val="{{ true }}">
+                        <div class="mono" style="color:#666;padding:26px 10px 0;font-size:16px;">→</div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;margin-left:10px;">
+                    <div style="display:flex;gap:6px;visibility:hidden;">
+                      <div class="mono" style="font-size:9px;">◀</div>
+                      <div class="mono" style="font-size:9px;">✕</div>
+                      <div class="mono" style="font-size:9px;">▶</div>
+                    </div>
+                    <div onClick="{{ selectedFlow.addStep }}" style="border:1px dashed #3d7fff;border-radius:2px;width:60px;min-height:76px;display:flex;align-items:center;justify-content:center;color:#3d7fff;font-size:20px;cursor:pointer;">+</div>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ isListView }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <sc-for list="{{ selectedFlow.steps }}" as="step" hint-placeholder-count="4">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                      <div class="mono" style="width:20px;height:20px;flex-shrink:0;border-radius:50%;border:1px solid #555;display:flex;align-items:center;justify-content:center;font-size:10px;color:#ccc;">{{ step.num }}</div>
+                      <sc-if value="{{ step.isEditing }}" hint-placeholder-val="{{ false }}">
+                        <input type="text" value="{{ step.draft }}" onChange="{{ step.onDraftChange }}" onBlur="{{ step.commit }}" onKeyDown="{{ step.onKeyDown }}" style="flex:1;background:#1e1e1e;border:1px solid #3d7fff;border-radius:2px;color:#fff;font-size:13px;padding:4px 8px;">
+                      </sc-if>
+                      <sc-if value="{{ step.notEditing }}" hint-placeholder-val="{{ true }}">
+                        <div onClick="{{ step.startEdit }}" style="flex:1;font-size:13px;color:#ddd;cursor:pointer;">{{ step.label }}</div>
+                      </sc-if>
+                      <div onClick="{{ step.moveUp }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;padding:0 4px;">▲</div>
+                      <div onClick="{{ step.moveDown }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;padding:0 4px;">▼</div>
+                      <div onClick="{{ step.remove }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;padding:0 4px;">✕</div>
+                    </div>
+                  </sc-for>
+                  <div onClick="{{ selectedFlow.addStep }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <div class="mono" style="width:20px;height:20px;flex-shrink:0;border-radius:50%;border:1px dashed #3d7fff;display:flex;align-items:center;justify-content:center;font-size:12px;color:#3d7fff;">+</div>
+                    <div style="font-size:12px;color:#3d7fff;">Add step</div>
+                  </div>
+                </div>
+              </sc-if>
+              <sc-if value="{{ isBlueprintView }}" hint-placeholder-val="{{ false }}">
+                <div style="overflow-x:auto;">
+                  <div style="{{ selectedFlow.blueprintGridStyle }}">
+                    <div style="background:#141414;"></div>
+                    <sc-for list="{{ selectedFlow.blueprintColumns }}" as="col" hint-placeholder-count="4">
+                      <div style="background:#141414;padding:6px 8px;display:flex;align-items:center;justify-content:space-between;gap:4px;">
+                        <div class="mono" style="font-size:10px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ col.label }}</div>
+                        <div onClick="{{ col.removeCol }}" class="mono" style="font-size:10px;color:#666;cursor:pointer;flex-shrink:0;">✕</div>
+                      </div>
+                    </sc-for>
+                    <div onClick="{{ selectedFlow.addColumn }}" style="background:#141414;display:flex;align-items:center;justify-content:center;color:#3d7fff;cursor:pointer;font-size:14px;">+</div>
+
+                    <sc-for list="{{ selectedFlow.blueprintRows }}" as="row" hint-placeholder-count="2">
+                      <div style="background:#141414;padding:6px 8px;display:flex;align-items:center;gap:4px;">
+                        <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ row.onLabelBlur }}" class="mono" style="font-size:9px;color:#888;outline:none;flex:1;min-width:0;">{{ row.label }}</div>
+                        <div onClick="{{ row.moveUp }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;">▲</div>
+                        <div onClick="{{ row.moveDown }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;">▼</div>
+                        <div onClick="{{ row.remove }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;">✕</div>
+                      </div>
+                      <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="4">
+                        <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ cell.onBlur }}" style="background:#161616;padding:6px 8px;font-size:11px;color:#ddd;outline:none;">{{ cell.text }}</div>
+                      </sc-for>
+                      <div style="background:#141414;"></div>
+                    </sc-for>
+                  </div>
+                </div>
+                <div onClick="{{ selectedFlow.addBlueprintRow }}" style="margin-top:10px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:#3d7fff;font-size:12px;">
+                  <div class="mono" style="width:18px;height:18px;border-radius:50%;border:1px dashed #3d7fff;display:flex;align-items:center;justify-content:center;font-size:11px;">+</div>Add row
+                </div>
+              </sc-if>
+              <sc-if value="{{ isTaskflowView }}" hint-placeholder-val="{{ false }}">
+                <sc-if value="{{ selectedFlow.hasBranch }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+                    <div style="border:1px solid #555;border-radius:2px;padding:6px 10px;font-size:11px;color:#ddd;background:#1e1e1e;">{{ selectedFlow.steps.0.label }}</div>
+                    <div style="width:1px;height:10px;background:#444;"></div>
+                    <div style="width:76px;height:76px;background:#1e1e1e;border:1px solid #555;transform:rotate(45deg);display:flex;align-items:center;justify-content:center;">
+                      <div style="transform:rotate(-45deg);font-size:10px;color:#ddd;text-align:center;width:66px;">{{ selectedFlow.branch.question }}</div>
+                    </div>
+                    <div style="display:flex;gap:24px;margin-top:4px;">
+                      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                        <div class="mono" style="font-size:9px;color:#666;">yes</div>
+                        <div style="border:1px solid #555;border-radius:2px;padding:6px 10px;font-size:11px;color:#ddd;background:#1e1e1e;max-width:150px;text-align:center;">{{ selectedFlow.branch.yes }}</div>
+                      </div>
+                      <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                        <div class="mono" style="font-size:9px;color:#666;">no</div>
+                        <div style="border:1px solid #555;border-radius:2px;padding:6px 10px;font-size:11px;color:#ddd;background:#1e1e1e;max-width:150px;text-align:center;">{{ selectedFlow.branch.no }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ selectedFlow.noBranch }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;align-items:center;gap:6px;">
+                    <sc-for list="{{ selectedFlow.steps }}" as="step" hint-placeholder-count="4">
+                      <div style="border:1px solid #555;border-radius:2px;padding:6px 10px;font-size:11px;color:#ddd;background:#1e1e1e;">{{ step.label }}</div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </sc-if>
+
+            </div>
+          </sc-if>
+          <sc-if value="{{ noSelectedFlow }}" hint-placeholder-val="{{ false }}">
+            <div class="mono" style="font-size:12px;color:#666;padding:20px;text-align:center;border:1px dashed #333;border-radius:2px;">No flow selected — add one on the left.</div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isRiskTradeoff }}" hint-placeholder-val="{{ false }}">
+    <div>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start;">
+        <div>
+          <div style="display:flex;flex-direction:row;gap:6px;margin-bottom:12px;flex-wrap:wrap;">
+            <sc-for list="{{ riskChartTabs }}" as="t" hint-placeholder-count="4">
+              <div onClick="{{ t.select }}" style="{{ t.style }}">{{ t.label }}</div>
+            </sc-for>
+          </div>
+
+          <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:20px 22px;overflow-x:auto;">
+            <sc-if value="{{ isSevBlastTab }}" hint-placeholder-val="{{ true }}">
+              <div style="display:grid;grid-template-columns:80px 1fr 1fr 1fr;gap:1px;background:#2c2c2c;">
+                <div style="background:#141414;"></div>
+                <sc-for list="{{ blastRadii }}" as="br" hint-placeholder-count="3">
+                  <div class="mono" style="background:#141414;padding:8px 10px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#888;text-align:center;">{{ br }}</div>
+                </sc-for>
+                <sc-for list="{{ riskMatrixRows }}" as="row" hint-placeholder-count="3">
+                  <div class="mono" style="background:#141414;padding:10px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{{ row.color }};display:flex;align-items:center;">{{ row.label }}</div>
+                  <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="3">
+                    <div style="background:#161616;padding:12px;min-height:90px;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;align-content:flex-start;">
+                      <sc-for list="{{ cell.chips }}" as="chip" hint-placeholder-count="1">
+                        <div onClick="{{ chip.select }}" style="{{ chip.style }}">{{ chip.title }}</div>
+                      </sc-for>
+                    </div>
+                  </sc-for>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ isLikImpactTab }}" hint-placeholder-val="{{ false }}">
+              <div style="display:grid;grid-template-columns:80px 1fr 1fr 1fr;gap:1px;background:#2c2c2c;">
+                <div style="background:#141414;"></div>
+                <sc-for list="{{ likelihoods }}" as="lk" hint-placeholder-count="3">
+                  <div class="mono" style="background:#141414;padding:8px 10px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#888;text-align:center;">{{ lk }}</div>
+                </sc-for>
+                <sc-for list="{{ likImpactRows }}" as="row" hint-placeholder-count="3">
+                  <div class="mono" style="background:#141414;padding:10px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:{{ row.color }};display:flex;align-items:center;">{{ row.label }}</div>
+                  <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="3">
+                    <div style="background:#161616;padding:12px;min-height:90px;display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;align-content:flex-start;">
+                      <sc-for list="{{ cell.chips }}" as="chip" hint-placeholder-count="1">
+                        <div onClick="{{ chip.select }}" style="{{ chip.style }}">{{ chip.title }}</div>
+                      </sc-for>
+                    </div>
+                  </sc-for>
+                </sc-for>
+              </div>
+            </sc-if>
+
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2" style="flex-shrink:0;"><path d="M3 5h18M6 12h12M10 19h4"></path></svg>
+            <span class="mono" style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:#888;">Severity</span>
+            <div style="display:flex;gap:8px;">
+              <sc-for list="{{ riskFilters }}" as="f" hint-placeholder-count="4">
+                <div onClick="{{ f.select }}" style="{{ f.style }}">{{ f.label }}</div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;">
+            <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#3d7fff;margin-bottom:8px;">Related decisions</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+            <sc-for list="{{ tradeoffsForSelected }}" as="row" hint-placeholder-count="2">
+              <div style="border:1px solid #2c2c2c;border-radius:6px;background:#1a1a1a;padding:16px 18px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:16px;">
+                  <div style="font-size:14px;font-weight:600;flex:1;">{{ row.choice }}</div>
+                  <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:{{ row.badgeColor }};border:1px solid {{ row.badgeColor }};padding:2px 7px;border-radius:999px;white-space:nowrap;">{{ row.badgeLabel }}</div>
+                </div>
+                <sc-if value="{{ row.isScale }}" hint-placeholder-val="{{ true }}">
+                  <div style="position:relative;padding-bottom:16px;margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;transform:rotate({{ row.tiltDeg }}deg);transform-origin:center center;">
+                      <div onClick="{{ row.prioritizeCost }}" style="flex:1;border:1px solid {{ row.costBorder }};border-radius:4px 0 0 4px;padding:8px 10px;background:{{ row.costBg }};cursor:pointer;">
+                        <div class="mono" style="font-size:9px;color:{{ row.costLabelColor }};">COST</div>
+                        <div style="font-size:11px;color:#ccc;">{{ row.cost }}</div>
+                      </div>
+                      <div style="width:14px;height:3px;background:#666;flex-shrink:0;"></div>
+                      <div onClick="{{ row.prioritizeGain }}" style="flex:1;border:1px solid {{ row.gainBorder }};border-radius:0 4px 4px 0;padding:8px 10px;background:{{ row.gainBg }};cursor:pointer;">
+                        <div class="mono" style="font-size:9px;color:{{ row.gainLabelColor }};">GAIN</div>
+                        <div style="font-size:11px;color:#eee;">{{ row.gain }}</div>
+                      </div>
+                    </div>
+                    <div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-bottom:14px solid #3a3a3a;"></div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ row.isDuel }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                    <div onClick="{{ row.selectPrimary }}" style="{{ row.primaryBoxStyle }}">
+                      <div class="mono" style="font-size:9px;margin-bottom:4px;color:{{ row.primaryBadgeColor }};">{{ row.primaryBadge }}</div>
+                      <div style="font-size:12px;color:#fff;font-weight:600;">{{ row.primaryLabel }}</div>
+                    </div>
+                    <div class="mono" style="font-size:10px;color:#555;">vs</div>
+                    <div onClick="{{ row.selectAlt }}" style="{{ row.altBoxStyle }}">
+                      <div class="mono" style="font-size:9px;margin-bottom:4px;color:{{ row.altBadgeColor }};">{{ row.altBadge }}</div>
+                      <div style="font-size:12px;color:#fff;">{{ row.altLabelDisplay }}</div>
+                    </div>
+                  </div>
+                  <div style="font-size:11px;color:#aaa;margin-bottom:4px;"><span class="mono" style="color:#3d7fff;">GAIN</span> {{ row.gain }}</div>
+                  <div style="font-size:11px;color:#aaa;margin-bottom:12px;"><span class="mono" style="color:#777;">COST</span> {{ row.cost }}</div>
+                </sc-if>
+
+                <sc-if value="{{ row.isAnchor }}" hint-placeholder-val="{{ false }}">
+                  <div onClick="{{ row.toggleAnchor }}" style="{{ row.anchorBoxStyle }}">
+                    <div style="font-size:12px;color:#fff;font-weight:600;">{{ row.anchorMainLabel }}</div>
+                    <div class="mono" style="font-size:9px;color:#3d7fff;">{{ row.anchorBadgeLabel }}</div>
+                  </div>
+                  <div class="mono" style="font-size:10px;color:#666;margin-bottom:12px;">override considered: {{ row.anchorSubLabel }}</div>
+                  <div style="font-size:11px;color:#aaa;margin-bottom:4px;"><span class="mono" style="color:#3d7fff;">GAIN</span> {{ row.gain }}</div>
+                  <div style="font-size:11px;color:#aaa;margin-bottom:12px;"><span class="mono" style="color:#777;">COST</span> {{ row.cost }}</div>
+                </sc-if>
+
+              </div>
+            </sc-for>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:8px;">Status Breakdown</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <sc-for list="{{ statusBreakdownRows }}" as="row" hint-placeholder-count="3">
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:3px;">
+                  <span class="mono" style="color:{{ row.color }};text-transform:uppercase;letter-spacing:.05em;">{{ row.label }}</span>
+                  <span class="mono" style="color:#777;">{{ row.count }}</span>
+                </div>
+                <div style="display:flex;height:8px;border-radius:2px;overflow:hidden;background:#232323;">
+                  <sc-for list="{{ row.segments }}" as="seg" hint-placeholder-count="2">
+                    <div onClick="{{ seg.select }}" style="{{ seg.style }}"></div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+            <div style="display:flex;gap:10px;margin-top:2px;">
+              <div class="mono" style="font-size:8px;color:#e6e6e6;">■ open</div>
+              <div class="mono" style="font-size:8px;color:#999;">■ ack'd</div>
+              <div class="mono" style="font-size:8px;color:#3d7fff;">■ resolved</div>
+            </div>
+          </div>
+          <sc-if value="{{ hasStatusFocus }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:10px;padding-top:10px;border-top:1px solid #2c2c2c;display:flex;flex-direction:column;gap:6px;">
+              <sc-for list="{{ statusFocusList }}" as="r" hint-placeholder-count="2">
+                <div onClick="{{ r.select }}" style="border:1px solid #2c2c2c;border-radius:2px;background:#161616;padding:6px 8px;font-size:11px;color:#ddd;cursor:pointer;">{{ r.title }}</div>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <div style="margin-top:20px;border-top:1px solid #2c2c2c;padding-top:16px;">
+            <sc-if value="{{ selectedRisk }}" hint-placeholder-val="{{ false }}">
+              <div style="font-size:14px;font-weight:600;margin-bottom:6px;">{{ selectedRisk.title }}</div>
+              <div style="font-size:12px;color:#aaa;line-height:1.6;">{{ selectedRisk.breaksWhen }}</div>
+              <div class="mono" style="font-size:10px;color:#666;margin-top:8px;">→ {{ selectedRisk.feature }}</div>
+            </sc-if>
+            <sc-if value="{{ noRiskSelected }}" hint-placeholder-val="{{ false }}">
+              <div class="mono" style="font-size:12px;color:#666;">Click a chip above to see details.</div>
+            </sc-if>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isScrum }}" hint-placeholder-val="{{ false }}">
+    <div>
+      <sc-if value="{{ hasWikiReady }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#3d7fff;">From Spec Wiki — ready for work items</div>
+          <sc-for list="{{ wikiReadyItems }}" as="w" hint-placeholder-count="2">
+            <div class="mono" style="font-size:10px;color:#ddd;border:1px solid #3d7fff;border-radius:999px;padding:2px 8px;">{{ w.title }}</div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+
+
+      <sc-if value="{{ isScrumProgress }}" hint-placeholder-val="{{ true }}">
+        <div class="mono" style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#888;margin-bottom:10px;">Changelog — by feature area</div>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <sc-for list="{{ changelog }}" as="grp" hint-placeholder-count="4">
+            <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:14px 16px;">
+              <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:600;">{{ grp.area }}</div>
+                <div class="mono" style="font-size:11px;color:#777;">{{ grp.when }}</div>
+              </div>
+              <ul style="margin:0;padding-left:18px;font-size:13px;color:#bbb;line-height:1.7;">
+                <sc-for list="{{ grp.entries }}" as="e" hint-placeholder-count="2">
+                  <li>{{ e }}</li>
+                </sc-for>
+              </ul>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isRoadmap }}" hint-placeholder-val="{{ false }}">
+    <div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;">
+        <sc-for list="{{ roadmapSubTabs }}" as="rt" hint-placeholder-count="3">
+          <div onClick="{{ rt.select }}" style="{{ rt.style }}">{{ rt.label }}</div>
+        </sc-for>
+      </div>
+
+      <div style="display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px;">
+        <sc-if value="{{ backlogTree.length }}" hint-placeholder-val="{{ false }}">
+          <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:14px 16px;overflow-y:auto;height:100%;box-sizing:border-box;font-family:'MS Sans Serif',Tahoma,sans-serif;">
+            <input type="text" value="{{ backlogSearchQuery }}" onChange="{{ onBacklogSearchChange }}" placeholder="Search backlog..." style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 8px;margin-bottom:10px;">
+            <sc-for list="{{ backlogTree }}" as="grp" hint-placeholder-count="2">
+              <div style="margin-bottom:4px;">
+                <div onClick="{{ grp.toggle }}" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#ddd;margin-bottom:2px;cursor:pointer;">
+                  <span class="mono" style="color:#999;width:10px;">{{ grp.collapseSign }}</span>
+                  <span>{{ grp.title }}</span>
+                </div>
+                <sc-if value="{{ grp.expanded }}" hint-placeholder-val="{{ true }}">
+                  <div style="padding-left:16px;border-left:1px dotted #444;margin-left:5px;">
+                    <sc-for list="{{ grp.items }}" as="it" hint-placeholder-count="2">
+                      <div onClick="{{ it.select }}" style="display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;">
+                        <div onClick="{{ it.add }}" style="width:12px;height:12px;border:1px solid #555;border-radius:2px;flex-shrink:0;"></div>
+                        <span style="font-size:12px;color:#ccc;">{{ it.title }}</span>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <div>
+      <sc-if value="{{ isRoadmapScatter }}" hint-placeholder-val="{{ false }}">
+        <div style="position:relative;border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;height:360px;padding:20px;margin-bottom:8px;">
+          <div class="mono" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:9px;color:#777;">HIGH VALUE</div>
+          <div class="mono" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);font-size:9px;color:#777;">LOW VALUE</div>
+          <div class="mono" style="position:absolute;left:8px;top:50%;transform:translateY(-50%) rotate(-90deg);font-size:9px;color:#777;">LOW COMPLEXITY</div>
+          <div class="mono" style="position:absolute;right:8px;top:50%;transform:translateY(-50%) rotate(90deg);font-size:9px;color:#777;">HIGH COMPLEXITY</div>
+          <div style="position:absolute;left:20px;right:20px;top:20px;bottom:20px;border-left:1px solid #2c2c2c;border-bottom:1px solid #2c2c2c;">
+            <sc-for list="{{ scatterDots }}" as="d" hint-placeholder-count="8">
+              <div onClick="{{ d.select }}" onMouseEnter="{{ d.onHoverIn }}" onMouseLeave="{{ d.onHoverOut }}" style="{{ d.wrapStyle }}">
+                <div style="{{ d.style }}"></div>
+                <sc-if value="{{ d.showLabel }}" hint-placeholder-val="{{ false }}">
+                  <span class="mono" style="position:absolute;left:100%;top:50%;transform:translateY(-50%);margin-left:6px;background:#1e1e1e;border:1px solid #444;border-radius:2px;padding:2px 6px;font-size:10px;color:#eee;white-space:nowrap;pointer-events:none;">{{ d.title }}</span>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;gap:14px;margin-bottom:8px;flex-wrap:wrap;">
+          <div class="mono" style="font-size:9px;color:#666;">size = remaining work</div>
+          <div class="mono" style="font-size:9px;color:#e05a4e;">■ high risk</div>
+          <div class="mono" style="font-size:9px;color:#e0a83d;">■ medium risk</div>
+          <div class="mono" style="font-size:9px;color:#4caf50;">■ low risk</div>
+          <div class="mono" style="font-size:9px;color:#666;">■ no known risk</div>
+        </div>
+        
+      </sc-if>
+
+      <sc-if value="{{ isRoadmapMatrix }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#2c2c2c;border:1px solid #2c2c2c;margin-bottom:8px;">
+          <sc-for list="{{ eisenhowerQuadrants }}" as="q" hint-placeholder-count="4">
+            <div onDragOver="{{ q.dragOver }}" onDrop="{{ q.drop }}" style="background:#161616;padding:14px;min-height:130px;">
+              <div style="font-size:13px;font-weight:600;color:#eee;margin-bottom:2px;">{{ q.label }}</div>
+              <div class="mono" style="font-size:9px;color:#777;margin-bottom:10px;">{{ q.sub }}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                <sc-for list="{{ q.items }}" as="it" hint-placeholder-count="2">
+                  <div draggable="{{ true }}" onDragStart="{{ it.dragStart }}" onClick="{{ it.select }}" style="border:1px solid #444;border-radius:999px;padding:4px 8px;font-size:11px;color:#ddd;cursor:grab;">{{ it.title }}</div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isRoadmapGantt }}" hint-placeholder-val="{{ false }}">
+        <div style="overflow-x:auto;margin-bottom:8px;">
+          <div style="min-width:760px;">
+            <div style="display:grid;grid-template-columns:160px 1fr;gap:1px;margin-bottom:1px;">
+              <div style="background:#1a1a1a;"></div>
+              <div style="display:grid;grid-template-columns:repeat(9,1fr);background:#1e1e1e;">
+                <sc-for list="{{ ganttSprints }}" as="sp" hint-placeholder-count="9">
+                  <div class="mono" style="padding:8px 4px;font-size:10px;color:#888;text-align:center;border-left:1px solid #2c2c2c;">{{ sp }}</div>
+                </sc-for>
+              </div>
+            </div>
+            <sc-for list="{{ ganttRows }}" as="row" hint-placeholder-count="8">
+              <div style="display:grid;grid-template-columns:160px 1fr;gap:1px;margin-bottom:1px;">
+                <div style="background:#1a1a1a;padding:6px 10px;display:flex;flex-direction:column;justify-content:center;">
+                  <div style="font-size:12px;color:#ccc;">{{ row.title }}</div>
+                  <div class="mono" style="font-size:9px;color:#666;">{{ row.laneTitle }}</div>
+                </div>
+                <div style="background:#161616;position:relative;height:38px;">
+                  <div draggable="{{ true }}" onDragStart="{{ row.onBarDragStart }}" onDragEnd="{{ row.onBarDragEnd }}" onClick="{{ row.select }}" title="{{ row.rangeLabel }}" style="{{ row.barStyle }}">
+                    <span onClick="{{ row.shiftLeft }}" class="mono" style="cursor:pointer;">◀</span>
+                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;">{{ row.title }}</span>
+                    <span onClick="{{ row.shrink }}" class="mono" style="cursor:pointer;">-</span>
+                    <span onClick="{{ row.grow }}" class="mono" style="cursor:pointer;">+</span>
+                    <span onClick="{{ row.shiftRight }}" class="mono" style="cursor:pointer;">▶</span>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:8px;">
+          <div class="mono" style="font-size:9px;color:#3d7fff;">■ Now</div>
+          <div class="mono" style="font-size:9px;color:#999;">■ Next</div>
+          <div class="mono" style="font-size:9px;color:#666;">■ Later</div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isRoadmapKanban }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#2c2c2c;border:1px solid #2c2c2c;border-radius:2px;overflow:hidden;margin-bottom:8px;">
+        <sc-for list="{{ roadmapStages }}" as="s" hint-placeholder-count="2">
+          <div style="background:#1e1e1e;padding:10px 12px;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:#ccc;font-weight:600;">{{ s }}</div>
+        </sc-for>
+        <sc-for list="{{ releaseColumns }}" as="col" hint-placeholder-count="2">
+          <div onDragOver="{{ col.dragOver }}" onDrop="{{ col.drop }}" style="background:#161616;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:200px;">
+            <sc-for list="{{ col.items }}" as="it" hint-placeholder-count="3">
+              <div draggable="{{ true }}" onDragStart="{{ it.dragStart }}" onClick="{{ it.select }}" style="{{ it.style }}">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                  <div style="font-size:12px;font-weight:600;">{{ it.title }}</div>
+                  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <div class="mono" style="font-size:9px;color:#3d7fff;">{{ it.importance }}/5</div>
+                    <div onClick="{{ it.toBacklog }}" class="mono" style="font-size:11px;color:#666;cursor:pointer;">✕</div>
+                  </div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+
+      </sc-if>
+
+      <sc-if value="{{ addingLane }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;gap:8px;align-items:center;border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:10px 12px;margin-bottom:20px;">
+          <input type="text" value="{{ newLaneTitle }}" onChange="{{ setNewLaneTitle }}" placeholder="New theme name" style="flex:1;background:#141414;border:1px solid #444;border-radius:2px;color:#e6e6e6;font-size:13px;padding:6px 10px;">
+          <div onClick="{{ confirmAddLane }}" style="background:#3d7fff;color:#0d0d0e;font-size:12px;font-weight:600;padding:6px 14px;border-radius:6px;cursor:pointer;">Add</div>
+          <div onClick="{{ cancelAddLane }}" style="border:1px solid #444;color:#999;font-size:12px;padding:6px 14px;border-radius:6px;cursor:pointer;">Cancel</div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ notesModalOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;">
+          <div style="background:#1e1e1e;border:1px solid #444;border-radius:4px;padding:20px 22px;width:420px;max-height:70vh;display:flex;flex-direction:column;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+              <div style="font-size:14px;font-weight:600;">Notes with Hermes</div>
+              <div onClick="{{ closeNotesModal }}" class="mono" style="font-size:12px;color:#999;cursor:pointer;">✕</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;overflow-y:auto;">
+              <sc-for list="{{ selectedRoadmapItem.notesLog }}" as="n" hint-placeholder-count="3">
+                <div style="{{ n.style }}">
+                  <div class="mono" style="font-size:9px;margin-bottom:3px;color:{{ n.fromColor }};">{{ n.fromLabel }}</div>
+                  <div style="font-size:12px;line-height:1.5;color:{{ n.textColor }};">{{ n.text }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ noRoadmapItemSelected }}" hint-placeholder-val="{{ false }}">
+        <div class="mono" style="font-size:12px;color:#666;padding:20px;text-align:center;border:1px dashed #333;border-radius:2px;">Click a card above to see details.</div>
+      </sc-if>
+
+      <sc-if value="{{ hasLaneToDelete }}" hint-placeholder-val="{{ false }}">
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;">
+          <div style="background:#1e1e1e;border:1px solid #444;border-radius:4px;padding:22px 24px;width:340px;">
+            <div style="font-size:14px;font-weight:600;margin-bottom:8px;">Delete "{{ laneToDelete.title }}"?</div>
+            <div style="font-size:12px;color:#aaa;line-height:1.5;margin-bottom:18px;">This removes the theme and all its cards from the roadmap. This can't be undone.</div>
+            <div style="display:flex;justify-content:flex-end;gap:8px;">
+              <div onClick="{{ cancelDeleteLane }}" style="border:1px solid #444;color:#999;font-size:12px;padding:6px 14px;border-radius:6px;cursor:pointer;">Cancel</div>
+              <div onClick="{{ confirmDeleteLane }}" style="background:#e05a4e;color:#141414;font-size:12px;font-weight:600;padding:6px 14px;border-radius:6px;cursor:pointer;">Delete</div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+        </div>
+      </div>
+
+      <sc-if value="{{ selectedRoadmapItem }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:16px 18px;margin-top:20px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div style="flex:1;font-size:15px;font-weight:600;">{{ selectedRoadmapItem.title }}</div>
+            <div class="mono" style="font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:#3d7fff;border:1px solid #3d7fff;padding:2px 6px;border-radius:2px;">{{ selectedRoadmapItem.stageLabel }}</div>
+            <div class="mono" style="font-size:10px;color:#999;border:1px solid #444;padding:2px 6px;border-radius:2px;">{{ selectedRoadmapItem.laneTitle }}</div>
+          </div>
+          <div style="display:flex;gap:24px;border-top:1px solid #2c2c2c;margin-top:14px;padding-top:16px;flex-wrap:wrap;">
+            <div style="min-width:200px;max-width:220px;">
+              <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#3d7fff;margin-bottom:12px;">Guidance for Hermes</div>
+
+              <div style="margin-bottom:14px;">
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:#999;margin-bottom:4px;">
+                  <span>Importance</span><span class="mono" style="color:#3d7fff;">{{ selectedRoadmapItem.importance }}/5</span>
+                </div>
+                <input type="range" min="1" max="5" value="{{ selectedRoadmapItem.importance }}" onChange="{{ selectedRoadmapItem.onImportanceChange }}" style="width:100%;">
+              </div>
+
+              <div style="margin-bottom:14px;">
+                <div style="font-size:11px;color:#999;margin-bottom:6px;">Intent</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <sc-for list="{{ selectedRoadmapItem.intentOptions }}" as="opt" hint-placeholder-count="3">
+                    <div onClick="{{ opt.select }}" style="{{ opt.style }}">{{ opt.label }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+
+            <div style="min-width:200px;max-width:220px;">
+              <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#3d7fff;margin-bottom:10px;">Tasks — {{ selectedRoadmapItem.tasksSummary }}</div>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">
+                <sc-for list="{{ selectedRoadmapItem.tasks }}" as="t" hint-placeholder-count="3">
+                  <div onClick="{{ t.toggle }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <div style="width:14px;height:14px;border-radius:3px;border:1px solid #555;flex-shrink:0;background:{{ t.done }};"></div>
+                    <div style="font-size:12px;color:#ccc;">{{ t.label }}</div>
+                  </div>
+                </sc-for>
+              </div>
+              <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#666;margin-bottom:6px;">Burndown (illustrative)</div>
+              <div style="display:flex;align-items:flex-end;gap:4px;height:40px;">
+                <sc-for list="{{ selectedRoadmapItem.burndownBars }}" as="b" hint-placeholder-count="5">
+                  <div style="flex:1;background:#333;border-radius:1px;{{ b.heightStyle }}"></div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="flex:1;min-width:220px;">
+              <div style="font-size:13px;color:#aaa;line-height:1.6;">{{ selectedRoadmapItem.benefit }}</div>
+              <div class="mono" style="font-size:11px;color:#3d7fff;margin-top:8px;">{{ selectedRoadmapItem.outcome }}</div>
+              <div class="mono" style="font-size:11px;color:#777;margin-top:6px;margin-bottom:16px;">Effort: {{ selectedRoadmapItem.effort }}</div>
+
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#3d7fff;">Notes with Hermes</div>
+                <div onClick="{{ openNotesModal }}" class="mono" style="font-size:9px;color:#666;cursor:pointer;text-decoration:underline;">View full history</div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-height:170px;overflow-y:auto;margin-bottom:10px;">
+                <sc-for list="{{ selectedRoadmapItem.notesLog }}" as="n" hint-placeholder-count="2">
+                  <div style="{{ n.style }}">
+                    <div class="mono" style="font-size:9px;margin-bottom:3px;color:{{ n.fromColor }};">{{ n.fromLabel }}</div>
+                    <div style="font-size:12px;line-height:1.5;color:{{ n.textColor }};">{{ n.text }}</div>
+                  </div>
+                </sc-for>
+                <sc-if value="{{ selectedRoadmapItem.noNotes }}" hint-placeholder-val="{{ false }}">
+                  <div class="mono" style="font-size:10px;color:#666;">No notes yet — leave one below.</div>
+                </sc-if>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <input type="text" value="{{ selectedRoadmapItem.noteDraft }}" onChange="{{ selectedRoadmapItem.onNoteDraftChange }}" placeholder="Add a note to Hermes..." style="flex:1;background:#141414;border:1px solid #444;border-radius:2px;color:#e6e6e6;font-size:12px;padding:6px 8px;">
+                <div onClick="{{ selectedRoadmapItem.sendNote }}" style="background:#3d7fff;color:#0d0d0e;font-size:11px;font-weight:600;padding:6px 12px;border-radius:6px;cursor:pointer;white-space:nowrap;">Send</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isSpecDigestOrDecomp }}" hint-placeholder-val="{{ false }}">
+    <div>
+      <sc-if value="{{ mindIsTree }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <sc-for list="{{ themes }}" as="theme" hint-placeholder-count="3">
+            <div>
+              <div onClick="{{ theme.toggle }}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:#1e1e1e;border:1px solid #2c2c2c;border-radius:2px;">
+                <div class="mono" style="font-size:11px;color:#666;width:14px;">{{ theme.chevron }}</div>
+                <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#888;border:1px solid #555;padding:1px 6px;border-radius:2px;">Theme</div>
+                <div style="font-size:14px;font-weight:600;flex:1;">{{ theme.title }}</div>
+                <div class="mono" style="font-size:10px;color:#3d7fff;">{{ theme.completionPct }}%</div>
+              </div>
+              <sc-if value="{{ theme.open }}" hint-placeholder-val="{{ true }}">
+                <div style="padding-left:22px;border-left:1px solid #2c2c2c;margin-left:14px;">
+                  <sc-for list="{{ theme.epics }}" as="epic" hint-placeholder-count="2">
+                    <div>
+                      <div onClick="{{ epic.toggle }}" style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;">
+                        <div class="mono" style="font-size:11px;color:#666;width:14px;">{{ epic.chevron }}</div>
+                        <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#888;border:1px solid #555;padding:1px 6px;border-radius:2px;">Epic</div>
+                        <div style="font-size:13px;flex:1;">{{ epic.title }}</div>
+                        <div class="mono" style="font-size:10px;color:#3d7fff;">{{ epic.completionPct }}%</div>
+                      </div>
+                      <sc-if value="{{ epic.open }}" hint-placeholder-val="{{ true }}">
+                        <div style="padding-left:22px;border-left:1px solid #2c2c2c;margin-left:14px;">
+                          <sc-for list="{{ epic.features }}" as="feat" hint-placeholder-count="2">
+                            <div style="margin-bottom:4px;">
+                              <div onClick="{{ feat.toggle }}" style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;background:#191919;border-radius:2px;">
+                                <div class="mono" style="font-size:11px;color:#666;width:14px;">{{ feat.chevron }}</div>
+                                <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#888;border:1px solid #555;padding:1px 6px;border-radius:2px;">Feature</div>
+                                <div style="font-size:13px;flex:1;">{{ feat.title }}</div>
+                                <div class="mono" style="font-size:10px;color:#3d7fff;">{{ feat.completionPct }}%</div>
+                              </div>
+                              <sc-if value="{{ feat.open }}" hint-placeholder-val="{{ true }}">
+                                <div style="padding-left:22px;margin-left:14px;">
+                                  <sc-if value="{{ false }}" hint-placeholder-val="{{ false }}">
+                                    <div style="border:1px solid #3a3a3a;border-radius:2px;background:#161616;padding:14px 16px;margin:8px 0;">
+                                      <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#3d7fff;border:1px solid #3d7fff;border-radius:999px;padding:1px 8px;width:fit-content;margin-bottom:10px;">{{ feat.decision.hudLabel }}</div>
+                                      <div style="font-size:13px;color:#e6e6e6;margin-bottom:12px;">{{ feat.decision.prompt }}</div>
+
+                                      <sc-if value="{{ feat.decision.isChoice }}" hint-placeholder-val="{{ false }}">
+                                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                                          <sc-for list="{{ feat.decision.options }}" as="opt" hint-placeholder-count="3">
+                                            <div onClick="{{ opt.select }}" style="{{ opt.style }}">
+                                              <div style="font-size:13px;font-weight:600;">{{ opt.label }}</div>
+                                              <div class="mono" style="font-size:10px;color:#888;margin-top:3px;">{{ opt.desc }}</div>
+                                            </div>
+                                          </sc-for>
+                                        </div>
+                                      </sc-if>
+
+                                      <sc-if value="{{ feat.decision.isRank }}" hint-placeholder-val="{{ false }}">
+                                        <div class="mono" style="font-size:11px;color:#777;margin-bottom:8px;">{{ feat.decision.hint }}</div>
+                                        <div style="display:flex;flex-direction:column;gap:6px;">
+                                          <sc-for list="{{ feat.decision.ranked }}" as="r" hint-placeholder-count="3">
+                                            <div style="{{ r.style }}">
+                                              <div class="mono" style="font-size:11px;color:#3d7fff;width:16px;">{{ r.pos }}</div>
+                                              <div style="flex:1;font-size:13px;">{{ r.label }}</div>
+                                              <div onClick="{{ r.up }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;padding:0 4px;">▲</div>
+                                              <div onClick="{{ r.down }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;padding:0 4px;">▼</div>
+                                            </div>
+                                          </sc-for>
+                                        </div>
+                                      </sc-if>
+
+                                      <sc-if value="{{ feat.decision.isSlider }}" hint-placeholder-val="{{ false }}">
+                                        <div>
+                                          <div class="mono" style="font-size:22px;font-weight:600;color:#3d7fff;">{{ feat.decision.valueLabel }}</div>
+                                          <input type="range" min="{{ feat.decision.min }}" max="{{ feat.decision.max }}" value="{{ feat.decision.value }}" onChange="{{ feat.decision.onSlide }}" style="width:100%;margin-top:6px;">
+                                          <div style="display:flex;justify-content:space-between;font-size:11px;color:#888;margin-top:4px;">
+                                            <span>{{ feat.decision.minLabel }}</span>
+                                            <span>{{ feat.decision.maxLabel }}</span>
+                                          </div>
+                                        </div>
+                                      </sc-if>
+
+                                      <sc-if value="{{ feat.decision.answered }}" hint-placeholder-val="{{ false }}">
+                                        <div class="mono" style="font-size:11px;color:#3d7fff;margin-top:12px;">✓ Confirmed — {{ feat.decision.answerSummary }}</div>
+                                      </sc-if>
+                                      <sc-if value="{{ feat.decision.canConfirm }}" hint-placeholder-val="{{ false }}">
+                                        <div onClick="{{ feat.decision.confirm }}" style="margin-top:12px;display:inline-block;background:#3d7fff;color:#0d0d0e;font-size:12px;font-weight:600;padding:6px 14px;border-radius:6px;cursor:pointer;">{{ feat.decision.confirmLabel }}</div>
+                                      </sc-if>
+                                    </div>
+                                  </sc-if>
+                                  <sc-for list="{{ feat.stories }}" as="story" hint-placeholder-count="2">
+                                    <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;margin-bottom:4px;">
+                                      <div onClick="{{ story.toggle }}" style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;">
+                                        <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;border:1px solid #444;padding:1px 6px;border-radius:2px;">Story</div>
+                                        <div style="font-size:13px;flex:1;">{{ story.oneLiner }}</div>
+                                        <div class="mono" style="font-size:11px;color:#666;">{{ story.chevron }}</div>
+                                      </div>
+                                      <sc-if value="{{ story.open }}" hint-placeholder-val="{{ false }}">
+                                        <div style="padding:0 12px 12px 12px;border-top:1px solid #2c2c2c;">
+                                          <div style="font-size:12px;color:#aaa;line-height:1.6;margin:10px 0 8px;">{{ story.fullText }}</div>
+                                          <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:4px;">Acceptance criteria</div>
+                                          <ul style="margin:0;padding-left:16px;font-size:12px;color:#ccc;line-height:1.6;">
+                                            <sc-for list="{{ story.criteria }}" as="c" hint-placeholder-count="2"><li>{{ c }}</li></sc-for>
+                                          </ul>
+                                        </div>
+                                      </sc-if>
+                                    </div>
+                                  </sc-for>
+                                </div>
+                              </sc-if>
+                            </div>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ false }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <sc-for list="{{ flatStories }}" as="s" hint-placeholder-count="4">
+            <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;">
+              <div onClick="{{ s.toggle }}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;">
+                <div class="mono" style="font-size:9px;color:#666;">{{ s.chevron }}</div>
+                <div style="flex:1;">
+                  <div class="mono" style="font-size:9px;color:#777;">{{ s.path }}</div>
+                  <div style="font-size:13px;color:#ddd;">{{ s.oneLiner }}</div>
+                </div>
+                <sc-if value="{{ s.needsInput }}" hint-placeholder-val="{{ false }}">
+                  <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;border:1px solid #777;color:#ddd;padding:1px 6px;border-radius:2px;">Needs input</div>
+                </sc-if>
+              </div>
+              <sc-if value="{{ s.open }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:0 12px 12px 12px;border-top:1px solid #2c2c2c;">
+                  <div style="font-size:12px;color:#aaa;line-height:1.6;margin:10px 0 8px;">{{ s.fullText }}</div>
+                  <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:4px;">Acceptance criteria</div>
+                  <ul style="margin:0;padding-left:16px;font-size:12px;color:#ccc;line-height:1.6;">
+                    <sc-for list="{{ s.criteria }}" as="c" hint-placeholder-count="2"><li>{{ c }}</li></sc-for>
+                  </ul>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isSpecDigest }}" hint-placeholder-val="{{ true }}">
+        <div style="display:grid;grid-template-columns:260px minmax(0,1fr);gap:20px;">
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <input type="text" value="{{ wikiSearchQuery }}" onChange="{{ onWikiSearchChange }}" placeholder="Search specs..." style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:13px;padding:8px 10px;">
+            <div style="display:flex;flex-direction:column;gap:2px;max-height:520px;overflow-y:auto;font-family:'MS Sans Serif',Tahoma,sans-serif;">
+              <sc-for list="{{ wikiPageList }}" as="p" hint-placeholder-count="6">
+                <div onClick="{{ p.select }}" style="{{ p.rowStyle }}">
+                  <span class="mono" style="color:#999;width:10px;display:inline-block;flex-shrink:0;">-</span>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:12px;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ p.title }}</div>
+                    <div class="mono" style="font-size:9px;color:#666;">{{ p.themeTitle }}</div>
+                  </div>
+                  <div style="width:7px;height:7px;border-radius:50%;background:{{ p.statusColor }};flex-shrink:0;"></div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div>
+            <sc-if value="{{ hasWikiPage }}" hint-placeholder-val="{{ true }}">
+              <div style="border:1px solid #2c2c2c;border-radius:4px;background:#1a1a1a;padding:32px 36px;">
+                <div class="mono" style="font-size:10px;color:#777;margin-bottom:4px;">{{ wikiPage.breadcrumb }}</div>
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ wikiPage.onTitleBlur }}" style="font-size:24px;font-weight:600;margin-bottom:14px;outline:none;">{{ wikiPage.title }}</div>
+
+                <div style="display:flex;gap:6px;margin-top:8px;margin-bottom:2px;">
+                  <div onMouseDown="{{ wikiPage.fmtBold }}" class="mono" style="width:24px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid #444;border-radius:3px;color:#ddd;font-weight:700;font-size:11px;cursor:pointer;">B</div>
+                  <div onMouseDown="{{ wikiPage.fmtItalic }}" class="mono" style="width:24px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid #444;border-radius:3px;color:#ddd;font-style:italic;font-size:11px;cursor:pointer;">I</div>
+                  <div onMouseDown="{{ wikiPage.fmtH2 }}" class="mono" style="width:24px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid #444;border-radius:3px;color:#ddd;font-size:10px;cursor:pointer;">H2</div>
+                  <div onMouseDown="{{ wikiPage.fmtList }}" class="mono" style="width:24px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid #444;border-radius:3px;color:#ddd;font-size:12px;cursor:pointer;">≡</div>
+                  <div onMouseDown="{{ wikiPage.fmtQuote }}" class="mono" style="width:24px;height:22px;display:flex;align-items:center;justify-content:center;border:1px solid #444;border-radius:3px;color:#ddd;font-size:13px;cursor:pointer;">"</div>
+                </div>
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ wikiPage.onNoteBlur }}" style="font-size:14px;color:#ddd;line-height:1.8;padding:8px 0 20px;border-top:1px solid #2c2c2c;outline:none;">{{ wikiPage.noteText }}</div>
+
+                <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:8px;">Acceptance criteria</div>
+                <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:20px;">
+                  <sc-for list="{{ wikiPage.criteria }}" as="c" hint-placeholder-count="2">
+                    <div onClick="{{ c.toggle }}" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                      <div style="width:14px;height:14px;border-radius:3px;border:1px solid #555;flex-shrink:0;background:{{ c.checkBg }};"></div>
+                      <div style="font-size:12px;color:#ccc;">{{ c.text }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+
+                <sc-if value="{{ wikiPage.hasRelated }}" hint-placeholder-val="{{ false }}">
+                  <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:8px;">Related pages</div>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;">
+                    <sc-for list="{{ wikiPage.related }}" as="r" hint-placeholder-count="2">
+                      <div onClick="{{ r.select }}" class="mono" style="font-size:11px;color:#3d7fff;border:1px solid #3d7fff;border-radius:999px;padding:3px 10px;cursor:pointer;">[[{{ r.title }}]]</div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:6px;">History</div>
+                <div style="display:flex;flex-direction:column;gap:3px;margin-bottom:20px;">
+                  <sc-for list="{{ wikiPage.history }}" as="h" hint-placeholder-count="2">
+                    <div class="mono" style="font-size:10px;color:#666;">{{ h.label }}</div>
+                  </sc-for>
+                </div>
+
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;border-top:1px solid #2c2c2c;padding-top:16px;flex-wrap:wrap;">
+                  <div>
+                    <div class="mono" style="font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:#777;margin-bottom:6px;">Linked to</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                      <select value="{{ wikiPage.linkedThemeId }}" onChange="{{ wikiPage.onLinkThemeChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 8px;">
+                        <sc-for list="{{ wikiPage.themeOptions }}" as="lo" hint-placeholder-count="4">
+                          <option value="{{ lo.value }}">{{ lo.label }}</option>
+                        </sc-for>
+                      </select>
+                      <select value="{{ wikiPage.linkedEpicId }}" onChange="{{ wikiPage.onLinkEpicChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 8px;">
+                        <sc-for list="{{ wikiPage.epicOptions }}" as="lo" hint-placeholder-count="2">
+                          <option value="{{ lo.value }}">{{ lo.label }}</option>
+                        </sc-for>
+                      </select>
+                      <select value="{{ wikiPage.linkedFeatureId }}" onChange="{{ wikiPage.onLinkFeatureChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 8px;">
+                        <sc-for list="{{ wikiPage.featureOptions }}" as="lo" hint-placeholder-count="2">
+                          <option value="{{ lo.value }}">{{ lo.label }}</option>
+                        </sc-for>
+                      </select>
+                      <select value="{{ wikiPage.linkedStoryId }}" onChange="{{ wikiPage.onLinkStoryChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 8px;">
+                        <sc-for list="{{ wikiPage.storyOptions }}" as="lo" hint-placeholder-count="2">
+                          <option value="{{ lo.value }}">{{ lo.label }}</option>
+                        </sc-for>
+                      </select>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <sc-if value="{{ wikiPage.isReady }}" hint-placeholder-val="{{ false }}">
+                      <div class="mono" style="font-size:10px;color:#3d7fff;">✓ Will appear in Scrum Planning's backlog</div>
+                    </sc-if>
+                    <select value="{{ wikiPage.statusValue }}" onChange="{{ wikiPage.onStatusChange }}" style="background:#141414;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:12px;padding:6px 10px;">
+                      <sc-for list="{{ wikiPage.statusSelectOptions }}" as="so" hint-placeholder-count="3">
+                        <option value="{{ so.value }}">{{ so.label }}</option>
+                      </sc-for>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ noSelectedWikiPage }}" hint-placeholder-val="{{ false }}">
+              <div class="mono" style="font-size:12px;color:#666;padding:20px;text-align:center;border:1px dashed #333;border-radius:2px;">Select a spec on the left to view and edit it.</div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isArchitecture }}" hint-placeholder-val="{{ false }}">
+    <div>
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:20px;">
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="text" value="{{ archSearchQuery }}" onChange="{{ onArchSearchChange }}" placeholder="Search levels..." style="width:100%;background:#1e1e1e;border:1px solid #444;border-radius:4px;color:#e6e6e6;font-size:13px;padding:8px 10px;">
+        <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;flex-direction:column;gap:2px;font-family:'MS Sans Serif',Tahoma,sans-serif;">
+          <sc-for list="{{ archLevels }}" as="lv" hint-placeholder-count="4">
+            <div onClick="{{ lv.select }}" style="{{ lv.rowStyle }}">
+              <span class="mono" style="color:#999;width:10px;display:inline-block;">{{ lv.sign }}</span>{{ lv.label }}
+            </div>
+          </sc-for>
+        </div>
+        </div>
+      </div>
+      <div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:16px;">
+        <sc-for list="{{ archViewModes }}" as="vm" hint-placeholder-count="2">
+          <div onClick="{{ vm.select }}" style="{{ vm.style }}">{{ vm.label }}</div>
+        </sc-for>
+      </div>
+      <sc-if value="{{ isArchCodeMode }}" hint-placeholder-val="{{ false }}">
+        <textarea value="{{ archCodeText }}" onChange="{{ onArchCodeChange }}" spellCheck="{{ false }}" class="mono" style="width:100%;min-height:320px;background:#141414;border:1px solid #2c2c2c;border-radius:2px;color:#9fd;font-size:12px;line-height:1.6;padding:16px;resize:vertical;"></textarea>
+      </sc-if>
+      <sc-if value="{{ isArchDiagramMode }}" hint-placeholder-val="{{ true }}">
+      <sc-if value="{{ isArchContext }}" hint-placeholder-val="{{ true }}">
+        <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:32px 20px 28px;">
+          <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#777;margin-bottom:24px;text-align:center;">C4 — system context</div>
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="border:1px solid #666;border-radius:2px;padding:10px 18px;text-align:center;background:#212121;">
+              <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ archLabels.onPersonBlur }}" style="font-size:12px;color:#eee;outline:none;">{{ archLabels.person }}</div>
+              <div class="mono" style="font-size:9px;color:#777;">person</div>
+            </div>
+            <div style="width:1px;height:26px;background:#444;"></div>
+            <div onDoubleClick="{{ goToContainerLevel }}" style="border:2px solid #ccc;border-radius:2px;padding:12px 22px;text-align:center;background:#242424;cursor:zoom-in;">
+              <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ archLabels.onSystemBlur }}" style="font-size:13px;font-weight:600;color:#fff;outline:none;">{{ archLabels.system }}</div>
+              <div class="mono" style="font-size:9px;color:#999;">this system — double-click to zoom in</div>
+            </div>
+            <div style="width:1px;height:20px;background:#444;"></div>
+            <div style="width:360px;height:1px;background:#444;"></div>
+            <div style="display:flex;justify-content:space-between;width:360px;">
+              <div style="width:1px;height:20px;background:#444;"></div>
+              <div style="width:1px;height:20px;background:#444;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;width:360px;gap:20px;">
+              <div style="border:1px dashed #555;border-radius:2px;padding:10px 16px;text-align:center;background:#1c1c1c;flex:1;">
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ archLabels.onWarehouseBlur }}" style="font-size:12px;color:#ddd;outline:none;">{{ archLabels.warehouse }}</div>
+                <div class="mono" style="font-size:9px;color:#777;">external system</div>
+              </div>
+              <div style="border:1px dashed #555;border-radius:2px;padding:10px 16px;text-align:center;background:#1c1c1c;flex:1;">
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ archLabels.onBillingBlur }}" style="font-size:12px;color:#ddd;outline:none;">{{ archLabels.billing }}</div>
+                <div class="mono" style="font-size:9px;color:#777;">external system</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isArchContainer }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px dashed #555;border-radius:4px;padding:24px;background:#181818;">
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-bottom:16px;">
+            <div onClick="{{ backToContext }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;">← Back</div>
+            <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#777;text-align:center;">Hermes App — containers</div>
+            <div></div>
+          </div>
+          <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;">
+            <sc-for list="{{ containerBoxes }}" as="b" hint-placeholder-count="4">
+              <div onDoubleClick="{{ b.onDoubleClick }}" style="{{ b.style }}">
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ b.onTitleBlur }}" onClick="{{ b.stopProp }}" style="font-size:12px;color:#eee;outline:none;">{{ b.title }}</div>
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ b.onSubBlur }}" onClick="{{ b.stopProp }}" class="mono" style="font-size:9px;color:#777;margin-top:2px;outline:none;">{{ b.sub }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isArchComponent }}" hint-placeholder-val="{{ false }}">
+        <div style="border:1px dashed #555;border-radius:4px;padding:24px;background:#181818;">
+          <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-bottom:16px;">
+            <div onClick="{{ backToContainer }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;">← Back</div>
+            <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#777;text-align:center;">Sync Worker — components</div>
+            <div></div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;">
+            <sc-for list="{{ componentBoxes }}" as="b" hint-placeholder-count="4">
+              <div style="display:flex;align-items:center;">
+                <div style="border:1px solid #666;border-radius:2px;padding:10px 14px;text-align:center;background:#212121;width:130px;">
+                  <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ b.onTitleBlur }}" style="font-size:12px;color:#eee;outline:none;">{{ b.title }}</div>
+                  <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ b.onSubBlur }}" class="mono" style="font-size:9px;color:#777;margin-top:2px;outline:none;">{{ b.sub }}</div>
+                </div>
+                <sc-if value="{{ b.hasArrow }}" hint-placeholder-val="{{ true }}">
+                  <div class="mono" style="color:#666;padding:0 8px;font-size:16px;">→</div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ isArchDataflow }}" hint-placeholder-val="{{ false }}">
+        <div>
+        <div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-bottom:14px;">
+          <div onClick="{{ backToComponent }}" class="mono" style="font-size:11px;color:#999;cursor:pointer;">← Back</div>
+          <div class="mono" style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#777;text-align:center;">Data flow — walkthrough</div>
+          <div></div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-bottom:16px;">
+          <sc-for list="{{ dataflowViewOptions }}" as="v" hint-placeholder-count="3">
+            <div onClick="{{ v.select }}" style="{{ v.style }}">{{ v.label }}</div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ isDataflowNumbered }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <sc-for list="{{ dataflowSteps }}" as="step" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:10px;border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:10px 14px;">
+                <div class="mono" style="width:20px;height:20px;flex-shrink:0;border-radius:50%;border:1px solid #555;display:flex;align-items:center;justify-content:center;font-size:10px;color:#ccc;">{{ step.num }}</div>
+                <div contentEditable="{{ true }}" suppressContentEditableWarning="{{ true }}" onBlur="{{ step.onBlur }}" style="flex:1;font-size:13px;color:#ddd;outline:none;">{{ step.label }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isDataflowSequence }}" hint-placeholder-val="{{ false }}">
+          <div style="border:1px solid #2c2c2c;border-radius:2px;background:#1a1a1a;padding:18px 20px;">
+            <div style="display:flex;justify-content:space-around;margin-bottom:16px;">
+              <sc-for list="{{ dataflowActors }}" as="a" hint-placeholder-count="3">
+                <div class="mono" style="font-size:10px;color:#888;text-align:center;">{{ a }}</div>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:14px;">
+              <sc-for list="{{ dataflowSequenceRows }}" as="m" hint-placeholder-count="5">
+                <div class="mono" style="font-size:11px;color:#3d7fff;text-align:center;border-bottom:1px solid #2c2c2c;padding-bottom:6px;">{{ m.fromLabel }} → {{ m.toLabel }}: {{ m.label }}</div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isDataflowSwimlane }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:1px;background:#2c2c2c;">
+            <sc-for list="{{ dataflowLaneRows }}" as="lane" hint-placeholder-count="3">
+              <div style="display:grid;grid-template-columns:110px 1fr;background:#141414;">
+                <div class="mono" style="font-size:10px;color:#888;padding:10px;">{{ lane.actor }}</div>
+                <div style="padding:8px;display:flex;flex-direction:column;gap:6px;">
+                  <sc-for list="{{ lane.steps }}" as="s" hint-placeholder-count="2">
+                    <div style="border:1px solid #555;border-radius:2px;padding:6px 10px;font-size:12px;color:#ddd;background:#1e1e1e;">{{ s }}</div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+        </div>
+      </sc-if>
+      </sc-if>
+      </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const TAB_DEFS = [
+  { key: 'mindmap', label: 'MindMap' },
+  { key: 'roadmap', label: 'Roadmap' },
+  { key: 'riskTradeoff', label: 'Risk & Tradeoffs' },
+  { key: 'flow', label: 'Flowcharts' },
+  { key: 'architecture', label: 'Architecture' },
+  { key: 'specDigest', label: 'Spec Digest' },
+  { key: 'scrum', label: 'Scrum Planning' },
+];
+const GANTT_SPRINTS = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9'];
+const GANTT_STAGE_START = { 0: 0, 1: 3, 2: 6 };
+const GANTT_EFFORT_DURATION = { S: 1, 'S/M': 1.5, M: 2, 'M/L': 2.5, L: 3 };
+
+const ROADMAP_VALUE_COMPLEXITY = {
+  i1: { value: 8, complexity: 6 }, i2: { value: 6, complexity: 2 }, i3: { value: 5, complexity: 9 },
+  i4: { value: 4, complexity: 2 }, i5: { value: 7, complexity: 3 }, i6: { value: 5, complexity: 4 },
+  i7: { value: 6, complexity: 5 }, i8: { value: 7, complexity: 8 },
+};
+const ROADMAP_URGENCY = { 0: 9, 1: 5, 2: 2 };
+const ROADMAP_LANES = [
+  { id: 'l1', title: 'Inventory', items: [
+    { id: 'i1', stage: 0, title: 'Warehouse sync reliability', benefit: 'Stock counts you can trust without checking manually.', outcome: 'Fewer stockout-driven lost sales', effort: 'M' },
+    { id: 'i2', stage: 0, title: 'Low-stock threshold', benefit: 'Get warned before you run out.', outcome: 'Protects revenue from stockouts', effort: 'S' },
+    { id: 'i3', stage: 2, title: 'Multi-warehouse support', benefit: 'Manage stock across multiple locations.', outcome: 'Unlocks expansion to new warehouses', effort: 'L' },
+  ]},
+  { id: 'l2', title: 'Access', items: [
+    { id: 'i4', stage: 0, title: 'Login & sessions', benefit: 'Log in and pick up where you left off.', outcome: 'Reduces support tickets on access issues', effort: 'S' },
+  ]},
+  { id: 'l3', title: 'Billing & Ops', items: [
+    { id: 'i5', stage: 1, title: 'Default billing model', benefit: 'Predictable billing from day one.', outcome: 'Faster time-to-revenue per signup', effort: 'S' },
+    { id: 'i6', stage: 1, title: 'Alert prioritization', benefit: 'Only get paged for what matters.', outcome: 'Lower on-call burnout, faster fixes', effort: 'S' },
+  ]},
+  { id: 'l4', title: 'Reporting', items: [
+    { id: 'i7', stage: 1, title: 'CSV export', benefit: 'Pull your own reports anytime.', outcome: 'Less manual reporting work for your team', effort: 'M' },
+    { id: 'i8', stage: 2, title: 'Reorder automation', benefit: 'Reordering happens without you lifting a finger.', outcome: 'Frees up ops time, reduces stockouts further', effort: 'L' },
+  ]},
+];
+
+const CONTAINER_BOXES = [
+  { title: 'Web UI', sub: 'React app', dashed: false },
+  { title: 'API service', sub: 'requests / auth', dashed: false },
+  { title: 'Sync Worker', sub: 'sidecar service', dashed: false },
+  { title: 'Postgres DB', sub: 'shared data store', dashed: true },
+];
+
+const COMPONENT_BOXES = [
+  { title: 'Feed Poller', sub: 'pulls warehouse feed' },
+  { title: 'Reconciler', sub: 'compares to DB counts' },
+  { title: 'Mismatch Flagger', sub: 'flags >2% deltas' },
+  { title: 'DB Writer', sub: 'commits reconciled counts' },
+];
+
+const DATAFLOW_STEPS = [
+  'Warehouse Feed sends an inventory delta.',
+  'Sync Worker polls the feed every 15 minutes.',
+  'Reconciler compares the delta to current DB counts.',
+  'Mismatch Flagger writes a review flag if the delta exceeds 2%.',
+  'Dashboard reads the updated counts on next load.',
+];
+const DATAFLOW_ACTORS = ['Warehouse', 'Sync Worker', 'Dashboard'];
+const DATAFLOW_SEQUENCE = [
+  { from: 0, to: 1, label: 'sends inventory delta' },
+  { from: 1, to: 1, label: 'polls every 15 min' },
+  { from: 1, to: 1, label: 'reconciles vs DB counts' },
+  { from: 1, to: 1, label: 'flags if delta > 2%' },
+  { from: 1, to: 2, label: 'updated counts available' },
+];
+const DATAFLOW_LANES = [
+  { actor: 'Warehouse', steps: [0] },
+  { actor: 'Sync Worker', steps: [1, 2, 3] },
+  { actor: 'Dashboard', steps: [4] },
+];
+
+const SPEC_TREE = [
+  { id: 'th1', title: 'Access & Accounts', epics: [
+    { id: 'e1', title: 'Authentication', features: [
+      { id: 'f1', title: 'Login', stories: [
+        { id: 's1', oneLiner: 'Customers can log in with email + password.', fullText: 'Users authenticate with email and password against the existing accounts table. Sessions persist for 30 days via a signed cookie.', criteria: ['Wrong password shows inline error, no page reload', 'Session survives browser restart for 30 days', 'Logout clears session immediately'] },
+      ]},
+    ]},
+  ]},
+  { id: 'th2', title: 'Inventory Accuracy', epics: [
+    { id: 'e2', title: 'Stock visibility', features: [
+      { id: 'f2', title: 'Warehouse sync reliability', stories: [
+        { id: 's2', oneLiner: 'Box counts sync from the warehouse feed every 15 minutes.', fullText: 'A scheduled job pulls the warehouse inventory feed and reconciles box counts per SKU, flagging mismatches over 2% for manual review.', criteria: ['Sync runs every 15 min, logged on failure', 'Mismatch >2% raises a flag visible in admin', 'Manual override recorded with reason'] },
+      ]},
+      { id: 'f3', title: 'Low-stock threshold', stories: [
+        { id: 's5', oneLiner: 'Dashboard warns when stock drops below threshold.', fullText: 'Low-stock warnings need a threshold — too sensitive and it is noise, too loose and customers run out before anyone notices.', criteria: ['Threshold configurable per SKU category', 'Warning shown on dashboard + email', 'Default applies to all existing SKUs on rollout'] },
+      ], decision: {
+        type: 'slider', hudLabel: 'Scalar Slider',
+        prompt: 'Default low-stock threshold (% of typical monthly volume):',
+        min: 5, max: 40, value: 15, minLabel: '5% (late)', maxLabel: '40% (early)',
+      }},
+    ]},
+  ]},
+  { id: 'th3', title: 'Billing', epics: [
+    { id: 'e3', title: 'Customer billing setup', features: [
+      { id: 'f4', title: 'Default billing model', stories: [
+        { id: 's3', oneLiner: 'New signups get a default billing model assigned.', fullText: 'New customer accounts need a default billing model at signup. This affects how usage is metered and invoiced later.', criteria: ['Default applies at signup, editable after', 'Existing customers unaffected', 'Choice logged for audit'] },
+      ], decision: {
+        type: 'choice', hudLabel: 'Quad Choice',
+        prompt: 'Default billing model for new signups:',
+        options: [
+          { id: 'flat', label: 'Flat monthly', desc: 'Predictable monthly fee' },
+          { id: 'usage', label: 'Usage-based', desc: 'Pay for what you use' },
+          { id: 'hybrid', label: 'Hybrid', desc: 'Base fee + overage' },
+        ],
+      }},
+    ]},
+  ]},
+  { id: 'th4', title: 'Operations', epics: [
+    { id: 'e4', title: 'Alerting', features: [
+      { id: 'f5', title: 'Alert prioritization', stories: [
+        { id: 's4', oneLiner: 'Alerts page the on-call engineer or wait for the daily digest, based on priority.', fullText: 'Not every failure should wake someone up at 3am. We need a priority order for which alert classes trigger a page vs. a next-morning ticket.', criteria: ['Top-ranked alerts page immediately', 'Bottom-ranked alerts batch into daily digest', 'Order changeable later without a deploy'] },
+      ], decision: {
+        type: 'rank', hudLabel: 'Sequence Order',
+        prompt: 'Rank by urgency (top = pages immediately):',
+        hint: 'Use ▲/▼ to reorder.',
+        ranked: [
+          { id: 'sync', label: 'Warehouse sync failure' },
+          { id: 'pay', label: 'Payment processing error' },
+          { id: 'ui', label: 'UI rendering bug' },
+        ],
+      }},
+    ]},
+  ]},
+  { id: 'th5', title: 'Reporting', epics: [
+    { id: 'e5', title: 'Data export', features: [
+      { id: 'f6', title: 'CSV export', stories: [
+        { id: 's6', oneLiner: 'Admins can export box history as CSV.', fullText: 'Admin users can export the full box movement history for a date range as a CSV, matching the columns already used in the weekly report.', criteria: ['Export covers any date range up to 12 months', 'Column order matches existing weekly report', 'Large exports run async and email a link'] },
+      ]},
+    ]},
+  ]},
+];
+const ALL_FEATURES = [];
+SPEC_TREE.forEach(t => t.epics.forEach(e => e.features.forEach(f => ALL_FEATURES.push({ ...f, themeTitle: t.title, epicTitle: e.title }))));
+
+const MIND_INDEX = [];
+SPEC_TREE.forEach(t => t.epics.forEach(e => e.features.forEach(f => f.stories.forEach(s => {
+  MIND_INDEX.push({ themeId: t.id, epicId: e.id, featureId: f.id, storyId: s.id, oneLiner: s.oneLiner, path: `${t.title} / ${e.title} / ${f.title}` });
+}))));
+
+function findMindNode(path) {
+  if (path.length === 0) return { label: 'All themes', kindLabel: 'Root', children: SPEC_TREE.map(t => ({ id: t.id, title: t.title })) };
+  const theme = SPEC_TREE.find(t => t.id === path[0]);
+  if (path.length === 1) return { label: theme.title, kindLabel: 'Theme', children: theme.epics.map(e => ({ id: e.id, title: e.title })) };
+  const epic = theme.epics.find(e => e.id === path[1]);
+  if (path.length === 2) return { label: epic.title, kindLabel: 'Epic', children: epic.features.map(f => ({ id: f.id, title: f.title })) };
+  const feature = epic.features.find(f => f.id === path[2]);
+  if (path.length === 3) return { label: feature.title, kindLabel: 'Feature', feature, children: feature.stories.map(s => ({ id: s.id, title: s.oneLiner })) };
+  const story = feature.stories.find(s => s.id === path[3]);
+  return { label: story.oneLiner, kindLabel: 'Story', story, children: [] };
+}
+
+function getChildInfo(id, path) {
+  if (path.length === 0) {
+    const t = SPEC_TREE.find(x => x.id === id);
+    return { label: t.title, kindLabel: 'Theme', countsLabel: `${t.epics.length} epic${t.epics.length === 1 ? '' : 's'}` };
+  }
+  const theme = SPEC_TREE.find(t => t.id === path[0]);
+  if (path.length === 1) {
+    const e = theme.epics.find(x => x.id === id);
+    return { label: e.title, kindLabel: 'Epic', countsLabel: `${e.features.length} feature${e.features.length === 1 ? '' : 's'}` };
+  }
+  const epic = theme.epics.find(e => e.id === path[1]);
+  if (path.length === 2) {
+    const f = epic.features.find(x => x.id === id);
+    return { label: f.title, kindLabel: 'Feature', feature: f, countsLabel: `${f.stories.length} stor${f.stories.length === 1 ? 'y' : 'ies'}` };
+  }
+  const feature = epic.features.find(f => f.id === path[2]);
+  const s = feature.stories.find(x => x.id === id);
+  return { label: s.oneLiner, kindLabel: 'Story', story: s };
+}
+
+const LEVEL_COLORS = { Theme: 'oklch(70% 0.14 250)', Epic: 'oklch(70% 0.14 170)', Feature: 'oklch(70% 0.14 90)', Story: 'oklch(70% 0.14 330)', Root: '#666' };
+function childKindLabel(path) {
+  return ['Theme', 'Epic', 'Feature', 'Story'][path.length] || 'Story';
+}
+
+function getStoryByEntry(entry) {
+  const theme = SPEC_TREE.find(t => t.id === entry.themeId);
+  const epic = theme.epics.find(e => e.id === entry.epicId);
+  const feature = epic.features.find(f => f.id === entry.featureId);
+  return feature.stories.find(s => s.id === entry.storyId);
+}
+
+const FLOWS = [
+  {
+    id: 'f1', title: 'Placing a reorder',
+    description: "You'll be able to see a low-stock item, review suggested quantities, and place a reorder in a couple of clicks.",
+    steps: [
+      { label: 'Dashboard — low stock flagged' },
+      { label: 'Item detail — suggested qty' },
+      { label: 'Confirm reorder' },
+      { label: 'Order confirmation', hasArrow: false },
+    ],
+    backstage: ['Low-stock threshold job flags item', 'Suggested-qty engine runs', 'Order written to DB', 'Confirmation email queued'],
+    branch: { question: 'Auto-reorder enabled?', yes: 'Order placed automatically', no: 'Customer reviews & confirms' },
+  },
+  {
+    id: 'f2', title: 'Reviewing a sync mismatch',
+    description: "You'll get a plain-language flag when warehouse counts don't match our records, with one place to resolve it.",
+    steps: [
+      { label: 'Mismatch alert banner' },
+      { label: 'Mismatch detail view' },
+      { label: 'Accept or override', hasArrow: false },
+    ],
+    backstage: ['Mismatch flag written by Sync Worker', 'Ticket loaded from queue', 'Override recorded & counts patched'],
+  },
+];
+const INITIAL_FLOW_STEPS = {};
+FLOWS.forEach(f => { INITIAL_FLOW_STEPS[f.id] = f.steps.map((s, i) => ({ id: f.id + '-' + i, label: s.label })); });
+const INITIAL_BLUEPRINT_ROWS = {};
+FLOWS.forEach(f => {
+  INITIAL_BLUEPRINT_ROWS[f.id] = [
+    { id: f.id + '-row-customer', label: 'Customer', cells: f.steps.map(s => s.label) },
+    { id: f.id + '-row-backstage', label: 'Backstage', cells: (f.backstage || []).slice() },
+  ];
+});
+const FLOW_VIEW_TYPES = [
+  { key: 'diagram', label: 'Screens' },
+  { key: 'list', label: 'Steps' },
+  { key: 'blueprint', label: 'Service blueprint' },
+  { key: 'taskflow', label: 'Task flow' },
+];
+
+const TRADEOFFS = [
+  { id: 't1', kind: 'scale', choice: 'Sidecar service for background jobs', cost: 'Extra deploy target to operate', gain: 'Main app stays responsive under load', reversible: true, feature: 'Platform' },
+  { id: 't2', kind: 'duel', choice: 'Forked upstream repo instead of a plugin', altLabel: 'Build as a plugin', cost: 'Manual merges on upstream updates', gain: 'Full control over core behavior', reversible: false, feature: 'Platform' },
+  { id: 't3', kind: 'scale', choice: 'Warehouse sync every 15 min, not real-time', cost: 'Up to 15 min stale counts', gain: 'Much lower infra cost & complexity', reversible: true, feature: 'Warehouse sync reliability' },
+  { id: 't4', kind: 'duel', choice: 'Single shared DB for all customer orgs', altLabel: 'Per-org isolated DB', cost: 'Noisy-neighbor risk at scale', gain: 'Simpler ops, faster to ship', reversible: false, feature: 'Platform' },
+  { id: 't5', kind: 'anchor', choice: 'Session cookies over token refresh flow', altLabel: 'Token refresh flow', cost: 'No fine-grained revocation yet', gain: 'Much less client-side complexity', reversible: true, feature: 'Login' },
+];
+
+const RISKS = [
+  { id: 'r1', title: 'No retry on failed warehouse sync', severity: 'high', blastRadius: 'large', likelihood: 'high', breaksWhen: 'A single failed sync silently leaves counts stale until the next cycle — no alert fires today.', status: 'open', feature: 'Warehouse sync reliability' },
+  { id: 'r2', title: 'CSV export loads full range into memory', severity: 'high', blastRadius: 'medium', likelihood: 'low', breaksWhen: 'Exports over ~18 months of history will likely time out or crash the worker.', status: 'acknowledged', feature: 'CSV export' },
+  { id: 'r3', title: 'Shared DB has no per-org rate limiting', severity: 'medium', blastRadius: 'large', likelihood: 'medium', breaksWhen: 'One customer running heavy exports can slow the dashboard for everyone else.', status: 'open', feature: 'Platform' },
+  { id: 'r4', title: 'Billing model change has no migration path', severity: 'medium', blastRadius: 'small', likelihood: 'low', breaksWhen: 'Switching an existing customer\u2019s billing model requires a manual data fix today.', status: 'acknowledged', feature: 'Default billing model' },
+  { id: 'r5', title: 'Login session length hardcoded', severity: 'low', blastRadius: 'small', likelihood: 'low', breaksWhen: 'Changing the 30-day session window requires a code change and redeploy.', status: 'resolved', feature: 'Login' },
+];
+const BLAST_RADII = ['large', 'medium', 'small'];
+const SEVERITIES = ['high', 'medium', 'low'];
+const LIKELIHOODS = ['high', 'medium', 'low'];
+const RISK_CHART_TABS = [
+  { key: 'sevBlast', label: 'Severity \u00d7 Blast Radius' },
+  { key: 'likImpact', label: 'Likelihood \u00d7 Impact' },
+];
+const WEIGHT = { high: 3, medium: 2, low: 1 };
+const FEATURE_COMPLETION = { f1: 100, f2: 70, f3: 40, f4: 90, f5: 60, f6: 30 };
+const WIKI_STATUS_DEFS = {
+  draft: { label: 'Draft', color: '#999' },
+  ready: { label: 'Ready for work items', color: '#3d7fff' },
+  converted: { label: 'Converted', color: '#4caf50' },
+};
+
+const PROGRESS_COLS = [
+  { key: 'done', label: 'Done', items: [
+    { label: 'Login & sessions', feature: 'Login' },
+    { label: 'Warehouse sync job', feature: 'Warehouse sync reliability' },
+    { label: 'Low-stock dashboard flag', feature: 'Low-stock threshold' },
+  ]},
+  { key: 'doing', label: 'Doing', items: [
+    { label: 'Reorder flow', feature: 'Reordering' },
+    { label: 'CSV export', feature: 'CSV export' },
+  ]},
+  { key: 'blocked', label: 'Blocked', items: [
+    { label: 'Billing model rollout — awaiting your decision above', feature: 'Default billing model' },
+  ]},
+  { key: 'risk', label: 'At Risk', items: [
+    { label: 'CSV export perf on large ranges', feature: 'CSV export' },
+    { label: 'Sync retry logic', feature: 'Warehouse sync reliability' },
+  ]},
+];
+
+const CHANGELOG = [
+  { id: 'c1', area: 'Inventory sync', when: 'This week', entries: ['Added mismatch flagging above 2%', 'Fixed a rounding error in SKU counts'] },
+  { id: 'c2', area: 'Billing', when: 'This week', entries: ['Drafted default billing model options — see Spec Digest'] },
+  { id: 'c3', area: 'Reordering', when: 'Last week', entries: ['Built suggested-quantity logic', 'Wired up confirm & order confirmation screens'] },
+  { id: 'c4', area: 'Auth', when: '2 weeks ago', entries: ['Shipped login + 30-day sessions', 'Added logout session clearing'] },
+];
+
+class Component extends DCLogic {
+  state = {
+    tab: 'mindmap',
+    open: { th1: true, e1: true, f1: true, th2: true, e2: true, f2: true, f3: true, th3: true, e3: true, f4: true, th4: true, e4: true, f5: true, th5: true, e5: true, f6: true },
+    storyOpen: {},
+    decisions: {},
+    ranks: { f5: ['sync', 'pay', 'ui'] },
+    sliders: { f3: 15 },
+    confirmed: {},
+    specFilter: 'all',
+    specMode: 'tree',
+    mindPath: [],
+    mindQuery: '',
+    mindChildSelectedId: null,
+    mindSearchSelectedEntry: null,
+    mindSubTab: 'mindmap',
+    flowViewTypes: {},
+    flowBlueprintRows: INITIAL_BLUEPRINT_ROWS,
+    tradeoffFilter: 'all',
+    tradeoffSortDir: 'asc',
+    tradeoffChoice: {},
+    riskFilter: 'all',
+    riskStatuses: {},
+    selectedRiskId: 'r1',
+    riskChartTab: 'sevBlast',
+    statusFocusKey: null,
+    collapsedCols: {},
+    archLevel: 'context',
+    archViewMode: 'diagram',
+    archSearchQuery: '',
+    roadmapSubTab: 'kanban',
+    scatterSelectedId: null,
+    hoveredScatterId: null,
+    backlogCollapsed: {},
+    backlogSearchQuery: '',
+    scalePriority: {},
+    archCodeEdits: {},
+    archLabels: { person: 'You (customer)', system: 'Hermes App', warehouse: 'Warehouse Feed', billing: 'Billing Provider' },
+    archContainerBoxes: CONTAINER_BOXES.map(b => ({ ...b })),
+    archComponentBoxes: COMPONENT_BOXES.map(b => ({ ...b })),
+    archDataflowSteps: DATAFLOW_STEPS.slice(),
+    lanes: ROADMAP_LANES.map(l => ({ id: l.id, title: l.title, items: l.items.map(it => ({ ...it })) })),
+    selectedRoadmapItemId: 'i1',
+    addingLane: false,
+    newLaneTitle: '',
+    confirmDeleteLaneId: null,
+    itemMeta: {},
+    taskDone: {},
+    notesModalOpen: false,
+    dataflowView: 'numbered',
+    ganttOverrides: {},
+    flows: FLOWS.map(f => ({ id: f.id, title: f.title, description: f.description, backstage: f.backstage, branch: f.branch, linkedThemeId: '', linkedEpicId: '', linkedFeatureId: '', linkedStoryId: '' })),
+    flowSteps: INITIAL_FLOW_STEPS,
+    selectedFlowId: 'f1',
+    flowSearchQuery: '',
+    editingStepId: null,
+    editingStepDraft: '',
+    specWikiFeatureId: 'f1',
+    wikiSearchQuery: '',
+    wikiStatus: {},
+    wikiNotes: {},
+    wikiCriteriaDone: {},
+    wikiTitleEdits: {},
+    wikiLinks: {},
+    roadmapNoteDrafts: {},
+    roadmapNotes: {
+      i1: [
+        { from: 'you', text: 'Can we prioritize retry logic alongside this?' },
+        { from: 'hermes', text: "Good call — we'll scope retry handling into this same story." },
+      ],
+    },
+  };
+
+  setRoadmapNoteDraft(id, val) {
+    this.setState(s => ({ roadmapNoteDrafts: { ...s.roadmapNoteDrafts, [id]: val } }));
+  }
+
+  sendRoadmapNote(id) {
+    this.setState(s => {
+      const draft = (s.roadmapNoteDrafts[id] || '').trim();
+      if (!draft) return {};
+      const existing = s.roadmapNotes[id] || [];
+      return {
+        roadmapNotes: { ...s.roadmapNotes, [id]: [...existing, { from: 'you', text: draft }] },
+        roadmapNoteDrafts: { ...s.roadmapNoteDrafts, [id]: '' },
+      };
+    });
+    setTimeout(() => {
+      this.setState(s => {
+        const existing = s.roadmapNotes[id] || [];
+        if (!existing.length || existing[existing.length - 1].from !== 'you') return {};
+        return { roadmapNotes: { ...s.roadmapNotes, [id]: [...existing, { from: 'hermes', text: "Thanks — logged, we'll follow up here." }] } };
+      });
+    }, 900);
+  }
+
+  toggleTask(itemId, idx) {
+    const key = itemId + ':' + idx;
+    this.setState(s => ({ taskDone: { ...s.taskDone, [key]: !s.taskDone[key] } }));
+  }
+
+  setItemImportance(id, val) {
+    this.setState(s => ({ itemMeta: { ...s.itemMeta, [id]: { ...(s.itemMeta[id] || {}), importance: val } } }));
+  }
+
+  setItemIntent(id, val) {
+    this.setState(s => ({ itemMeta: { ...s.itemMeta, [id]: { ...(s.itemMeta[id] || {}), intent: val } } }));
+  }
+
+  setItemNote(id, val) {
+    this.setState(s => ({ itemMeta: { ...s.itemMeta, [id]: { ...(s.itemMeta[id] || {}), note: val } } }));
+  }
+
+  selectRoadmapItem(id) {
+    this.setState({ selectedRoadmapItemId: id });
+  }
+
+  addLaneStart() {
+    this.setState({ addingLane: true, newLaneTitle: '' });
+  }
+
+  setNewLaneTitle(v) {
+    this.setState({ newLaneTitle: v });
+  }
+
+  cancelAddLane() {
+    this.setState({ addingLane: false, newLaneTitle: '' });
+  }
+
+  confirmAddLane() {
+    this.setState(s => {
+      const title = s.newLaneTitle.trim();
+      if (!title) return { addingLane: false };
+      return { lanes: [...s.lanes, { id: 'l' + Date.now(), title, items: [] }], addingLane: false, newLaneTitle: '' };
+    });
+  }
+
+  requestDeleteLane(id) {
+    this.setState({ confirmDeleteLaneId: id });
+  }
+
+  cancelDeleteLane() {
+    this.setState({ confirmDeleteLaneId: null });
+  }
+
+  confirmDeleteLane() {
+    this.setState(s => ({
+      lanes: s.lanes.filter(l => l.id !== s.confirmDeleteLaneId),
+      confirmDeleteLaneId: null,
+    }));
+  }
+
+  moveRoadmapItem(itemId, targetLaneId, targetStage) {
+    this.setState(s => {
+      let moved = null;
+      const lanes = s.lanes.map(l => {
+        const idx = l.items.findIndex(it => it.id === itemId);
+        if (idx === -1) return l;
+        moved = { ...l.items[idx], stage: targetStage };
+        return { ...l, items: l.items.filter(it => it.id !== itemId) };
+      });
+      if (!moved) return {};
+      return { lanes: lanes.map(l => (l.id === targetLaneId ? { ...l, items: [...l.items, moved] } : l)) };
+    });
+  }
+
+  toggle(id) {
+    this.setState(s => ({ open: { ...s.open, [id]: !s.open[id] } }));
+  }
+
+  toggleStory(id) {
+    this.setState(s => ({ storyOpen: { ...s.storyOpen, [id]: !s.storyOpen[id] } }));
+  }
+
+  chooseDecision(featureId, optId, label) {
+    this.setState(s => ({ decisions: { ...s.decisions, [featureId]: label } }));
+  }
+
+  moveRank(featureId, idx, dir) {
+    this.setState(s => {
+      const arr = [...s.ranks[featureId]];
+      const j = idx + dir;
+      if (j < 0 || j >= arr.length) return {};
+      [arr[idx], arr[j]] = [arr[j], arr[idx]];
+      return { ranks: { ...s.ranks, [featureId]: arr } };
+    });
+  }
+
+  setSlider(featureId, val) {
+    this.setState(s => ({ sliders: { ...s.sliders, [featureId]: val } }));
+  }
+
+  confirmDecision(featureId) {
+    this.setState(s => ({ confirmed: { ...s.confirmed, [featureId]: true } }));
+  }
+
+  setScalePriority(id, side) {
+    this.setState(s => ({ scalePriority: { ...s.scalePriority, [id]: side } }));
+  }
+
+  setTradeoffChoice(id, side) {
+    this.setState(s => ({ tradeoffChoice: { ...s.tradeoffChoice, [id]: side } }));
+  }
+
+  cycleStatus(id) {
+    const order = ['open', 'acknowledged', 'resolved'];
+    this.setState(s => {
+      const cur = s.riskStatuses[id] || RISKS.find(r => r.id === id).status;
+      const next = order[(order.indexOf(cur) + 1) % order.length];
+      return { riskStatuses: { ...s.riskStatuses, [id]: next } };
+    });
+  }
+
+  setRiskChartTab(tab) {
+    this.setState({ riskChartTab: tab });
+  }
+
+  setFlowField(id, field, value) {
+    this.setState(s => ({ flows: s.flows.map(f => f.id === id ? { ...f, [field]: value } : f) }));
+  }
+
+  selectFlow(id) {
+    this.setState({ selectedFlowId: id });
+  }
+
+  setFlowLinkTheme(id, v) {
+    this.setState(s => ({ flows: s.flows.map(f => f.id === id ? { ...f, linkedThemeId: v, linkedEpicId: '', linkedFeatureId: '', linkedStoryId: '' } : f) }));
+  }
+
+  setFlowLinkEpic(id, v) {
+    this.setState(s => ({ flows: s.flows.map(f => f.id === id ? { ...f, linkedEpicId: v, linkedFeatureId: '', linkedStoryId: '' } : f) }));
+  }
+
+  setFlowLinkFeature(id, v) {
+    this.setState(s => ({ flows: s.flows.map(f => f.id === id ? { ...f, linkedFeatureId: v, linkedStoryId: '' } : f) }));
+  }
+
+  setFlowLinkStory(id, v) {
+    this.setState(s => ({ flows: s.flows.map(f => f.id === id ? { ...f, linkedStoryId: v } : f) }));
+  }
+
+  setFlowSearch(v) {
+    this.setState({ flowSearchQuery: v });
+  }
+
+  addFlow() {
+    this.setState(s => {
+      const id = 'f' + Date.now();
+      return {
+        flows: [...s.flows, { id, title: 'New flow', description: 'Describe what the customer will be able to do.', backstage: [], branch: null }],
+        flowSteps: { ...s.flowSteps, [id]: [{ id: id + '-0', label: 'New step' }] },
+        flowBlueprintRows: { ...s.flowBlueprintRows, [id]: [{ id: id + '-row-customer', label: 'Customer', cells: ['New step'] }, { id: id + '-row-backstage', label: 'Backstage', cells: [''] }] },
+        selectedFlowId: id,
+      };
+    });
+  }
+
+  setFlowViewType(flowId, type) {
+    this.setState(s => ({ flowViewTypes: { ...s.flowViewTypes, [flowId]: type } }));
+  }
+
+  addBlueprintRow(flowId) {
+    this.setState(s => {
+      const rows = s.flowBlueprintRows[flowId] || [];
+      const colCount = (s.flowSteps[flowId] || []).length;
+      return { flowBlueprintRows: { ...s.flowBlueprintRows, [flowId]: [...rows, { id: flowId + '-row-' + Date.now(), label: 'New row', cells: Array(colCount).fill('') }] } };
+    });
+  }
+
+  removeBlueprintRow(flowId, rowId) {
+    this.setState(s => ({ flowBlueprintRows: { ...s.flowBlueprintRows, [flowId]: s.flowBlueprintRows[flowId].filter(r => r.id !== rowId) } }));
+  }
+
+  moveBlueprintRow(flowId, idx, dir) {
+    this.setState(s => {
+      const rows = [...s.flowBlueprintRows[flowId]];
+      const j = idx + dir;
+      if (j < 0 || j >= rows.length) return {};
+      [rows[idx], rows[j]] = [rows[j], rows[idx]];
+      return { flowBlueprintRows: { ...s.flowBlueprintRows, [flowId]: rows } };
+    });
+  }
+
+  setBlueprintRowLabel(flowId, rowId, text) {
+    this.setState(s => ({ flowBlueprintRows: { ...s.flowBlueprintRows, [flowId]: s.flowBlueprintRows[flowId].map(r => r.id === rowId ? { ...r, label: text } : r) } }));
+  }
+
+  setBlueprintCell(flowId, rowId, colIdx, text) {
+    this.setState(s => ({
+      flowBlueprintRows: {
+        ...s.flowBlueprintRows,
+        [flowId]: s.flowBlueprintRows[flowId].map(r => {
+          if (r.id !== rowId) return r;
+          const cells = [...r.cells]; cells[colIdx] = text; return { ...r, cells };
+        }),
+      },
+    }));
+  }
+
+  removeFlow(id) {
+    this.setState(s => {
+      const flows = s.flows.filter(f => f.id !== id);
+      const flowSteps = { ...s.flowSteps };
+      delete flowSteps[id];
+      const flowBlueprintRows = { ...s.flowBlueprintRows };
+      delete flowBlueprintRows[id];
+      let selectedFlowId = s.selectedFlowId;
+      if (selectedFlowId === id) selectedFlowId = flows.length ? flows[0].id : null;
+      return { flows, flowSteps, flowBlueprintRows, selectedFlowId };
+    });
+  }
+
+  addFlowStep(flowId) {
+    this.setState(s => {
+      const list = s.flowSteps[flowId] || [];
+      const newId = flowId + '-' + Date.now();
+      return {
+        flowSteps: { ...s.flowSteps, [flowId]: [...list, { id: newId, label: 'New step' }] },
+        editingStepId: newId, editingStepDraft: 'New step',
+      };
+    });
+  }
+
+  removeFlowStep(flowId, stepId) {
+    this.setState(s => ({ flowSteps: { ...s.flowSteps, [flowId]: s.flowSteps[flowId].filter(st => st.id !== stepId) } }));
+  }
+
+  moveFlowStep(flowId, idx, dir) {
+    this.setState(s => {
+      const list = [...s.flowSteps[flowId]];
+      const j = idx + dir;
+      if (j < 0 || j >= list.length) return {};
+      [list[idx], list[j]] = [list[j], list[idx]];
+      return { flowSteps: { ...s.flowSteps, [flowId]: list } };
+    });
+  }
+
+  startEditStep(stepId, currentLabel) {
+    this.setState({ editingStepId: stepId, editingStepDraft: currentLabel });
+  }
+
+  setEditingStepDraft(v) {
+    this.setState({ editingStepDraft: v });
+  }
+
+  commitEditStep(flowId, stepId) {
+    this.setState(s => ({
+      flowSteps: { ...s.flowSteps, [flowId]: s.flowSteps[flowId].map(st => st.id === stepId ? { ...st, label: s.editingStepDraft } : st) },
+      editingStepId: null, editingStepDraft: '',
+    }));
+  }
+
+  openWikiFeature(id) {
+    this.setState({ specWikiFeatureId: id });
+  }
+
+  openWikiRoot() {
+    this.setState({ specWikiFeatureId: null });
+  }
+
+  setWikiStatus(id, status) {
+    this.setState(s => ({ wikiStatus: { ...s.wikiStatus, [id]: status } }));
+  }
+
+  setWikiNote(id, text) {
+    this.setState(s => ({ wikiNotes: { ...s.wikiNotes, [id]: text } }));
+  }
+
+  setWikiTitle(id, text) {
+    this.setState(s => ({ wikiTitleEdits: { ...s.wikiTitleEdits, [id]: text } }));
+  }
+
+  setWikiLink(id, field, value) {
+    this.setState(s => {
+      const cur = s.wikiLinks[id] || {};
+      const next = { ...cur, [field]: value };
+      if (field === 'theme') { next.epic = ''; next.feature = ''; next.story = ''; }
+      if (field === 'epic') { next.feature = ''; next.story = ''; }
+      if (field === 'feature') { next.story = ''; }
+      return { wikiLinks: { ...s.wikiLinks, [id]: next } };
+    });
+  }
+
+  setWikiSearch(v) {
+    this.setState({ wikiSearchQuery: v });
+  }
+
+  toggleWikiCriterion(featureId, idx) {
+    const key = featureId + ':' + idx;
+    this.setState(s => ({ wikiCriteriaDone: { ...s.wikiCriteriaDone, [key]: !s.wikiCriteriaDone[key] } }));
+  }
+
+  toggleCol(key) {
+    this.setState(s => ({ collapsedCols: { ...s.collapsedCols, [key]: !s.collapsedCols[key] } }));
+  }
+
+  selectMindChild(id) {
+    this.setState({ mindChildSelectedId: id, mindSearchSelectedEntry: null });
+  }
+
+  drillMindChild(id) {
+    this.setState(s => ({ mindPath: [...s.mindPath, id], mindChildSelectedId: null, mindSearchSelectedEntry: null }));
+  }
+
+  mindBack() {
+    this.setState(s => ({ mindPath: s.mindPath.slice(0, -1), mindChildSelectedId: null, mindSearchSelectedEntry: null }));
+  }
+
+  setMindQuery(v) {
+    this.setState({ mindQuery: v });
+  }
+
+  previewMindSearchResult(entry) {
+    this.setState({ mindSearchSelectedEntry: entry, mindChildSelectedId: null });
+  }
+
+  drillMindSearchResult(entry) {
+    this.setState({ mindPath: [entry.themeId, entry.epicId, entry.featureId, entry.storyId], mindQuery: '', mindChildSelectedId: null, mindSearchSelectedEntry: null });
+  }
+
+  dropOnQuadrant(id, important, urgent) {
+    this.setItemImportance(id, important ? 5 : 2);
+    const lane = this.state.lanes.find(l => l.items.some(it => it.id === id));
+    if (lane) {
+      const cur = lane.items.find(it => it.id === id);
+      const newStage = urgent ? 0 : (cur.stage === 0 ? 1 : cur.stage);
+      this.moveRoadmapItem(id, lane.id, newStage);
+    }
+  }
+
+  setGanttRange(id, start, dur) {
+    this.setState(s => ({ ganttOverrides: { ...s.ganttOverrides, [id]: { start, dur } } }));
+  }
+
+  shiftGantt(id, start, dur, dir) {
+    const next = Math.max(0, Math.min(GANTT_SPRINTS.length - dur, start + dir));
+    this.setState(s => ({ ganttOverrides: { ...s.ganttOverrides, [id]: { start: next, dur } } }));
+  }
+
+  resizeGantt(id, start, dur, dir) {
+    const next = Math.max(1, Math.min(GANTT_SPRINTS.length - start, dur + dir));
+    this.setState(s => ({ ganttOverrides: { ...s.ganttOverrides, [id]: { start, dur: next } } }));
+  }
+
+  setArchLevel(level) {
+    this.setState({ archLevel: level });
+  }
+
+  setArchViewMode(mode) {
+    this.setState({ archViewMode: mode });
+  }
+
+  setArchSearch(v) {
+    this.setState({ archSearchQuery: v });
+  }
+
+  setArchCodeText(level, text) {
+    this.setState(s => ({ archCodeEdits: { ...s.archCodeEdits, [level]: text } }));
+  }
+
+  setArchLabel(key, text) {
+    this.setState(s => ({ archLabels: { ...s.archLabels, [key]: text } }));
+  }
+
+  setArchContainerField(i, field, val) {
+    this.setState(s => { const arr = [...s.archContainerBoxes]; arr[i] = { ...arr[i], [field]: val }; return { archContainerBoxes: arr }; });
+  }
+
+  setArchComponentField(i, field, val) {
+    this.setState(s => { const arr = [...s.archComponentBoxes]; arr[i] = { ...arr[i], [field]: val }; return { archComponentBoxes: arr }; });
+  }
+
+  setArchDataflowStep(i, val) {
+    this.setState(s => { const arr = [...s.archDataflowSteps]; arr[i] = val; return { archDataflowSteps: arr }; });
+  }
+
+  renderVals() {
+    const { tab, open, storyOpen, decisions, ranks, sliders, confirmed, specFilter, specMode, tradeoffFilter, tradeoffSortDir, riskFilter, riskStatuses, collapsedCols, selectedRiskId } = this.state;
+
+    const tabs = TAB_DEFS.map(t => ({
+      key: t.key, label: t.label,
+      select: () => this.setState({ tab: t.key }),
+      style: {
+        padding: '10px 16px', fontSize: '13px', cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'center',
+        color: tab === t.key ? '#fff' : '#8a8a8a',
+        borderBottom: tab === t.key ? '2px solid #3d7fff' : '2px solid transparent',
+        fontWeight: tab === t.key ? 600 : 400,
+      },
+    }));
+
+    const specFilters = [
+      { key: 'all', label: 'All' },
+      { key: 'needsInput', label: 'Needs input' },
+    ].map(f => ({
+      label: f.label,
+      select: () => this.setState({ specFilter: f.key }),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: specFilter === f.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: specFilter === f.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: specFilter === f.key ? '#fff' : '#999',
+      },
+    }));
+    const specModes = [
+      { key: 'tree', label: 'Theme \u2192 Story tree' },
+      { key: 'flat', label: 'Flat list' },
+      { key: 'wiki', label: 'Wiki' },
+    ].map(m => ({
+      label: m.label,
+      select: () => this.setState({ specMode: m.key }),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: specMode === m.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: specMode === m.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: specMode === m.key ? '#fff' : '#999',
+      },
+    }));
+
+    const totalDecisions = ALL_FEATURES.filter(f => f.decision).length;
+    const answeredDecisions = Object.keys(confirmed).length;
+    const dialPct = totalDecisions ? Math.round((answeredDecisions / totalDecisions) * 100) : 0;
+    const decisionDialBg = `conic-gradient(#3d7fff ${dialPct}%, #333 0)`;
+    const decisionDialLabel = `${answeredDecisions}/${totalDecisions}`;
+
+    const buildDecision = (feat) => {
+      const d = feat.decision;
+      if (!d) return null;
+      const isConfirmed = !!confirmed[feat.id];
+      if (d.type === 'choice') {
+        const selected = decisions[feat.id];
+        return {
+          hudLabel: d.hudLabel, prompt: d.prompt, isChoice: true,
+          options: d.options.map(o => ({
+            id: o.id, label: o.label, desc: o.desc,
+            select: () => this.chooseDecision(feat.id, o.id, o.label),
+            style: {
+              padding: '10px', borderRadius: '6px', cursor: 'pointer',
+              border: selected === o.label ? '1px solid #3d7fff' : '1px solid #444',
+              background: selected === o.label ? 'rgba(61,127,255,0.12)' : 'transparent',
+              color: selected === o.label ? '#fff' : '#bbb',
+            },
+          })),
+          answered: isConfirmed,
+          answerSummary: selected || '',
+          canConfirm: !isConfirmed && !!selected,
+          confirmLabel: `Confirm ${selected || ''}`,
+          confirm: () => this.confirmDecision(feat.id),
+        };
+      }
+      if (d.type === 'rank') {
+        const order = ranks[feat.id] || d.ranked.map(r => r.id);
+        const rankLabels = {};
+        d.ranked.forEach(r => { rankLabels[r.id] = r.label; });
+        const summary = order.map(id => rankLabels[id]).join(' \u2192 ');
+        return {
+          hudLabel: d.hudLabel, prompt: d.prompt, isRank: true, hint: d.hint,
+          ranked: order.map((id, idx) => ({
+            id, pos: idx + 1, label: rankLabels[id],
+            style: { display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid #333', background: '#1e1e1e', padding: '8px 10px', borderRadius: '2px' },
+            up: () => this.moveRank(feat.id, idx, -1),
+            down: () => this.moveRank(feat.id, idx, 1),
+          })),
+          answered: isConfirmed,
+          answerSummary: summary,
+          canConfirm: !isConfirmed,
+          confirmLabel: 'Confirm order',
+          confirm: () => this.confirmDecision(feat.id),
+        };
+      }
+      if (d.type === 'slider') {
+        const val = sliders[feat.id] ?? d.value;
+        return {
+          hudLabel: d.hudLabel, prompt: d.prompt, isSlider: true, min: d.min, max: d.max, value: val,
+          minLabel: d.minLabel, maxLabel: d.maxLabel, valueLabel: val + '%',
+          onSlide: (e) => this.setSlider(feat.id, Number(e.target.value)),
+          answered: isConfirmed,
+          answerSummary: val + '%',
+          canConfirm: !isConfirmed,
+          confirmLabel: `Confirm ${val}%`,
+          confirm: () => this.confirmDecision(feat.id),
+        };
+      }
+      return null;
+    };
+
+    const buildStory = (s) => ({
+      id: s.id, oneLiner: s.oneLiner, fullText: s.fullText, criteria: s.criteria,
+      open: !!storyOpen[s.id], chevron: storyOpen[s.id] ? '\u25be' : '\u25b8',
+      toggle: () => this.toggleStory(s.id),
+    });
+    const buildFeat = (f) => ({
+      id: f.id, title: f.title, needsInput: !!f.decision, open: !!open[f.id],
+      chevron: open[f.id] ? '\u25be' : '\u25b8', toggle: () => this.toggle(f.id),
+      stories: f.stories.map(buildStory), decision: buildDecision(f),
+      completionPct: FEATURE_COMPLETION[f.id] ?? 0,
+    });
+    const buildEpic = (e) => {
+      const feats = e.features.map(buildFeat);
+      const pct = feats.length ? Math.round(feats.reduce((sum, f) => sum + f.completionPct, 0) / feats.length) : 0;
+      return {
+        id: e.id, title: e.title, open: !!open[e.id], chevron: open[e.id] ? '\u25be' : '\u25b8',
+        toggle: () => this.toggle(e.id), features: feats, completionPct: pct,
+      };
+    };
+    const filteredThemes = SPEC_TREE
+      .map(t => ({ ...t, epics: t.epics.map(e => ({ ...e, features: e.features.filter(f => specFilter === 'all' || !!f.decision) })).filter(e => e.features.length) }))
+      .filter(t => t.epics.length);
+    const themes = filteredThemes.map(t => {
+      const epics = t.epics.map(buildEpic);
+      const pct = epics.length ? Math.round(epics.reduce((sum, e) => sum + e.completionPct, 0) / epics.length) : 0;
+      return {
+        id: t.id, title: t.title, open: !!open[t.id], chevron: open[t.id] ? '\u25be' : '\u25b8',
+        toggle: () => this.toggle(t.id), epics, completionPct: pct,
+      };
+    });
+
+    const flatStories = [];
+    ALL_FEATURES.filter(f => specFilter === 'all' || !!f.decision).forEach(f => f.stories.forEach(s => {
+      flatStories.push({
+        id: s.id, oneLiner: s.oneLiner, fullText: s.fullText, criteria: s.criteria,
+        path: `${f.themeTitle} / ${f.epicTitle} / ${f.title}`, needsInput: !!f.decision,
+        open: !!storyOpen[s.id], chevron: storyOpen[s.id] ? '\u25be' : '\u25b8',
+        toggle: () => this.toggleStory(s.id),
+      });
+    }));
+
+    const { specWikiFeatureId, wikiStatus, wikiNotes, wikiCriteriaDone, wikiTitleEdits, wikiSearchQuery } = this.state;
+    const wq = wikiSearchQuery.trim().toLowerCase();
+    const wikiPageList = ALL_FEATURES.filter(f => !wq || f.title.toLowerCase().includes(wq) || f.themeTitle.toLowerCase().includes(wq)).map(f => {
+      const st = wikiStatus[f.id] || 'draft';
+      return {
+        id: f.id, title: f.title, themeTitle: f.themeTitle,
+        statusColor: WIKI_STATUS_DEFS[st].color,
+        select: () => this.openWikiFeature(f.id),
+        rowStyle: {
+          display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '2px', cursor: 'pointer',
+          border: specWikiFeatureId === f.id ? '1px solid #3d7fff' : '1px solid #2c2c2c',
+          background: specWikiFeatureId === f.id ? 'rgba(61,127,255,0.1)' : '#1a1a1a',
+        },
+      };
+    });
+    let wikiPage = null;
+    if (specWikiFeatureId) {
+      const feat = ALL_FEATURES.find(f => f.id === specWikiFeatureId);
+      const story = feat.stories[0];
+      const status = wikiStatus[feat.id] || 'draft';
+      const related = ALL_FEATURES.filter(f => f.themeTitle === feat.themeTitle && f.id !== feat.id).slice(0, 2)
+        .map(f => ({ id: f.id, title: f.title, select: () => this.openWikiFeature(f.id) }));
+      wikiPage = {
+        id: feat.id,
+        title: wikiTitleEdits[feat.id] ?? feat.title,
+        onTitleBlur: (e) => this.setWikiTitle(feat.id, e.target.textContent),
+        breadcrumb: `${feat.themeTitle} \u203a ${feat.epicTitle}`,
+        statusValue: status,
+        onStatusChange: (e) => this.setWikiStatus(feat.id, e.target.value),
+        statusSelectOptions: Object.keys(WIKI_STATUS_DEFS).map(k => ({ value: k, label: WIKI_STATUS_DEFS[k].label })),
+        linkedThemeId: (this.state.wikiLinks[feat.id] || {}).theme || '',
+        linkedEpicId: (this.state.wikiLinks[feat.id] || {}).epic || '',
+        linkedFeatureId: (this.state.wikiLinks[feat.id] || {}).feature || '',
+        linkedStoryId: (this.state.wikiLinks[feat.id] || {}).story || '',
+        onLinkThemeChange: (e) => this.setWikiLink(feat.id, 'theme', e.target.value),
+        onLinkEpicChange: (e) => this.setWikiLink(feat.id, 'epic', e.target.value),
+        onLinkFeatureChange: (e) => this.setWikiLink(feat.id, 'feature', e.target.value),
+        onLinkStoryChange: (e) => this.setWikiLink(feat.id, 'story', e.target.value),
+        themeOptions: [{ value: '', label: 'Theme...' }].concat(SPEC_TREE.map(t => ({ value: t.id, label: t.title }))),
+        epicOptions: [{ value: '', label: 'Epic...' }].concat(
+          (SPEC_TREE.find(t => t.id === (this.state.wikiLinks[feat.id] || {}).theme)?.epics || []).map(e => ({ value: e.id, label: e.title }))
+        ),
+        featureOptions: [{ value: '', label: 'Feature...' }].concat(
+          (SPEC_TREE.find(t => t.id === (this.state.wikiLinks[feat.id] || {}).theme)?.epics.find(e => e.id === (this.state.wikiLinks[feat.id] || {}).epic)?.features || []).map(f => ({ value: f.id, label: f.title }))
+        ),
+        storyOptions: [{ value: '', label: 'Story...' }].concat(
+          (SPEC_TREE.find(t => t.id === (this.state.wikiLinks[feat.id] || {}).theme)?.epics.find(e => e.id === (this.state.wikiLinks[feat.id] || {}).epic)?.features.find(f => f.id === (this.state.wikiLinks[feat.id] || {}).feature)?.stories || []).map(s => ({ value: s.id, label: s.oneLiner }))
+        ),
+        isReady: status === 'ready',
+        noteText: wikiNotes[feat.id] ?? (story ? story.fullText : ''),
+        onNoteBlur: (e) => this.setWikiNote(feat.id, e.target.textContent),
+        fmtBold: (e) => { e.preventDefault(); document.execCommand('bold'); },
+        fmtItalic: (e) => { e.preventDefault(); document.execCommand('italic'); },
+        fmtH2: (e) => { e.preventDefault(); document.execCommand('formatBlock', false, 'h3'); },
+        fmtList: (e) => { e.preventDefault(); document.execCommand('insertUnorderedList'); },
+        fmtQuote: (e) => { e.preventDefault(); document.execCommand('formatBlock', false, 'blockquote'); },
+        criteria: (story ? story.criteria : []).map((c, i) => {
+          const key = feat.id + ':' + i;
+          const done = !!wikiCriteriaDone[key];
+          return { text: c, checkBg: done ? '#3d7fff' : 'transparent', toggle: () => this.toggleWikiCriterion(feat.id, i) };
+        }),
+        related, hasRelated: related.length > 0,
+        history: [{ label: 'Edited 2 days ago \u2014 You' }, { label: 'Created 6 days ago \u2014 You' }],
+      };
+    }
+    const wikiReadyItems = ALL_FEATURES.filter(f => (wikiStatus[f.id] || 'draft') === 'ready').map(f => ({ title: f.title }));
+
+    const { mindQuery, mindSearchSelectedEntry } = this.state;
+    const mindQ = mindQuery.trim().toLowerCase();
+    const hasMindQuery = mindQ.length > 0;
+    const mindResults = hasMindQuery
+      ? MIND_INDEX.filter(e => e.oneLiner.toLowerCase().includes(mindQ) || e.path.toLowerCase().includes(mindQ))
+        .map(e => ({ oneLiner: e.oneLiner, path: e.path, select: () => this.previewMindSearchResult(e) }))
+      : [];
+    let mindInfo = null;
+    if (mindSearchSelectedEntry) {
+      const entry = mindSearchSelectedEntry;
+      const story = getStoryByEntry(entry);
+      const theme = SPEC_TREE.find(t => t.id === entry.themeId);
+      const epic = theme.epics.find(e => e.id === entry.epicId);
+      const feature = epic.features.find(f => f.id === entry.featureId);
+      const decision = feature.decision ? buildDecision(feature) : null;
+      mindInfo = {
+        color: LEVEL_COLORS.Story, kindLabel: 'Story', label: story.oneLiner,
+        hasCounts: false,
+        hasDecision: !!decision, decision,
+        hasStory: true, story: { fullText: story.fullText, criteria: story.criteria },
+      };
+    }
+
+    const { editingStepId, editingStepDraft } = this.state;
+    const { flows: flowsState, selectedFlowId, flowSearchQuery } = this.state;
+    const fq = flowSearchQuery.trim().toLowerCase();
+    const linkedFeatureLabel = (id) => {
+      const feat = ALL_FEATURES.find(x => x.id === id);
+      return feat ? feat.title : 'Unlinked';
+    };
+    const flowList = flowsState.filter(f => !fq || f.title.toLowerCase().includes(fq)).map(f => ({
+      id: f.id, title: f.title, linkedLabel: linkedFeatureLabel(f.linkedFeatureId),
+      select: () => this.selectFlow(f.id),
+      remove: (e) => { e.stopPropagation(); this.removeFlow(f.id); },
+      rowStyle: {
+        display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '2px', cursor: 'pointer',
+        border: selectedFlowId === f.id ? '1px solid #3d7fff' : '1px solid #2c2c2c',
+        background: selectedFlowId === f.id ? 'rgba(61,127,255,0.1)' : '#1a1a1a',
+      },
+    }));
+    const selectedFlowRaw = flowsState.find(f => f.id === selectedFlowId);
+    let selectedFlow = null;
+    if (selectedFlowRaw) {
+      const liveSteps = this.state.flowSteps[selectedFlowRaw.id] || [];
+      selectedFlow = {
+        id: selectedFlowRaw.id, title: selectedFlowRaw.title, description: selectedFlowRaw.description,
+        onTitleBlur: (e) => this.setFlowField(selectedFlowRaw.id, 'title', e.target.textContent),
+        onDescBlur: (e) => this.setFlowField(selectedFlowRaw.id, 'description', e.target.textContent),
+        addStep: () => this.addFlowStep(selectedFlowRaw.id),
+        steps: liveSteps.map((s, i) => ({
+          id: s.id, label: s.label, hasArrow: i < liveSteps.length - 1, num: i + 1,
+          isEditing: editingStepId === s.id, notEditing: editingStepId !== s.id, draft: editingStepDraft,
+          onDraftChange: (e) => this.setEditingStepDraft(e.target.value),
+          commit: () => this.commitEditStep(selectedFlowRaw.id, s.id),
+          onKeyDown: (e) => { if (e.key === 'Enter') this.commitEditStep(selectedFlowRaw.id, s.id); },
+          startEdit: () => this.startEditStep(s.id, s.label),
+          moveUp: () => this.moveFlowStep(selectedFlowRaw.id, i, -1), moveDown: () => this.moveFlowStep(selectedFlowRaw.id, i, 1),
+          moveLeft: () => this.moveFlowStep(selectedFlowRaw.id, i, -1), moveRight: () => this.moveFlowStep(selectedFlowRaw.id, i, 1),
+          remove: () => this.removeFlowStep(selectedFlowRaw.id, s.id),
+        })),
+        hasBranch: !!selectedFlowRaw.branch, noBranch: !selectedFlowRaw.branch, branch: selectedFlowRaw.branch,
+        linkedThemeId: selectedFlowRaw.linkedThemeId || '',
+        linkedEpicId: selectedFlowRaw.linkedEpicId || '',
+        linkedFeatureId: selectedFlowRaw.linkedFeatureId || '',
+        linkedStoryId: selectedFlowRaw.linkedStoryId || '',
+        onLinkThemeChange: (e) => this.setFlowLinkTheme(selectedFlowRaw.id, e.target.value),
+        onLinkEpicChange: (e) => this.setFlowLinkEpic(selectedFlowRaw.id, e.target.value),
+        onLinkFeatureChange: (e) => this.setFlowLinkFeature(selectedFlowRaw.id, e.target.value),
+        onLinkStoryChange: (e) => this.setFlowLinkStory(selectedFlowRaw.id, e.target.value),
+        themeOptions: [{ value: '', label: 'Theme...' }].concat(SPEC_TREE.map(t => ({ value: t.id, label: t.title }))),
+        epicOptions: [{ value: '', label: 'Epic...' }].concat(
+          (SPEC_TREE.find(t => t.id === selectedFlowRaw.linkedThemeId)?.epics || []).map(e => ({ value: e.id, label: e.title }))
+        ),
+        featureOptions: [{ value: '', label: 'Feature...' }].concat(
+          (SPEC_TREE.find(t => t.id === selectedFlowRaw.linkedThemeId)?.epics.find(e => e.id === selectedFlowRaw.linkedEpicId)?.features || []).map(f => ({ value: f.id, label: f.title }))
+        ),
+        storyOptions: [{ value: '', label: 'Story...' }].concat(
+          (SPEC_TREE.find(t => t.id === selectedFlowRaw.linkedThemeId)?.epics.find(e => e.id === selectedFlowRaw.linkedEpicId)?.features.find(f => f.id === selectedFlowRaw.linkedFeatureId)?.stories || []).map(s => ({ value: s.id, label: s.oneLiner }))
+        ),
+        viewType: this.state.flowViewTypes[selectedFlowRaw.id] || 'diagram',
+        onViewTypeChange: (e) => this.setFlowViewType(selectedFlowRaw.id, e.target.value),
+        addColumn: () => this.addFlowStep(selectedFlowRaw.id),
+        addBlueprintRow: () => this.addBlueprintRow(selectedFlowRaw.id),
+        blueprintColumns: liveSteps.map(s => ({ id: s.id, label: s.label, removeCol: () => this.removeFlowStep(selectedFlowRaw.id, s.id) })),
+        blueprintGridStyle: {
+          display: 'grid', gridTemplateColumns: `110px repeat(${Math.max(liveSteps.length, 1)},minmax(120px,1fr)) 40px`,
+          gap: '1px', background: '#2c2c2c', minWidth: (150 + liveSteps.length * 120) + 'px',
+        },
+        blueprintRows: (this.state.flowBlueprintRows[selectedFlowRaw.id] || []).map((r, ri) => ({
+          id: r.id, label: r.label,
+          onLabelBlur: (e) => this.setBlueprintRowLabel(selectedFlowRaw.id, r.id, e.target.textContent),
+          moveUp: () => this.moveBlueprintRow(selectedFlowRaw.id, ri, -1),
+          moveDown: () => this.moveBlueprintRow(selectedFlowRaw.id, ri, 1),
+          remove: () => this.removeBlueprintRow(selectedFlowRaw.id, r.id),
+          cells: liveSteps.map((s, ci) => ({
+            text: r.cells[ci] || '',
+            onBlur: (e) => this.setBlueprintCell(selectedFlowRaw.id, r.id, ci, e.target.textContent),
+          })),
+        })),
+      };
+    }
+    const isDiagramView = selectedFlow ? selectedFlow.viewType === 'diagram' : true;
+    const isListView = selectedFlow ? selectedFlow.viewType === 'list' : false;
+    const isBlueprintView = selectedFlow ? selectedFlow.viewType === 'blueprint' : false;
+    const isTaskflowView = selectedFlow ? selectedFlow.viewType === 'taskflow' : false;
+    const flowViewOptions = FLOW_VIEW_TYPES;
+
+    const { lanes, selectedRoadmapItemId, addingLane, newLaneTitle, confirmDeleteLaneId } = this.state;
+    const roadmapSubTabs = [
+      { key: 'scatter', label: 'Value \u00d7 Complexity' },
+      { key: 'matrix', label: 'Eisenhower Matrix' },
+      { key: 'gantt', label: 'Gantt Chart' },
+      { key: 'kanban', label: 'Release Plan' },
+    ].map(t => ({
+      label: t.label,
+      select: () => this.setState({ roadmapSubTab: t.key }),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: this.state.roadmapSubTab === t.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: this.state.roadmapSubTab === t.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: this.state.roadmapSubTab === t.key ? '#fff' : '#999',
+      },
+    }));
+    const isRoadmapKanban = this.state.roadmapSubTab === 'kanban';
+    const isRoadmapGantt = this.state.roadmapSubTab === 'gantt';
+    const isRoadmapScatter = this.state.roadmapSubTab === 'scatter';
+    const isRoadmapMatrix = this.state.roadmapSubTab === 'matrix';
+    const stageColor2 = { 0: '#3d7fff', 1: '#999', 2: '#666' };
+    const allRoadmapItems = [];
+    lanes.forEach(l => l.items.forEach(it => allRoadmapItems.push({ ...it, laneTitle: l.title })));
+    const { scatterSelectedId } = this.state;
+    const SEV_RANK = { high: 3, medium: 2, low: 1 };
+    const RISK_BY_FEATURE = {};
+    RISKS.forEach(r => { if (!RISK_BY_FEATURE[r.feature] || SEV_RANK[r.severity] > SEV_RANK[RISK_BY_FEATURE[r.feature]]) RISK_BY_FEATURE[r.feature] = r.severity; });
+    const scatterDots = allRoadmapItems.map(it => {
+      const vc = ROADMAP_VALUE_COMPLEXITY[it.id] || { value: 5, complexity: 5 };
+      const yPct = (vc.value / 10) * 100;
+      const xPct = (vc.complexity / 10) * 100;
+      const SIZE_BY_EFFORT = { S: 14, 'S/M': 18, M: 22, 'M/L': 26, L: 30 };
+      const size = SIZE_BY_EFFORT[it.effort] || 20;
+      const riskSev = RISK_BY_FEATURE[it.title];
+      const RISK_COLOR = { high: '#e05a4e', medium: '#e0a83d', low: '#4caf50' };
+      const bubbleColor = riskSev ? RISK_COLOR[riskSev] : '#555';
+      return {
+        title: it.title,
+        select: (e) => { e.stopPropagation(); this.setState({ scatterSelectedId: it.id }); },
+        onHoverIn: () => this.setState({ hoveredScatterId: it.id }),
+        onHoverOut: () => this.setState({ hoveredScatterId: null }),
+        showLabel: this.state.hoveredScatterId === it.id || scatterSelectedId === it.id,
+        wrapStyle: {
+          position: 'absolute', left: xPct + '%', bottom: yPct + '%', transform: 'translate(-50%,50%)',
+          cursor: 'pointer',
+        },
+        style: {
+          width: size + 'px', height: size + 'px', borderRadius: '50%',
+          background: bubbleColor, opacity: it.id === scatterSelectedId ? 1 : 0.75,
+          border: it.id === scatterSelectedId ? '2px solid #fff' : '1px solid #141414',
+        },
+      };
+    });
+    const scatterSelectedItem = allRoadmapItems.find(it => it.id === scatterSelectedId);
+    const scatterSelectedTitle = scatterSelectedItem ? scatterSelectedItem.title : 'Click a dot to see its name';
+    const isImportant = (it) => ((this.state.itemMeta[it.id] || {}).importance ?? 3) >= 4;
+    const isUrgent = (it) => it.stage === 0;
+    const eisenBuckets = { doFirst: [], schedule: [], delegate: [], eliminate: [] };
+    allRoadmapItems.forEach(it => {
+      const key = isImportant(it) ? (isUrgent(it) ? 'doFirst' : 'schedule') : (isUrgent(it) ? 'delegate' : 'eliminate');
+      eisenBuckets[key].push({
+        id: it.id, title: it.title,
+        select: () => { this.selectRoadmapItem(it.id); this.setState({ roadmapSubTab: 'kanban' }); },
+        dragStart: (e) => e.dataTransfer.setData('text/plain', it.id),
+      });
+    });
+    const eisenhowerQuadrants = [
+      { key: 'doFirst', label: 'Do First', sub: 'Urgent & Important' },
+      { key: 'schedule', label: 'Schedule', sub: 'Important, not urgent' },
+      { key: 'delegate', label: 'Delegate', sub: 'Urgent, not important' },
+      { key: 'eliminate', label: 'Eliminate', sub: 'Neither' },
+    ].map(q => ({
+      label: q.label, sub: q.sub, items: eisenBuckets[q.key],
+      dragOver: (e) => e.preventDefault(),
+      drop: (e) => {
+        e.preventDefault();
+        const id = e.dataTransfer.getData('text/plain');
+        if (id) this.dropOnQuadrant(id, q.key === 'doFirst' || q.key === 'schedule', q.key === 'doFirst' || q.key === 'delegate');
+      },
+    }));
+    const backlogQ = (this.state.backlogSearchQuery || '').trim().toLowerCase();
+    const backlogTree = lanes.map(lane => ({
+      id: lane.id, title: lane.title,
+      expanded: !this.state.backlogCollapsed[lane.id],
+      collapseSign: this.state.backlogCollapsed[lane.id] ? '+' : '-',
+      toggle: () => this.setState(s => ({ backlogCollapsed: { ...s.backlogCollapsed, [lane.id]: !s.backlogCollapsed[lane.id] } })),
+      items: lane.items.filter(it => it.stage === 2 && (!backlogQ || it.title.toLowerCase().includes(backlogQ))).map(it => ({
+        id: it.id, title: it.title,
+        select: () => this.selectRoadmapItem(it.id),
+        add: () => this.moveRoadmapItem(it.id, lane.id, 1),
+      })),
+    })).filter(l => l.items.length);
+    const releaseColumns = [0, 1].map(stageIdx => {
+      const items = allRoadmapItems.filter(it => it.stage === stageIdx)
+        .sort((a, b) => (((this.state.itemMeta[b.id] || {}).importance ?? 3) - ((this.state.itemMeta[a.id] || {}).importance ?? 3)));
+      return {
+        stageIdx,
+        dragOver: (e) => e.preventDefault(),
+        drop: (e) => {
+          e.preventDefault();
+          const id = e.dataTransfer.getData('text/plain');
+          const lane = lanes.find(l => l.items.some(it => it.id === id));
+          if (lane) this.moveRoadmapItem(id, lane.id, stageIdx);
+        },
+        items: items.map(it => ({
+          id: it.id, title: it.title,
+          importance: (this.state.itemMeta[it.id] || {}).importance ?? 3,
+          dragStart: (e) => e.dataTransfer.setData('text/plain', it.id),
+          select: () => this.selectRoadmapItem(it.id),
+          toBacklog: (e) => { e.stopPropagation(); const lane = lanes.find(l => l.items.some(x => x.id === it.id)); if (lane) this.moveRoadmapItem(it.id, lane.id, 2); },
+          style: {
+            border: selectedRoadmapItemId === it.id ? '1px solid #3d7fff' : '1px solid #333',
+            background: selectedRoadmapItemId === it.id ? 'rgba(61,127,255,0.15)' : '#1e1e1e',
+            borderRadius: '2px', padding: '8px 10px', cursor: 'grab',
+          },
+        })),
+      };
+    });
+    const roadmapLanes = lanes.map(lane => ({
+      id: lane.id, title: lane.title,
+      requestDelete: () => this.requestDeleteLane(lane.id),
+      cells: [0, 1].map(stageIdx => ({
+        stageIdx, laneId: lane.id,
+        dragOver: (e) => e.preventDefault(),
+        drop: (e) => { e.preventDefault(); this.moveRoadmapItem(e.dataTransfer.getData('text/plain'), lane.id, stageIdx); },
+        items: lane.items.filter(it => it.stage === stageIdx).map(it => ({
+          id: it.id, title: it.title,
+          dragStart: (e) => e.dataTransfer.setData('text/plain', it.id),
+          select: () => this.selectRoadmapItem(it.id),
+          style: {
+            border: selectedRoadmapItemId === it.id ? '1px solid #3d7fff' : '1px solid #333',
+            background: selectedRoadmapItemId === it.id ? 'rgba(61,127,255,0.15)' : '#1e1e1e',
+            borderRadius: '2px', padding: '8px 10px', cursor: 'grab',
+          },
+        })),
+      })),
+    }));
+
+    const { itemMeta } = this.state;
+    const INTENT_OPTS = [
+      { key: 'ship', label: 'Ship as specified' },
+      { key: 'judgment', label: 'Use judgment' },
+      { key: 'exploratory', label: 'Exploratory' },
+    ];
+    let selectedRoadmapItem = null;
+    lanes.forEach(l => l.items.forEach(it => {
+      if (it.id === selectedRoadmapItemId) selectedRoadmapItem = { ...it, laneTitle: l.title };
+    }));
+    const roadmapStageLabels = ['Now', 'Next', 'Later'];
+    if (selectedRoadmapItem) {
+      selectedRoadmapItem.stageLabel = roadmapStageLabels[selectedRoadmapItem.stage];
+      const meta = itemMeta[selectedRoadmapItem.id] || {};
+      const importance = meta.importance ?? 3;
+      selectedRoadmapItem.importance = importance;
+      selectedRoadmapItem.onImportanceChange = (e) => this.setItemImportance(selectedRoadmapItem.id, Number(e.target.value));
+      selectedRoadmapItem.intentOptions = INTENT_OPTS.map(o => ({
+        label: o.label,
+        select: () => this.setItemIntent(selectedRoadmapItem.id, o.key),
+        style: {
+          padding: '6px 12px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+          border: (meta.intent || 'ship') === o.key ? '1px solid #3d7fff' : '1px solid #444',
+          background: (meta.intent || 'ship') === o.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+          color: (meta.intent || 'ship') === o.key ? '#fff' : '#999',
+        },
+      }));
+      const notes = this.state.roadmapNotes[selectedRoadmapItem.id] || [];
+      selectedRoadmapItem.notesLog = notes.map(n => ({
+        text: n.text, fromLabel: n.from === 'you' ? 'You' : 'Hermes',
+        fromColor: n.from === 'you' ? 'rgba(255,255,255,0.75)' : '#3d7fff',
+        textColor: n.from === 'you' ? '#fff' : '#ddd',
+        style: {
+          border: n.from === 'you' ? '1px solid #3d7fff' : '1px solid #2c2c2c',
+          borderRadius: '10px', padding: '8px 10px', maxWidth: '85%',
+          background: n.from === 'you' ? '#3d7fff' : '#1e1e1e',
+          alignSelf: n.from === 'you' ? 'flex-end' : 'flex-start',
+          textAlign: n.from === 'you' ? 'right' : 'left',
+        },
+      }));
+      selectedRoadmapItem.noNotes = notes.length === 0;
+      selectedRoadmapItem.noteDraft = this.state.roadmapNoteDrafts[selectedRoadmapItem.id] || '';
+      selectedRoadmapItem.onNoteDraftChange = (e) => this.setRoadmapNoteDraft(selectedRoadmapItem.id, e.target.value);
+      selectedRoadmapItem.sendNote = () => this.sendRoadmapNote(selectedRoadmapItem.id);
+
+      const taskLabels = ['Design & scope', 'Build', 'QA & ship'];
+      const itemId = selectedRoadmapItem.id;
+      selectedRoadmapItem.tasks = taskLabels.map((label, idx) => {
+        const key = itemId + ':' + idx;
+        const done = !!this.state.taskDone[key];
+        return { label, doneColor: done ? '#3d7fff' : 'transparent', toggle: () => this.toggleTask(itemId, idx) };
+      });
+      const doneCountTasks = selectedRoadmapItem.tasks.filter(t => t.done).length;
+      selectedRoadmapItem.tasksSummary = `${doneCountTasks}/${taskLabels.length} done`;
+
+      const BURNDOWN_BY_EFFORT = { S: [80, 60, 40, 20, 0], M: [90, 70, 50, 30, 10], L: [95, 80, 65, 45, 25], 'S/M': [85, 65, 45, 25, 5], 'M/L': [92, 75, 58, 38, 18] };
+      const bd = BURNDOWN_BY_EFFORT[selectedRoadmapItem.effort] || BURNDOWN_BY_EFFORT.M;
+      selectedRoadmapItem.burndownBars = bd.map(h => ({ heightStyle: `height:${h}%;` }));
+    }
+
+    const laneToDelete = lanes.find(l => l.id === confirmDeleteLaneId);
+
+    const stageColor = { 0: '#3d7fff', 1: '#999', 2: '#666' };
+    const ganttRows = [];
+    const { ganttOverrides } = this.state;
+    lanes.forEach(lane => lane.items.forEach(it => {
+      const ov = ganttOverrides[it.id] || {};
+      const start = ov.start ?? (GANTT_STAGE_START[it.stage] ?? 0);
+      const dur = ov.dur ?? (GANTT_EFFORT_DURATION[it.effort] || 2);
+      ganttRows.push({
+        title: it.title, laneTitle: lane.title,
+        rangeLabel: it.title + ' — S' + (start + 1) + ' to S' + (start + dur),
+        select: () => { this.selectRoadmapItem(it.id); this.setState({ tab: 'roadmap' }); },
+        shiftLeft: (e) => { e.stopPropagation(); this.shiftGantt(it.id, start, dur, -1); },
+        shiftRight: (e) => { e.stopPropagation(); this.shiftGantt(it.id, start, dur, 1); },
+        onBarDragStart: (e) => {
+          this._ganttDragX = e.clientX;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const offsetX = e.clientX - rect.left;
+          this._ganttDragMode = offsetX < 18 ? 'left' : offsetX > rect.width - 18 ? 'right' : 'move';
+        },
+        onBarDragEnd: (e) => {
+          const width = (e.currentTarget.parentElement || {}).offsetWidth || 900;
+          const sprintWidth = width / GANTT_SPRINTS.length;
+          const delta = Math.round((e.clientX - (this._ganttDragX ?? e.clientX)) / sprintWidth);
+          if (!delta) return;
+          if (this._ganttDragMode === 'left') {
+            const newStart = Math.max(0, Math.min(start + dur - 1, start + delta));
+            const newDur = start + dur - newStart;
+            this.setGanttRange(it.id, newStart, newDur);
+          } else if (this._ganttDragMode === 'right') {
+            const newDur = Math.max(1, Math.min(GANTT_SPRINTS.length - start, dur + delta));
+            this.setGanttRange(it.id, start, newDur);
+          } else {
+            this.shiftGantt(it.id, start, dur, delta);
+          }
+        },
+        grow: (e) => { e.stopPropagation(); this.resizeGantt(it.id, start, dur, 1); },
+        shrink: (e) => { e.stopPropagation(); this.resizeGantt(it.id, start, dur, -1); },
+        barStyle: {
+          position: 'absolute', top: '8px', bottom: '8px',
+          left: (start / GANTT_SPRINTS.length) * 100 + '%',
+          width: (dur / GANTT_SPRINTS.length) * 100 + '%',
+          borderRadius: '4px', background: stageColor[it.stage], cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px', padding: '0 6px', fontSize: '11px',
+          color: it.stage === 0 ? '#0d0d0e' : '#fff', whiteSpace: 'nowrap', overflow: 'hidden',
+        },
+      });
+    }));
+
+    const archLevelDefs = [
+      { key: 'context', label: 'Context' },
+      { key: 'container', label: 'Container' },
+      { key: 'component', label: 'Component' },
+      { key: 'dataflow', label: 'Data Flow' },
+    ];
+    const archQ = (this.state.archSearchQuery || '').trim().toLowerCase();
+    const archLevels = archLevelDefs.filter(l => !archQ || l.label.toLowerCase().includes(archQ)).map(l => ({
+      label: l.label,
+      sign: this.state.archLevel === l.key ? '\u25aa' : '-',
+      select: () => this.setArchLevel(l.key),
+      rowStyle: {
+        padding: '3px 4px', fontSize: '13px', cursor: 'pointer',
+        color: this.state.archLevel === l.key ? '#fff' : '#ccc',
+        fontWeight: this.state.archLevel === l.key ? 600 : 400,
+      },
+    }));
+    const containerBoxes = this.state.archContainerBoxes.map((b, i) => {
+      const drillable = b.title === 'Sync Worker';
+      return {
+        title: b.title, sub: b.sub,
+        onDoubleClick: drillable ? () => this.setArchLevel('component') : () => {},
+        onTitleBlur: (e) => this.setArchContainerField(i, 'title', e.target.textContent),
+        onSubBlur: (e) => this.setArchContainerField(i, 'sub', e.target.textContent),
+        stopProp: (e) => e.stopPropagation(),
+        style: {
+          border: b.dashed ? '1px dashed #666' : '1px solid #666', borderRadius: '2px',
+          padding: '14px 18px', textAlign: 'center', background: b.dashed ? '#1c1c1c' : '#212121', width: '140px',
+          cursor: drillable ? 'zoom-in' : 'default',
+        },
+      };
+    });
+    const goToContainerLevel = () => this.setArchLevel('container');
+    const backToContext = () => this.setArchLevel('context');
+    const backToContainer = () => this.setArchLevel('container');
+    const componentBoxes = this.state.archComponentBoxes.map((b, i) => ({
+      title: b.title, sub: b.sub, hasArrow: i < this.state.archComponentBoxes.length - 1,
+      onTitleBlur: (e) => this.setArchComponentField(i, 'title', e.target.textContent),
+      onSubBlur: (e) => this.setArchComponentField(i, 'sub', e.target.textContent),
+    }));
+    const dataflowSteps = this.state.archDataflowSteps.map((label, i) => ({ num: i + 1, label, onBlur: (e) => this.setArchDataflowStep(i, e.target.textContent) }));
+    const archLabels = {
+      person: this.state.archLabels.person, system: this.state.archLabels.system,
+      warehouse: this.state.archLabels.warehouse, billing: this.state.archLabels.billing,
+      onPersonBlur: (e) => this.setArchLabel('person', e.target.textContent),
+      onSystemBlur: (e) => this.setArchLabel('system', e.target.textContent),
+      onWarehouseBlur: (e) => this.setArchLabel('warehouse', e.target.textContent),
+      onBillingBlur: (e) => this.setArchLabel('billing', e.target.textContent),
+    };
+    const ARCH_VIEW_MODES = [
+      { key: 'diagram', label: 'Diagram' },
+      { key: 'code', label: 'Code' },
+    ];
+    const archViewModes = ARCH_VIEW_MODES.map(m => ({
+      label: m.label,
+      select: () => this.setArchViewMode(m.key),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: this.state.archViewMode === m.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: this.state.archViewMode === m.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: this.state.archViewMode === m.key ? '#fff' : '#999',
+      },
+    }));
+    const genArchCode = () => {
+      const lvl = this.state.archLevel;
+      if (lvl === 'context') return `graph TD\n  Customer["${archLabels.person}"] --> App["${archLabels.system}"]\n  App --> Warehouse["${archLabels.warehouse}"]\n  App --> Billing["${archLabels.billing}"]`;
+      if (lvl === 'container') return this.state.archContainerBoxes.map(b => `container "${b.title}" { ${b.sub} }`).join('\n');
+      if (lvl === 'component') return this.state.archComponentBoxes.map(b => `component "${b.title}" { ${b.sub} }`).join('\n');
+      return this.state.archDataflowSteps.map((s, i) => `${i + 1}. ${s}`).join('\n');
+    };
+    const archCodeText = this.state.archCodeEdits[this.state.archLevel] ?? genArchCode();
+    const dataflowViewOptions = [
+      { key: 'numbered', label: 'Numbered' },
+      { key: 'sequence', label: 'Sequence diagram' },
+      { key: 'swimlane', label: 'Swimlane' },
+    ].map(v => ({
+      label: v.label,
+      select: () => this.setState({ dataflowView: v.key }),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: this.state.dataflowView === v.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: this.state.dataflowView === v.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: this.state.dataflowView === v.key ? '#fff' : '#999',
+      },
+    }));
+    const isDataflowNumbered = this.state.dataflowView === 'numbered';
+    const isDataflowSequence = this.state.dataflowView === 'sequence';
+    const isDataflowSwimlane = this.state.dataflowView === 'swimlane';
+    const dataflowSequenceRows = DATAFLOW_SEQUENCE.map(m => ({
+      fromLabel: DATAFLOW_ACTORS[m.from], toLabel: DATAFLOW_ACTORS[m.to], label: m.label,
+    }));
+    const dataflowLaneRows = DATAFLOW_LANES.map(lane => ({ actor: lane.actor, steps: lane.steps.map(i => DATAFLOW_STEPS[i]) }));
+    const ARCH_EXPLANATIONS = {
+      context: 'The big picture: you as the customer, Hermes App itself, and the outside systems it talks to — your warehouse feed and billing provider.',
+      container: "Zoomed in one level: the pieces that make up Hermes App — the web UI, the API, a background sync worker, and the shared database.",
+      component: 'Zoomed in further, inside the Sync Worker: how it pulls the warehouse feed, reconciles it, and flags mismatches.',
+      dataflow: 'A plain-language walkthrough of how one inventory update moves through the system, step by step.',
+    };
+    const archExplanation = ARCH_EXPLANATIONS[this.state.archLevel] || '';
+
+    const sevColor = { high: '#e6e6e6', medium: '#999', low: '#666' };
+    const riskFilters = [
+      { key: 'all', label: 'All' },
+      { key: 'high', label: 'High' },
+      { key: 'medium', label: 'Medium' },
+      { key: 'low', label: 'Low' },
+    ].map(f => ({
+      label: f.label,
+      select: () => this.setState({ riskFilter: f.key }),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: riskFilter === f.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: riskFilter === f.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: riskFilter === f.key ? '#fff' : '#999',
+      },
+    }));
+    const riskChartTabs = RISK_CHART_TABS.map(t => ({
+      label: t.label,
+      select: () => this.setRiskChartTab(t.key),
+      style: {
+        textAlign: 'center', padding: '8px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: this.state.riskChartTab === t.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: this.state.riskChartTab === t.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: this.state.riskChartTab === t.key ? '#fff' : '#999',
+      },
+    }));
+
+    const riskMatrixRows = SEVERITIES.map(sev => ({
+      label: sev,
+      color: sevColor[sev],
+      cells: BLAST_RADII.map(br => ({
+        chips: RISKS.filter(r => r.severity === sev && r.blastRadius === br && (riskFilter === 'all' || r.severity === riskFilter)).map(r => ({
+          id: r.id, title: r.title,
+          select: () => this.setState({ selectedRiskId: r.id }),
+          style: {
+            border: selectedRiskId === r.id ? '1px solid #3d7fff' : `1px solid ${sevColor[sev]}`,
+            background: selectedRiskId === r.id ? 'rgba(61,127,255,0.15)' : 'transparent',
+            borderRadius: '10px', padding: '5px 10px', maxWidth: '150px',
+            fontSize: '12px', color: selectedRiskId === r.id ? '#fff' : sevColor[sev], cursor: 'pointer', whiteSpace: 'normal', lineHeight: '1.3',
+          },
+        })),
+      })),
+    }));
+
+    const likImpactRows = SEVERITIES.map(sev => ({
+      label: sev, color: sevColor[sev],
+      cells: LIKELIHOODS.map(lik => ({
+        chips: RISKS.filter(r => r.severity === sev && r.likelihood === lik && (riskFilter === 'all' || r.severity === riskFilter)).map(r => ({
+          id: r.id, title: r.title,
+          select: () => this.setState({ selectedRiskId: r.id }),
+          style: {
+            border: selectedRiskId === r.id ? '1px solid #3d7fff' : `1px solid ${sevColor[sev]}`,
+            background: selectedRiskId === r.id ? 'rgba(61,127,255,0.15)' : 'transparent',
+            borderRadius: '10px', padding: '5px 10px', maxWidth: '150px', fontSize: '12px',
+            color: selectedRiskId === r.id ? '#fff' : sevColor[sev], cursor: 'pointer', whiteSpace: 'normal', lineHeight: '1.3',
+          },
+        })),
+      })),
+    }));
+
+    const STATUS_COLORS = { open: '#e6e6e6', acknowledged: '#999', resolved: '#3d7fff' };
+    const { statusFocusKey } = this.state;
+    const statusBreakdownRows = SEVERITIES.map(sev => {
+      const group = RISKS.filter(r => r.severity === sev && (riskFilter === 'all' || r.severity === riskFilter));
+      const total = group.length || 1;
+      const segments = ['open', 'acknowledged', 'resolved'].map(st => {
+        const count = group.filter(r => (riskStatuses[r.id] || r.status) === st).length;
+        const key = `${sev}|${st}`;
+        return {
+          label: st, count, color: STATUS_COLORS[st], widthPct: (count / total) * 100,
+          select: () => this.setState({ statusFocusKey: key }),
+          style: { width: (count / total) * 100 + '%', background: STATUS_COLORS[st], cursor: 'pointer', opacity: statusFocusKey === key ? 1 : 0.85, outline: statusFocusKey === key ? '2px solid #3d7fff' : 'none' },
+        };
+      }).filter(s => s.count > 0);
+      return { label: sev, color: sevColor[sev], count: group.length, segments };
+    });
+    let statusFocusList = [];
+    if (statusFocusKey) {
+      const [fSev, fSt] = statusFocusKey.split('|');
+      statusFocusList = RISKS.filter(r => r.severity === fSev && (riskStatuses[r.id] || r.status) === fSt).map(r => ({
+        id: r.id, title: r.title, select: () => this.setState({ selectedRiskId: r.id }),
+      }));
+    }
+
+    const rankingRows = RISKS.filter(r => riskFilter === 'all' || r.severity === riskFilter)
+      .map(r => ({ ...r, score: WEIGHT[r.severity] * WEIGHT[r.likelihood] }))
+      .sort((a, b) => b.score - a.score);
+    const maxScore = Math.max(...rankingRows.map(r => r.score), 1);
+    const severityRankingRows = rankingRows.map(r => ({
+      id: r.id, title: r.title, score: r.score,
+      barStyle: `width:${(r.score / maxScore) * 100}%;background:${sevColor[r.severity]};`,
+      select: () => this.setState({ selectedRiskId: r.id }),
+      rowStyle: { cursor: 'pointer', border: selectedRiskId === r.id ? '1px solid #3d7fff' : '1px solid transparent', borderRadius: '2px', padding: '4px' },
+    }));
+
+    const selectedRiskRaw = RISKS.find(r => r.id === selectedRiskId);
+    const selectedRisk = selectedRiskRaw ? {
+      title: selectedRiskRaw.title, breaksWhen: selectedRiskRaw.breaksWhen, feature: selectedRiskRaw.feature,
+      severityLabel: selectedRiskRaw.severity, severityColor: sevColor[selectedRiskRaw.severity],
+      blastRadius: selectedRiskRaw.blastRadius,
+      statusLabel: riskStatuses[selectedRiskRaw.id] || selectedRiskRaw.status,
+      cycleStatus: () => this.cycleStatus(selectedRiskRaw.id),
+    } : null;
+
+    const tradeoffFilters = [
+      { key: 'all', label: 'All' },
+      { key: 'yes', label: 'Reversible' },
+      { key: 'no', label: 'Irreversible' },
+    ].map(f => ({
+      label: f.label,
+      select: () => this.setState({ tradeoffFilter: f.key }),
+      style: {
+        padding: '6px 14px', fontSize: '12px', borderRadius: '2px', cursor: 'pointer',
+        border: tradeoffFilter === f.key ? '1px solid #3d7fff' : '1px solid #444',
+        background: tradeoffFilter === f.key ? 'rgba(61,127,255,0.15)' : 'transparent',
+        color: tradeoffFilter === f.key ? '#fff' : '#999',
+      },
+    }));
+    let filteredTradeoffs = TRADEOFFS.filter(r => tradeoffFilter === 'all' || (tradeoffFilter === 'yes') === r.reversible);
+    filteredTradeoffs = [...filteredTradeoffs].sort((a, b) => {
+      const av = a.reversible ? 1 : 0, bv = b.reversible ? 1 : 0;
+      return tradeoffSortDir === 'asc' ? av - bv : bv - av;
+    });
+    const tradeoffSortArrow = tradeoffSortDir === 'asc' ? '\u25b2' : '\u25bc';
+    const toggleTradeoffSort = () => this.setState(s => ({ tradeoffSortDir: s.tradeoffSortDir === 'asc' ? 'desc' : 'asc' }));
+    const tradeoffs = filteredTradeoffs.slice(0, 4).map(r => {
+      const base = {
+        id: r.id, choice: r.choice, cost: r.cost, gain: r.gain, feature: r.feature, altLabel: r.altLabel,
+        reversibleLabel: r.reversible ? 'Yes' : 'No',
+        badgeLabel: r.reversible ? 'Recoverable' : 'Permanent',
+        badgeColor: r.reversible ? '#3d7fff' : '#999',
+        isScale: r.kind === 'scale', isDuel: r.kind === 'duel', isAnchor: r.kind === 'anchor',
+      };
+      if (r.kind === 'scale') {
+        const priority = this.state.scalePriority[r.id] || 'gain';
+        base.tiltDeg = priority === 'gain' ? 4 : -4;
+        base.prioritizeCost = () => this.setScalePriority(r.id, 'cost');
+        base.prioritizeGain = () => this.setScalePriority(r.id, 'gain');
+        base.costBorder = priority === 'cost' ? '#3d7fff' : '#444';
+        base.costBg = priority === 'cost' ? 'rgba(61,127,255,0.08)' : '#1e1e1e';
+        base.costLabelColor = priority === 'cost' ? '#3d7fff' : '#777';
+        base.gainBorder = priority === 'gain' ? '#3d7fff' : '#444';
+        base.gainBg = priority === 'gain' ? 'rgba(61,127,255,0.08)' : '#1e1e1e';
+        base.gainLabelColor = priority === 'gain' ? '#3d7fff' : '#777';
+      }
+      if (r.kind === 'duel') {
+        const isAltChosen = this.state.tradeoffChoice[r.id] === 'alt';
+        base.selectPrimary = () => this.setTradeoffChoice(r.id, 'primary');
+        base.selectAlt = () => this.setTradeoffChoice(r.id, 'alt');
+        base.primaryLabel = isAltChosen ? r.altLabel : r.choice;
+        base.altLabelDisplay = isAltChosen ? r.choice : r.altLabel;
+        base.primaryBoxStyle = {
+          flex: 1, borderRadius: '4px', padding: '10px', textAlign: 'center', cursor: 'pointer',
+          border: !isAltChosen ? '1px solid #3d7fff' : '1px solid #333',
+          background: !isAltChosen ? 'rgba(61,127,255,0.1)' : 'transparent',
+          opacity: !isAltChosen ? 1 : 0.5,
+        };
+        base.altBoxStyle = {
+          flex: 1, borderRadius: '4px', padding: '10px', textAlign: 'center', cursor: 'pointer',
+          border: isAltChosen ? '1px solid #3d7fff' : '1px solid #333',
+          background: isAltChosen ? 'rgba(61,127,255,0.1)' : 'transparent',
+          opacity: isAltChosen ? 1 : 0.5,
+        };
+        base.primaryBadge = !isAltChosen ? 'CHOSEN' : 'NOT CHOSEN';
+        base.altBadge = isAltChosen ? 'CHOSEN' : 'NOT CHOSEN';
+        base.primaryBadgeColor = !isAltChosen ? '#3d7fff' : '#666';
+        base.altBadgeColor = isAltChosen ? '#3d7fff' : '#666';
+      }
+      if (r.kind === 'anchor') {
+        const overridden = this.state.tradeoffChoice[r.id] === 'alt';
+        base.toggleAnchor = () => this.setTradeoffChoice(r.id, overridden ? 'primary' : 'alt');
+        base.anchorMainLabel = overridden ? r.altLabel : r.choice;
+        base.anchorSubLabel = overridden ? r.choice : r.altLabel;
+        base.anchorBadgeLabel = overridden ? 'OVERRIDDEN' : 'DEFAULT';
+        base.anchorBoxStyle = {
+          border: '1px solid #3d7fff', borderRadius: '4px', padding: '10px',
+          background: 'rgba(61,127,255,0.1)', marginBottom: '8px', display: 'flex',
+          justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer',
+        };
+      }
+      return base;
+    });
+
+    const progressCols = PROGRESS_COLS.map(c => ({
+      key: c.key, label: c.label, count: c.items.length, items: c.items,
+      expanded: !collapsedCols[c.key],
+      chevron: collapsedCols[c.key] ? '\u25b8' : '\u25be',
+      toggle: () => this.toggleCol(c.key),
+    }));
+    const totalItemsAll = PROGRESS_COLS.reduce((sum, c) => sum + c.items.length, 0);
+    const doneCount = PROGRESS_COLS.find(c => c.key === 'done').items.length;
+    const overallPct = totalItemsAll ? Math.round((doneCount / totalItemsAll) * 100) : 0;
+    const overallBarStyle = { height: '100%', background: '#3d7fff', width: overallPct + '%' };
+
+    return {
+      tabs, isMindMap: tab === 'mindmap', isSpecDigest: tab === 'specDigest', isFlow: tab === 'flow',
+      isRiskTradeoff: tab === 'riskTradeoff',
+      isRoadmap: tab === 'roadmap', isArchitecture: tab === 'architecture',
+      specFilters, specModes,
+      isSpecDigestOrDecomp: tab === 'specDigest',
+      mindIsMap: tab === 'mindmap',
+      mindIsTree: false,
+      wikiPageList, wikiSearchQuery, onWikiSearchChange: (e) => this.setWikiSearch(e.target.value),
+      wikiPage, hasWikiPage: !!wikiPage, noSelectedWikiPage: !wikiPage,
+      openWikiRoot: () => this.openWikiRoot(), wikiReadyItems, hasWikiReady: wikiReadyItems.length > 0,
+      themes, flatStories, decisionDialBg, decisionDialLabel,
+      mindQuery, onMindQueryChange: (e) => this.setMindQuery(e.target.value),
+      hasMindQuery, mindResults, hasMindResults: mindResults.length > 0,
+      mindInfo, hasMindInfo: !!mindInfo, noMindInfo: !mindInfo,
+      flowList, selectedFlow, hasSelectedFlow: !!selectedFlow, noSelectedFlow: !selectedFlow,
+      flowSearchQuery, onFlowSearchChange: (e) => this.setFlowSearch(e.target.value),
+      addFlow: () => this.addFlow(),
+      flowViewOptions, isDiagramView, isListView, isBlueprintView, isTaskflowView,
+      tradeoffs, tradeoffFilters, tradeoffSortArrow, toggleTradeoffSort,
+      riskFilters, riskChartTabs, riskMatrixRows, blastRadii: BLAST_RADII,
+      likImpactRows, likelihoods: LIKELIHOODS, statusBreakdownRows, severityRankingRows,
+      hasStatusFocus: !!statusFocusKey, statusFocusList,
+      tradeoffsForSelected: (selectedRisk ? tradeoffs.filter(r => r.feature === selectedRisk.feature) : tradeoffs).slice(0, 2),
+      isSevBlastTab: this.state.riskChartTab === 'sevBlast', isLikImpactTab: this.state.riskChartTab === 'likImpact',
+      isStatusTab: this.state.riskChartTab === 'status', isRankingTab: this.state.riskChartTab === 'ranking',
+      selectedRisk, noRiskSelected: !selectedRisk,
+      progressCols, overallPct, overallBarStyle, changelog: CHANGELOG,
+      roadmapStages: ['Now', 'Next'], roadmapLanes, releaseColumns, backlogTree,
+      backlogSearchQuery: this.state.backlogSearchQuery, onBacklogSearchChange: (e) => this.setState({ backlogSearchQuery: e.target.value }),
+      roadmapSubTabs, isRoadmapKanban, isRoadmapGantt, isRoadmapScatter, isRoadmapMatrix, scatterDots, scatterSelectedTitle, eisenhowerQuadrants,
+      ganttSprints: GANTT_SPRINTS, ganttRows,
+      selectedRoadmapItem, noRoadmapItemSelected: !selectedRoadmapItem,
+      addingLane, newLaneTitle,
+      addLaneStart: () => this.addLaneStart(),
+      setNewLaneTitle: (e) => this.setNewLaneTitle(e.target.value),
+      cancelAddLane: () => this.cancelAddLane(),
+      confirmAddLane: () => this.confirmAddLane(),
+      laneToDelete, hasLaneToDelete: !!laneToDelete,
+      cancelDeleteLane: () => this.cancelDeleteLane(),
+      confirmDeleteLane: () => this.confirmDeleteLane(),
+      archLevels, isArchContext: this.state.archLevel === 'context', isArchContainer: this.state.archLevel === 'container',
+      isArchComponent: this.state.archLevel === 'component', isArchDataflow: this.state.archLevel === 'dataflow',
+      containerBoxes, componentBoxes, dataflowSteps, goToContainerLevel, backToContext, backToContainer, archExplanation,
+      archSearchQuery: this.state.archSearchQuery, onArchSearchChange: (e) => this.setArchSearch(e.target.value),
+      archLabels, archViewModes, isArchDiagramMode: this.state.archViewMode === 'diagram', isArchCodeMode: this.state.archViewMode === 'code',
+      archCodeText, onArchCodeChange: (e) => this.setArchCodeText(this.state.archLevel, e.target.value),
+      dataflowViewOptions, isDataflowNumbered, isDataflowSequence, isDataflowSwimlane,
+      dataflowActors: DATAFLOW_ACTORS, dataflowSequenceRows, dataflowLaneRows,
+      backToComponent: () => this.setArchLevel('component'),
+      notesModalOpen: this.state.notesModalOpen,
+      openNotesModal: () => this.setState({ notesModalOpen: true }),
+      closeNotesModal: () => this.setState({ notesModalOpen: false }),
+      isScrum: tab === 'scrum', wikiReadyItems, hasWikiReady: wikiReadyItems.length > 0,
+      isScrumProgress: true,
+    };
+  }
+}
+</script>
+</body>
+</html>
