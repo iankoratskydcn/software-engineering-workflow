@@ -145,6 +145,10 @@ JSON_DEPTH_LIMIT = 8
 COORDINATE_MIN = -100000
 COORDINATE_MAX = 100000
 
+# Newest schema version init_db migrates to. Bump together with the newest
+# _migrate_vN; the tests assert init_db lands exactly here.
+LATEST_SCHEMA_VERSION = 15
+
 
 class BoundaryError(ValueError):
     """Safe, machine-readable rejection at a trust boundary."""
@@ -1244,6 +1248,86 @@ def _migrate_v13_scrum_planning(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_v14_observation_checkpoints(conn: sqlite3.Connection) -> None:
+    """Add the human-confirmed checkpoints that anchor the observation log's hash chain."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= 14:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observation_checkpoints (
+                id TEXT PRIMARY KEY,
+                seq INTEGER NOT NULL CHECK(seq >= 1),
+                head_hash TEXT NOT NULL,
+                confirmed_by TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                UNIQUE(seq, head_hash)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observation_checkpoints_seq "
+            "ON observation_checkpoints(seq, created_at)"
+        )
+        conn.execute("PRAGMA user_version = 14")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def _migrate_v15_days(conn: sqlite3.Connection) -> None:
+    """Add the day / block / hour tables behind the daily cadence clock."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= 15:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS days (
+                id TEXT PRIMARY KEY,
+                date TEXT NOT NULL,
+                hours_available INTEGER NOT NULL CHECK(hours_available BETWEEN 3 AND 24),
+                status TEXT NOT NULL CHECK(status IN ('active', 'ended')),
+                started_at REAL NOT NULL,
+                ended_at REAL
+            )
+            """
+        )
+        # At most one day can be active: the cadence belongs to the person, not a project.
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_days_one_active ON days(status) WHERE status = 'active'")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blocks (
+                id TEXT PRIMARY KEY,
+                day_id TEXT NOT NULL REFERENCES days(id) ON DELETE RESTRICT,
+                idx INTEGER NOT NULL CHECK(idx >= 1),
+                work_hours INTEGER NOT NULL CHECK(work_hours BETWEEN 2 AND 6),
+                UNIQUE(day_id, idx)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS hours (
+                id TEXT PRIMARY KEY,
+                block_id TEXT NOT NULL REFERENCES blocks(id) ON DELETE RESTRICT,
+                idx INTEGER NOT NULL CHECK(idx >= 1),
+                kind TEXT NOT NULL CHECK(kind IN ('retro', 'work')),
+                start_ts REAL NOT NULL,
+                end_ts REAL NOT NULL CHECK(end_ts > start_ts),
+                UNIQUE(block_id, idx)
+            )
+            """
+        )
+        conn.execute("PRAGMA user_version = 15")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -1355,6 +1439,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v11_roadmap(conn)
     _migrate_v12_mindmap(conn)
     _migrate_v13_scrum_planning(conn)
+    _migrate_v14_observation_checkpoints(conn)
+    _migrate_v15_days(conn)
     conn.commit()
 
 
@@ -3076,3 +3162,125 @@ def set_prioritized_side(conn: sqlite3.Connection, *, project_id: str, tradeoff_
     conn.execute("UPDATE tradeoffs SET prioritized_side = ?, updated_at = ? WHERE id = ? AND project_id = ?", (side, time.time(), tradeoff_id, project))
     conn.commit()
     return dict(conn.execute("SELECT * FROM tradeoffs WHERE id = ?", (tradeoff_id,)).fetchone())
+
+# --- observation log checkpoints ---------------------------------------------
+# The log itself lives in observation_log.py (a JSONL file beside queue.db).
+# A checkpoint records "the log's head was (seq, hash) when a human looked", and
+# is stored here, outside that file, so a rewritten or truncated log can be
+# caught. Creating one is gated exactly like resolving a decision.
+
+def add_observation_checkpoint(
+    conn: sqlite3.Connection, *, seq: int, head_hash: str, actor_token: str
+) -> dict[str, Any]:
+    """Record a human-confirmed checkpoint of the observation log head.
+    Idempotent for an identical (seq, head_hash)."""
+    if _is_delegated_child_process_context():
+        raise NotAuthorized(
+            "add_observation_checkpoint() refused: running in a delegated-child process context "
+            f"({_DELEGATED_CHILD_ENV_MARKER} is set); only the interactive owner may confirm a checkpoint")
+    actor = _validate_actor_token(actor_token)
+    if actor is None:
+        raise NotAuthorized(
+            "add_observation_checkpoint() refused: missing, unknown, or expired actor_token; obtain "
+            "one via `hermes decision issue-token` before confirming a checkpoint")
+    if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+        raise BoundaryError("invalid_input", "seq must be a positive integer")
+    prefix = "sha256:"
+    digest = head_hash[len(prefix):] if isinstance(head_hash, str) and head_hash.startswith(prefix) else ""
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise BoundaryError("invalid_input", "head_hash must be sha256:<64 lowercase hex characters>")
+    existing = conn.execute(
+        "SELECT * FROM observation_checkpoints WHERE seq = ? AND head_hash = ?", (seq, head_hash)
+    ).fetchone()
+    if existing is not None:
+        return dict(existing)
+    checkpoint_id = "ocp_" + secrets.token_hex(6)
+    conn.execute(
+        "INSERT INTO observation_checkpoints (id, seq, head_hash, confirmed_by, created_at) VALUES (?, ?, ?, ?, ?)",
+        (checkpoint_id, seq, head_hash, actor, time.time()),
+    )
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM observation_checkpoints WHERE id = ?", (checkpoint_id,)).fetchone())
+
+
+def list_observation_checkpoints(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [
+        dict(row)
+        for row in conn.execute("SELECT * FROM observation_checkpoints ORDER BY seq, created_at, id").fetchall()
+    ]
+
+
+# --- daily cadence: days, blocks, hours -----------------------------------------
+# Layout and clock logic live in day_schedule.py (pure). These functions only
+# persist a laid-out day and read it back.
+
+def _day_hours(conn: sqlite3.Connection, day_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT h.id AS id, b.idx AS block, h.idx AS hour, h.kind AS kind,
+               h.start_ts AS start_ts, h.end_ts AS end_ts
+        FROM hours h JOIN blocks b ON b.id = h.block_id
+        WHERE b.day_id = ? ORDER BY b.idx, h.idx
+        """,
+        (day_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_active_day(conn: sqlite3.Connection) -> Optional[dict[str, Any]]:
+    """The active day with its hours in order, or None."""
+    row = conn.execute("SELECT * FROM days WHERE status = 'active'").fetchone()
+    if row is None:
+        return None
+    day = dict(row)
+    day["hours"] = _day_hours(conn, day["id"])
+    return day
+
+
+def create_day(
+    conn: sqlite3.Connection, *, date: str, hours_available: int, slots: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Persist a laid-out day (slots from day_schedule.hour_slots) as the active
+    day. Rejects with `conflict` while another day is still active (the unique
+    index on active days is the single source of that rule)."""
+    if not slots:
+        raise BoundaryError("invalid_input", "a day needs at least one hour")
+    day_id = "day_" + secrets.token_hex(6)
+    try:
+        conn.execute(
+            "INSERT INTO days (id, date, hours_available, status, started_at) VALUES (?, ?, ?, 'active', ?)",
+            (day_id, date, hours_available, slots[0]["start_ts"]),
+        )
+        block_ids: dict[int, str] = {}
+        for slot in slots:
+            block = slot["block"]
+            if block not in block_ids:
+                block_ids[block] = "blk_" + secrets.token_hex(6)
+                work_hours = sum(1 for s in slots if s["block"] == block and s["kind"] == "work")
+                conn.execute(
+                    "INSERT INTO blocks (id, day_id, idx, work_hours) VALUES (?, ?, ?, ?)",
+                    (block_ids[block], day_id, block, work_hours),
+                )
+            conn.execute(
+                "INSERT INTO hours (id, block_id, idx, kind, start_ts, end_ts) VALUES (?, ?, ?, ?, ?, ?)",
+                ("hr_" + secrets.token_hex(6), block_ids[block], slot["hour"], slot["kind"], slot["start_ts"], slot["end_ts"]),
+            )
+        conn.commit()
+    except sqlite3.IntegrityError as exc:
+        conn.rollback()
+        if "days.status" in str(exc):
+            raise BoundaryError("conflict", "a day is already active; end it first") from exc
+        raise
+    except Exception:
+        conn.rollback()
+        raise
+    return get_active_day(conn)
+
+
+def end_active_day(conn: sqlite3.Connection, *, ended_at: float) -> dict[str, Any]:
+    day = get_active_day(conn)
+    if day is None:
+        raise BoundaryError("not_found", "no active day")
+    conn.execute("UPDATE days SET status = 'ended', ended_at = ? WHERE id = ?", (ended_at, day["id"]))
+    conn.commit()
+    return {**day, "status": "ended", "ended_at": ended_at}

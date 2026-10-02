@@ -42,7 +42,7 @@ def insert_decision(conn, decision_id: str, project_id: str) -> None:
 def test_canonical_schema_has_closed_fields_constraints_and_v13(monkeypatch, tmp_path):
     conn = setup_conn(monkeypatch, tmp_path)
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.LATEST_SCHEMA_VERSION
         risk_columns = {row["name"] for row in conn.execute("PRAGMA table_info(risks)")}
         assert risk_columns == {
             "id", "project_id", "decision_id", "title", "description", "breaks_when",
@@ -261,7 +261,7 @@ def test_preexisting_v7_unconstrained_risk_tradeoff_schema_is_rebuilt_or_refused
             assert "risk" in str(exc).lower() or "tradeoff" in str(exc).lower() or "constraint" in str(exc).lower()
             assert "\\n".join(conn.iterdump()) == before_dump
         else:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == db.LATEST_SCHEMA_VERSION
             for table, check in (
                 ("risks", "status IN ('open','mitigated','accepted','closed')"),
                 ("tradeoffs", "kind IN ('scale','duel','anchor')"),
@@ -379,7 +379,7 @@ def test_empty_v8_legacy_tradeoffs_upgrade_atomically_to_v13_and_rerun_idempoten
     conn = _legacy_v8_conn(monkeypatch, tmp_path, legacy_risks=True)
     try:
         db.init_db(conn)
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.LATEST_SCHEMA_VERSION
         columns = [row[1] for row in conn.execute("PRAGMA table_info(tradeoffs)")]
         assert columns == [
             "id", "project_id", "decision_id", "kind", "title", "choice",
@@ -390,13 +390,13 @@ def test_empty_v8_legacy_tradeoffs_upgrade_atomically_to_v13_and_rerun_idempoten
         before_rerun = "\n".join(conn.iterdump())
         db.init_db(conn)
         assert "\n".join(conn.iterdump()) == before_rerun
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.LATEST_SCHEMA_VERSION
     finally:
         conn.close()
 
     reopened = db.connect()
     try:
-        assert reopened.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert reopened.execute("PRAGMA user_version").fetchone()[0] == db.LATEST_SCHEMA_VERSION
         assert reopened.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         reopened.close()
