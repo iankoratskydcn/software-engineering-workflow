@@ -156,8 +156,18 @@ A read-only agent that gathers a report on how the sprint is progressing.
 - **Reports, per team:** feature, cards done / in progress / blocked, on-track vs the
   hour (progress against time elapsed), open blockers, and anything at risk of
   carryover. Plus fleet-wide: review buffer depth and forecast impact.
-- **Delivery:** one low-priority digest card plus a quiet desktop notification. It
-  never preempts a blocker ping.
+- **Delivery:** the standup is logged, shown on the Day screen, and announced by a quiet
+  notification; it never preempts a blocker ping. (No Decision card: a card needs choices
+  and a resolve, so a digest would clutter the decision queue.)
+- **v1 is deterministic and per board:** Kanban gives states, not timestamps, so
+  "progress" is the change in each board's counts since the previous standup. Cards are
+  grouped by board until they can be linked to features (slice 3), and the committed
+  features and review buffer join the report with slices 4 and 6.
+- **Cadence:** one report per 20-minute slot of the day. Hour 1 of every block is a retro
+  hour, so the first standup of a day is at minute 60, the start of the first work hour.
+- **Idle expiry:** the pane sends a heartbeat while you interact; the backend decides the
+  one-hour expiry in one place, and any presence command that finds one turns the switch
+  off and records when it should have expired.
 - **Read-only:** it never dispatches, reassigns, unblocks, or edits. Its only write is
   appending the report to the observation log as a `standup` record, which the retro
   can later compare against what actually happened.
@@ -324,7 +334,7 @@ first so every later slice is verified.
 |---|---|---|
 | 0 | **CI** for this repo; frontend test deps pinned so a fresh clone is green | Fresh clone, `npm test` and `pytest` pass in CI |
 | 1 | **Observation log** | `observe add` appends; no edit path exists; `supersedes` works; concurrent writers yield unique, gap-free `seq`; edited, deleted, reordered, or truncated records fail verification against the hash chain and last checkpoint |
-| 2 | **Day screen + planner** | Enter hours, get the R+N layout; live phase countdown; next best action from the human work queue (4.7); phase transitions and hat switches logged |
+| 2 | **Day screen + planner** | Enter hours, get the R+N layout; live phase countdown; next best action from the human work queue (4.7); the day start and end and hat switches are logged; scheduled phase changes are not, since the retro can recompute them from the plan record and the clock |
 | 2b | **Observer standups** | Fires every 20 min only while the online switch is on; switch turns off after 1 h without interaction; silent during R; report appended as `standup`; makes no other writes |
 | **Manual trial** | Run one 1+2 block with slices 1-2b and Claude/Hermes sessions as the fleet | Log contains a full block; R produces at least one process change |
 | 3 | **One tree + Kanban link + DoR check** | Story created in Map shows in Spec; links to a Kanban card; commit blocked unless DoR passes |

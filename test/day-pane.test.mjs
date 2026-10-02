@@ -41,19 +41,32 @@ const activeStatus = (overrides = {}) => ({
 
 const reply = (value, code = 0) => ({ code, output: JSON.stringify(value) })
 
-/** Run `body` with host.request stubbed by `handler(argv)`; returns the recorded argv list. */
-async function withHost(handler, body) {
-  const original = host.request
+const OFFLINE = { ok: true, presence: { online: false, since: null, last_seen: null } }
+const NOTHING_DUE = { ok: true, reported: false, skipped: 'offline' }
+
+/** Run `body` with host.request stubbed. `handler(argv)` answers the `day` verbs; the
+ *  `presence` and `observer` verbs are answered by `extras` (a reply, or a function of
+ *  argv returning one) and default to "offline, no standup yet, nothing due". */
+async function withHost(handler, body, extras = {}) {
+  const original = { request: host.request, notify: host.notify }
   const calls = []
+  const notifications = []
+  const answer = (spec, argv, fallback) => (typeof spec === 'function' ? spec(argv) : spec ?? fallback)
+  host.notify = (message) => notifications.push(message)
   host.request = async (method, params) => {
     assert.equal(method, 'cli.exec')
-    calls.push(params.argv)
-    return handler(params.argv, calls)
+    const argv = params.argv
+    calls.push(argv)
+    if (argv[1] === 'presence') return answer(extras.presence, argv, reply(OFFLINE))
+    if (argv[1] === 'observer' && argv[2] === 'standup') return answer(extras.standup, argv, reply(NOTHING_DUE))
+    if (argv[1] === 'observer') return answer(extras.latest, argv, reply({ ok: true, standup: null }))
+    return handler(argv, calls)
   }
   try {
-    await body(calls)
+    await body(calls, notifications)
   } finally {
-    host.request = original
+    host.request = original.request
+    host.notify = original.notify
   }
 }
 
@@ -238,6 +251,191 @@ test('when the phase countdown runs out the status is refetched and the next pha
       assert.equal(statusCalls, 2)
       assert.match(text(mounted), /15:00 left in this phase/)
       assert.match(text(mounted), /Review the previous hour\./)
+      await mounted.unmount()
+    })
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+// --- the online switch, the latest standup, and the watchers -------------------------
+
+const STANDUP_RECORD = {
+  ts: '2026-10-02T17:20:00Z',
+  data: {
+    kanban: { available: true, totals: { running: 1, blocked: 1 } },
+    attention: ['1 task blocked: Wire auth', '1 urgent decision waiting'],
+  },
+}
+
+test('the online switch shows the state and flips it through the CLI', async () => {
+  let online = false
+  const presenceReply = (argv) => {
+    if (argv[2] === 'on') online = true
+    if (argv[2] === 'off') online = false
+    return reply({ ok: true, presence: { online, since: online ? '2026-10-02T17:00:00Z' : null, last_seen: null } })
+  }
+  await withHost(() => reply(activeStatus()), async (calls) => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    const off = buttonNamed(mounted, 'Offline')
+    assert.equal(off.getAttribute('aria-pressed'), 'false')
+    assert.match(text(mounted), /Go online to get standups every 20 minutes\./)
+
+    click(off, mounted.dom)
+    await flush()
+    assert.ok(hasCall(calls, 'decision', 'presence', 'on'))
+    assert.equal(buttonNamed(mounted, 'Online').getAttribute('aria-pressed'), 'true')
+    assert.match(text(mounted), /Turns itself off after an hour without interaction\./)
+
+    click(buttonNamed(mounted, 'Online'), mounted.dom)
+    await flush()
+    assert.ok(hasCall(calls, 'decision', 'presence', 'off'))
+    assert.ok(buttonNamed(mounted, 'Offline'))
+    await mounted.unmount()
+  }, { presence: presenceReply })
+})
+
+test('the latest standup is summarised on an active day', async () => {
+  await withHost(() => reply(activeStatus()), async () => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    const section = mounted.container.querySelector('[aria-label="Latest standup"]')
+    assert.match(section.textContent, /Latest standup/)
+    assert.match(section.textContent, /Kanban: 1 running, 1 blocked/)
+    assert.match(section.textContent, /1 task blocked: Wire auth/)
+    assert.match(section.textContent, /1 urgent decision waiting/)
+    await mounted.unmount()
+  }, { latest: reply({ ok: true, standup: STANDUP_RECORD }) })
+})
+
+test('a quiet standup and an unreadable Kanban are both said plainly', async () => {
+  const quiet = { ...STANDUP_RECORD, data: { kanban: { available: true, totals: {} }, attention: [] } }
+  await withHost(() => reply(activeStatus()), async () => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    assert.match(text(mounted), /Kanban: no tasks/)
+    assert.match(text(mounted), /Nothing needs attention\./)
+    await mounted.unmount()
+  }, { latest: reply({ ok: true, standup: quiet }) })
+
+  const broken = { ...STANDUP_RECORD, data: { kanban: { available: false }, attention: ['Kanban could not be read: boom'] } }
+  await withHost(() => reply(activeStatus()), async () => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    assert.match(text(mounted), /Kanban could not be read\./)
+    await mounted.unmount()
+  }, { latest: reply({ ok: true, standup: broken }) })
+})
+
+test('no standup panel without an active day or without a standup', async () => {
+  await withHost(() => reply({ ok: true, active: false }), async () => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    assert.equal(mounted.container.querySelector('[aria-label="Latest standup"]'), null)
+    await mounted.unmount()
+  }, { latest: reply({ ok: true, standup: STANDUP_RECORD }) })
+
+  await withHost(() => reply(activeStatus()), async () => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    assert.equal(mounted.container.querySelector('[aria-label="Latest standup"]'), null)
+    await mounted.unmount()
+  })
+})
+
+test('the day still shows when presence and the latest standup cannot be read', async () => {
+  const failing = reply({ ok: false, error: { code: 'internal_error', message: 'boom' } }, 1)
+  await withHost(() => reply(activeStatus()), async () => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    assert.match(text(mounted), /Refinement/)
+    assert.equal(mounted.container.querySelector('[role="alert"]'), null)
+    assert.ok(!buttonNamed(mounted, 'Online') && !buttonNamed(mounted, 'Offline'))
+    await mounted.unmount()
+  }, { presence: failing, latest: failing })
+})
+
+test('the watchers ask for the standup that is due, announce it, and keep asking each minute', async () => {
+  mock.timers.enable({ apis: ['setInterval', 'Date'], now: 5_000_000 })
+  try {
+    let due = false
+    await withHost(() => reply(activeStatus()), async (calls, notifications) => {
+      const standupCalls = () => calls.filter((c) => c[1] === 'observer' && c[2] === 'standup').length
+      const mounted = mount(() => dayRoute.render())
+      await flush()
+      assert.equal(standupCalls(), 1)  // once straight away
+      assert.deepEqual(notifications, [])
+
+      due = true
+      mock.timers.tick(60_000)
+      await flush()
+      assert.equal(standupCalls(), 2)
+      assert.deepEqual(notifications, [{ kind: 'info', message: 'Standup: 1 task blocked: Wire auth · 1 urgent decision waiting' }])
+
+      await mounted.unmount()
+      mock.timers.tick(5 * 60_000)
+      await flush()
+      assert.equal(standupCalls(), 2)  // unmounting stops the poll
+    }, {
+      standup: () => reply(due ? { ok: true, reported: true, standup: STANDUP_RECORD } : NOTHING_DUE),
+    })
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('a quiet standup is announced as such', async () => {
+  const quiet = { ...STANDUP_RECORD, data: { ...STANDUP_RECORD.data, attention: [] } }
+  await withHost(() => reply(activeStatus()), async (calls, notifications) => {
+    const mounted = mount(() => dayRoute.render())
+    await flush()
+    assert.deepEqual(notifications, [{ kind: 'info', message: 'Standup: nothing needs attention' }])
+    await mounted.unmount()
+  }, { standup: reply({ ok: true, reported: true, standup: quiet }) })
+})
+
+test('interaction sends a heartbeat at most once a minute, and stops after unmount', async () => {
+  mock.timers.enable({ apis: ['setInterval', 'Date'], now: 5_000_000 })
+  try {
+    await withHost(() => reply(activeStatus()), async (calls) => {
+      const touches = () => calls.filter((c) => c[1] === 'presence' && c[2] === 'touch').length
+      const mounted = mount(() => dayRoute.render())
+      await flush()
+      const interact = (type) => mounted.dom.window.dispatchEvent(new mounted.dom.window.Event(type, { bubbles: true }))
+
+      assert.equal(touches(), 0)  // nothing yet: no interaction
+      interact('pointerdown')
+      interact('keydown')
+      assert.equal(touches(), 1)  // throttled together
+
+      mock.timers.tick(30_000)
+      interact('pointerdown')
+      assert.equal(touches(), 1)
+      mock.timers.tick(31_000)
+      interact('keydown')
+      assert.equal(touches(), 2)
+
+      await mounted.unmount()
+      interact('pointerdown')
+      assert.equal(touches(), 2)
+    })
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('the pane refreshes itself every minute so an idle expiry shows up', async () => {
+  mock.timers.enable({ apis: ['setInterval', 'Date'], now: 5_000_000 })
+  try {
+    let statusCalls = 0
+    await withHost(() => { statusCalls += 1; return reply(activeStatus()) }, async () => {
+      const mounted = mount(() => dayRoute.render())
+      await flush()
+      assert.equal(statusCalls, 1)
+      mock.timers.tick(60_000)
+      await flush()
+      assert.equal(statusCalls, 2)
       await mounted.unmount()
     })
   } finally {

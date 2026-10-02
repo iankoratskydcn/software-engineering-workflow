@@ -4715,6 +4715,10 @@ function ScrumPlanningPane() {
   ] })
 }
 
+const DAY_REFRESH_MS = 60 * 1000
+const PRESENCE_TOUCH_MS = 60 * 1000
+const OBSERVER_POLL_MS = 60 * 1000
+
 const DAY_HATS = [
   { id: 'spec', label: 'Spec' },
   { id: 'review', label: 'Review' },
@@ -4742,13 +4746,56 @@ function formatCountdown(totalSeconds) {
   return hours > 0 ? `${hours}:${minutes}:${rest}` : `${minutes}:${rest}`
 }
 
+// Runs while the page is open: tells the backend you are interacting (so the one-hour
+// idle expiry measures real idleness) and asks for the standup that is due. The backend
+// decides everything (online? retro hour? already reported?) and answers `reported: false`
+// when nothing is due, so asking often is cheap and safe.
+function startCadenceWatchers() {
+  let active = true
+  let lastTouch = 0
+  const touch = () => {
+    const now = Date.now()
+    if (now - lastTouch < PRESENCE_TOUCH_MS) return
+    lastTouch = now
+    cliExec(['decision', 'presence', 'touch']).catch(() => {})
+  }
+  const events = ['pointerdown', 'keydown']
+  for (const name of events) window.addEventListener(name, touch, { passive: true })
+
+  const standup = async () => {
+    if (!active) return
+    try {
+      const result = await cliExec(['decision', 'observer', 'standup'])
+      if (active && result?.reported && result.standup) {
+        const attention = result.standup.data?.attention || []
+        host.notify({ kind: 'info', message: `Standup: ${attention.length ? attention.join(' · ') : 'nothing needs attention'}` })
+      }
+    } catch {
+      // a transient CLI hiccup: the next poll asks again
+    }
+  }
+  standup()
+  const interval = setInterval(standup, OBSERVER_POLL_MS)
+  if (typeof interval?.unref === 'function') interval.unref()
+  return () => {
+    active = false
+    clearInterval(interval)
+    for (const name of events) window.removeEventListener(name, touch)
+  }
+}
+
+function CadenceWatchers() {
+  React.useEffect(() => startCadenceWatchers(), [])
+  return null
+}
+
 function formatClockTime(iso) {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function DayPane() {
-  const [snapshot, setSnapshot] = React.useState({ loading: true, error: null, data: null, fetchedAt: 0 })
+  const [snapshot, setSnapshot] = React.useState({ loading: true, error: null, data: null, presence: null, standup: null, fetchedAt: 0 })
   const [nowMs, setNowMs] = React.useState(0)
   const [revision, setRevision] = React.useState(0)
   const [busy, setBusy] = React.useState(false)
@@ -4759,16 +4806,28 @@ function DayPane() {
 
   React.useEffect(() => {
     let live = true
-    cliExec(['decision', 'day', 'status']).then((result) => {
+    // Presence and the latest standup are secondary: if either fails the day still shows.
+    Promise.all([
+      cliExec(['decision', 'day', 'status']),
+      cliExec(['decision', 'presence', 'status']).catch(() => null),
+      cliExec(['decision', 'observer', 'latest']).catch(() => null),
+    ]).then(([result, presenceResult, latest]) => {
       if (!live) return
       const at = Date.now()
       setNowMs(at)
-      setSnapshot({ loading: false, error: null, data: result, fetchedAt: at })
+      setSnapshot({ loading: false, error: null, data: result, presence: presenceResult?.presence ?? null, standup: latest?.standup ?? null, fetchedAt: at })
     }).catch((error) => {
       if (live) setSnapshot((current) => ({ ...current, loading: false, error: String(error.message || error) }))
     })
     return () => { live = false }
   }, [revision])
+
+  // Presence can change without a click (the idle expiry), and a new standup arrives
+  // every 20 minutes, so refresh quietly once a minute.
+  React.useEffect(() => {
+    const timer = setInterval(() => setRevision((value) => value + 1), DAY_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [])
 
   // Seconds until the running phase (or the day's start) ends, counted down locally
   // from the moment the status arrived. When it reaches zero the status is refetched.
@@ -4883,10 +4942,31 @@ function DayPane() {
       jsx('button', { type: 'button', className: `${button} self-start`, disabled: busy, onClick: () => act(['decision', 'day', 'end']), children: 'End day' }),
     ] })
   }
+  const online = snapshot.presence?.online === true
+  const standup = snapshot.standup?.data
   return jsxs('div', { className: 'flex h-full flex-col gap-3 overflow-y-auto p-3 text-sm', children: [
     jsx('div', { className: 'font-medium', children: active ? `Day · ${data.day.date} · ${data.day.layout}` : 'Day' }),
     snapshot.error ? jsx('p', { role: 'alert', children: snapshot.error }) : null,
+    snapshot.presence ? jsxs('div', { className: 'flex flex-wrap items-center gap-2', children: [
+      jsx('button', {
+        type: 'button', className: `${button} ${online ? 'bg-(--chrome-action-hover)' : ''}`, disabled: busy, 'aria-pressed': online,
+        onClick: () => act(['decision', 'presence', online ? 'off' : 'on']),
+        children: online ? 'Online' : 'Offline',
+      }),
+      jsx('span', { className: 'text-(--ui-text-tertiary)', children: online
+        ? `Standups every 20 minutes. Turns itself off after an hour without interaction. Online since ${formatClockTime(snapshot.presence.since)}.`
+        : 'Go online to get standups every 20 minutes.' }),
+    ] }) : null,
     body,
+    active && standup ? jsxs('section', { className: 'flex flex-col gap-1 rounded border border-(--ui-stroke-secondary) p-3', 'aria-label': 'Latest standup', children: [
+      jsx('div', { className: 'font-medium', children: `Latest standup · ${formatClockTime(snapshot.standup.ts)}` }),
+      standup.kanban?.available
+        ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: `Kanban: ${Object.entries(standup.kanban.totals || {}).map(([status, count]) => `${count} ${status}`).join(', ') || 'no tasks'}` })
+        : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Kanban could not be read.' }),
+      standup.attention?.length
+        ? jsx('ul', { className: 'list-disc pl-5', children: standup.attention.map((item) => jsx('li', { children: item }, item)) })
+        : jsx('div', { children: 'Nothing needs attention.' }),
+    ] }) : null,
   ] })
 }
 
@@ -4918,6 +4998,7 @@ function DecisionHudPane({ rest }) {
   const { boards, error: boardsError, refresh: refreshBoards } = useKanbanBoards()
 
   React.useEffect(() => startNewDecisionToastWatcher(), [])
+  React.useEffect(() => startCadenceWatchers(), [])
 
   React.useEffect(() => {
     if (!selectedBoard && boards.length > 0) {
@@ -5411,7 +5492,7 @@ export default {
         id: 'decision-hud-day-route',
         area: ROUTES_AREA,
         data: { path: '/decision-hud/day' },
-        render: () => jsx(DayPane, {}),
+        render: () => jsxs(React.Fragment, { children: [jsx(CadenceWatchers, {}, 'watchers'), jsx(DayPane, {}, 'day')] }),
       },
       {
         id: 'spec-digest-route',
