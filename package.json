@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:setup": "npm i --no-save react@19 react-dom@19 jsdom && node test/stubs/install.mjs"
   }
 }

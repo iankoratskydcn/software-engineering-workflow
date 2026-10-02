@@ -1,0 +1,17 @@
+{
+  "criteria": [
+    "Warning appears when stock is below threshold."
+  ],
+  "decision": {
+    "max": 40,
+    "min": 5,
+    "prompt": "Default low-stock threshold (% of typical monthly volume):",
+    "type": "slider",
+    "value": 15
+  },
+  "id": "lowstock-warn",
+  "kind": "story",
+  "parent_id": "lowstock",
+  "status": "draft",
+  "title": "Dashboard warns when stock drops below threshold."
+}

@@ -1,0 +1,11 @@
+{
+  "criteria": [
+    "Feed is polled every 15 minutes.",
+    "Deltas over 2% are flagged for review."
+  ],
+  "id": "sync-15min",
+  "kind": "story",
+  "parent_id": "sync",
+  "status": "draft",
+  "title": "Box counts sync from the warehouse feed every 15 minutes."
+}

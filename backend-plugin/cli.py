@@ -25,6 +25,17 @@ try:
         _cmd_spec_tree, _cmd_spec_seed_demo,
     )
     from .cli_workflow_cmds import _cmd_workflow_seed_demo
+    from .cli_observe_cmds import (
+        _cmd_observe_add, _cmd_observe_list, _cmd_observe_verify, _cmd_observe_checkpoint,
+        OBSERVE_AUTHORS, OBSERVE_KINDS,
+    )
+    from .cli_day_cmds import (
+        _cmd_day_plan, _cmd_day_start, _cmd_day_status, _cmd_day_hat, _cmd_day_end, DAY_HATS,
+    )
+    from .cli_presence_cmds import (
+        _cmd_presence_status, _cmd_presence_on, _cmd_presence_off, _cmd_presence_touch,
+    )
+    from .cli_observer_cmds import _cmd_observer_standup, _cmd_observer_latest
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -40,6 +51,17 @@ except ImportError:
         _cmd_spec_tree, _cmd_spec_seed_demo,
     )
     from cli_workflow_cmds import _cmd_workflow_seed_demo  # type: ignore[import-not-found]
+    from cli_observe_cmds import (  # type: ignore[import-not-found]
+        _cmd_observe_add, _cmd_observe_list, _cmd_observe_verify, _cmd_observe_checkpoint,
+        OBSERVE_AUTHORS, OBSERVE_KINDS,
+    )
+    from cli_day_cmds import (  # type: ignore[import-not-found]
+        _cmd_day_plan, _cmd_day_start, _cmd_day_status, _cmd_day_hat, _cmd_day_end, DAY_HATS,
+    )
+    from cli_presence_cmds import (  # type: ignore[import-not-found]
+        _cmd_presence_status, _cmd_presence_on, _cmd_presence_off, _cmd_presence_touch,
+    )
+    from cli_observer_cmds import _cmd_observer_standup, _cmd_observer_latest  # type: ignore[import-not-found]
 
 _TRIAGE_SYSTEM_PROMPT = (
     "You triage raw problem reports into a bounded owner decision for a human "
@@ -434,6 +456,70 @@ def setup(p) -> None:
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--root-title", default=None, dest="root_title")
     v.set_defaults(func=_cmd_workflow_seed_demo)
+
+    observe = verbs.add_parser("observe", help="Append-only observation log (no edit or delete verbs exist)")
+    observe_verbs = observe.add_subparsers(dest="observe_verb", required=True)
+    v = observe_verbs.add_parser("add", help="Append one record; to correct one, append with --supersedes")
+    v.add_argument("--kind", required=True, choices=OBSERVE_KINDS)
+    v.add_argument("--author", required=True, choices=OBSERVE_AUTHORS)
+    v.add_argument("--data", default=None, help="JSON object")
+    v.add_argument("--feature-id", default=None, dest="feature_id")
+    v.add_argument("--day", default=None, help="YYYY-MM-DD")
+    v.add_argument("--block", type=int, default=None)
+    v.add_argument("--hour", type=int, default=None)
+    v.add_argument("--supersedes", default=None, help="id of the record this one corrects")
+    v.set_defaults(func=_cmd_observe_add)
+    v = observe_verbs.add_parser("list", help="List records, oldest first")
+    v.add_argument("--kind", default=None)
+    v.add_argument("--feature-id", default=None, dest="feature_id")
+    v.add_argument("--since-seq", type=int, default=None, dest="since_seq")
+    v.add_argument("--limit", type=int, default=None, help="keep only the newest N")
+    v.set_defaults(func=_cmd_observe_list)
+    v = observe_verbs.add_parser("verify", help="Check the hash chain and every confirmed checkpoint")
+    v.set_defaults(func=_cmd_observe_verify)
+    v = observe_verbs.add_parser("checkpoint", help="Confirm the log's current head (requires --actor-token)")
+    v.add_argument("--actor-token", required=True, dest="actor_token",
+                   help="Capability token from 'hermes decision issue-token'; refused in delegated-child processes")
+    v.set_defaults(func=_cmd_observe_checkpoint)
+
+    day = verbs.add_parser("day", help="Daily cadence clock: plan, start, status, hat, end")
+    day_verbs = day.add_subparsers(dest="day_verb", required=True)
+    v = day_verbs.add_parser("plan", help="Preview the block layout for a day (saves nothing)")
+    v.add_argument("--hours", type=int, required=True, help="hours available today")
+    v.add_argument("--at", default=None, help="ISO-8601 start time (default: now)")
+    v.set_defaults(func=_cmd_day_plan)
+    v = day_verbs.add_parser("start", help="Start the day: lay out its blocks and hours")
+    v.add_argument("--hours", type=int, required=True, help="hours available today")
+    v.add_argument("--at", default=None, help="ISO-8601 start time (default: now)")
+    v.set_defaults(func=_cmd_day_start)
+    v = day_verbs.add_parser("status", help="Where now falls in the active day: hour, ceremony, countdown")
+    v.add_argument("--now", default=None, help="ISO-8601 time to evaluate (default: now)")
+    v.set_defaults(func=_cmd_day_status)
+    v = day_verbs.add_parser("hat", help="Record which hat you are wearing now")
+    v.add_argument("--hat", required=True, choices=DAY_HATS)
+    v.set_defaults(func=_cmd_day_hat)
+    v = day_verbs.add_parser("end", help="End the active day")
+    v.set_defaults(func=_cmd_day_end)
+
+    presence_group = verbs.add_parser("presence", help="The online switch (turns itself off after an hour idle)")
+    presence_verbs = presence_group.add_subparsers(dest="presence_verb", required=True)
+    for name, handler, text in (
+        ("status", _cmd_presence_status, "Show whether you are online (settles an idle expiry)"),
+        ("on", _cmd_presence_on, "Go online"),
+        ("off", _cmd_presence_off, "Go offline"),
+        ("touch", _cmd_presence_touch, "Heartbeat: you interacted (never turns the switch on)"),
+    ):
+        v = presence_verbs.add_parser(name, help=text)
+        v.add_argument("--now", default=None, help="ISO-8601 time to use (default: now)")
+        v.set_defaults(func=handler)
+
+    observer_group = verbs.add_parser("observer", help="Read-only standup reports (one record per 20-minute slot)")
+    observer_verbs = observer_group.add_subparsers(dest="observer_verb", required=True)
+    v = observer_verbs.add_parser("standup", help="Report this slot's standup if due; skips when offline, in a retro hour, or already reported")
+    v.add_argument("--now", default=None, help="ISO-8601 time to use (default: now)")
+    v.set_defaults(func=_cmd_observer_standup)
+    v = observer_verbs.add_parser("latest", help="The newest standup of the active day")
+    v.set_defaults(func=_cmd_observer_latest)
 
     p.set_defaults(func=lambda args: p.print_help())
 

@@ -1,0 +1,8 @@
+{
+  "criteria": [],
+  "id": "lowstock",
+  "kind": "feature",
+  "parent_id": "inventory",
+  "status": "draft",
+  "title": "Low-stock threshold"
+}

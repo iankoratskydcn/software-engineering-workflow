@@ -1,0 +1,7 @@
+{
+  "name": "@hermes/plugin-sdk",
+  "version": "0.0.0-test-stub",
+  "private": true,
+  "type": "module",
+  "main": "index.js"
+}
