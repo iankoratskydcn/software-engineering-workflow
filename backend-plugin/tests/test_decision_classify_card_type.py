@@ -129,3 +129,14 @@ def test_invalid_answers_json_is_reported_not_raised(tmp_path, monkeypatch):
     result = json.loads(mod.decision_classify_card_type(bucket="scalar", answers_json="{not json"))
     assert result["ok"] is False
     assert "answers_json" in result["error"]
+
+
+def test_non_object_answers_json_is_reported_not_raised(tmp_path, monkeypatch):
+    """answers_json is valid JSON but not an object (true/42/"x"/[1]) --
+    must report {"ok": false, ...}, not crash with an uncaught TypeError/
+    ValueError from dict(answers) on a non-mapping."""
+    mod = _import_mcp_module(tmp_path, monkeypatch)
+    for bad in ("true", "42", '"x"', "[1]"):
+        result = json.loads(mod.decision_classify_card_type(bucket="scalar", answers_json=bad))
+        assert result["ok"] is False, bad
+        assert "answers_json" in result["error"], bad

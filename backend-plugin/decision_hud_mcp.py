@@ -163,6 +163,8 @@ def decision_classify_card_type(bucket: str | None = None, answers_json: str | N
         answers = db.parse_json_kwarg(answers_json, "answers_json") or {}
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)})
+    if not isinstance(answers, dict):
+        return json.dumps({"ok": False, "error": "answers_json must decode to a JSON object"})
     verdict = db._card_type_verdict(bucket, dict(answers))
     result: dict[str, object] = {"ok": True, "status": verdict["status"]}
     if verdict["status"] == "resolved":
