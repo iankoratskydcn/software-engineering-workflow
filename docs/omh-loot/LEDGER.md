@@ -54,6 +54,13 @@ This repo is a Decision HUD plugin + docs repo with no Python package or pytest 
 Looted code sits in `vendor/omh/` (frozen verbatim). Rewired code goes elsewhere (proposed
 `ext/`) so `vendor/` stays diffable against upstream. Revisit if you want a different layout.
 
+## Known defects in vendored code (from PR #19 review; fix in `ext/`, test-first)
+
+1. `jev_ask_client.py` (~L324): a successful reply returns the parsed object without key scrubbing, so a server/proxy echo of the key (e.g. in `model`) would pass through. Failing test first: success reply containing the key comes back redacted.
+2. `jev_presets.py` (~L301) `_done_check_ladder`: supports=0.02, contradicts=0.49, says_nothing=0.49 yields `no_objection`. Failing test first, then gate on positive support.
+
+`vendor/omh/` stays verbatim; these are fixed only in the rewired copy.
+
 ## Next steps
 
 1. Characterization tests for batch 1 (`jev_ask_client` first: redirect refusal, size/deadline bounds, key redaction, retry matrix).
