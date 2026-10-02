@@ -22,7 +22,7 @@ try:
     from .cli_spec_cmds import (
         _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
-        _cmd_spec_tree, _cmd_spec_seed_demo,
+        _cmd_spec_tree, _cmd_spec_seed_demo, _cmd_spec_link_kanban, _cmd_spec_check_ready,
     )
     from .cli_workflow_cmds import _cmd_workflow_seed_demo
     from .cli_observe_cmds import (
@@ -48,7 +48,7 @@ except ImportError:
     from cli_spec_cmds import (  # type: ignore[import-not-found]
         _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
-        _cmd_spec_tree, _cmd_spec_seed_demo,
+        _cmd_spec_tree, _cmd_spec_seed_demo, _cmd_spec_link_kanban, _cmd_spec_check_ready,
     )
     from cli_workflow_cmds import _cmd_workflow_seed_demo  # type: ignore[import-not-found]
     from cli_observe_cmds import (  # type: ignore[import-not-found]
@@ -274,12 +274,25 @@ def setup(p) -> None:
     v.add_argument("--status", default=None, choices=["draft", "ready", "converted"])
     v.add_argument("--note", default=None)
     v.add_argument("--metadata-json", default=None, dest="metadata_json")
+    v.add_argument("--estimate", type=int, default=None, help="story points: 1, 2, 3, 5, 8 or 13")
+    v.add_argument("--clear-estimate", action="store_true", dest="clear_estimate", help="remove the estimate")
     v.set_defaults(func=_cmd_spec_update_node)
     v = spec_verbs.add_parser("set-criteria")
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--id", required=True)
     v.add_argument("--criteria-json", required=True, dest="criteria_json")
     v.set_defaults(func=_cmd_spec_set_criteria)
+    v = spec_verbs.add_parser("link-kanban", help="Link a node to a Kanban card; an empty --task-id unlinks")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.add_argument("--task-id", required=True, dest="task_id")
+    v.set_defaults(func=_cmd_spec_link_kanban)
+
+    v = spec_verbs.add_parser("check-ready", help="Definition of Ready for a node")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.set_defaults(func=_cmd_spec_check_ready)
+
     v = spec_verbs.add_parser("link-decision")
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--id", required=True)
