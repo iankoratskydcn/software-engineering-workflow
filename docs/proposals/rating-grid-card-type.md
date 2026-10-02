@@ -4,9 +4,10 @@ Status: **implemented** (v2 taxonomy). `rating_grid` is now the sole
 `continuous_independent` leaf in `_CARD_TYPE_RULES`, with an empty requires
 dict (needs zero discriminants — see
 `docs/card-type-decision-tree.md`). Renderer: `RatingGridCard` in
-`plugin.js`. Kept below as the original design record; the bucket name
-(`scalar` → `continuous_independent`) is the only material drift from what
-shipped.
+`plugin.js`. Kept below as the original design record; two things drifted
+from what shipped — the bucket name (`scalar` → `continuous_independent`)
+and the resolved-payload shape (wrapped under `values`, not flat — see the
+correction inline below).
 
 Original status: **proposal**. Nothing here exists in `db.py` or `plugin.js` today.
 Fills the one real gap found while building
@@ -109,8 +110,11 @@ the fixed sum).
 }
 ```
 
-Resolved payload: `{"feat_a": 8, "feat_b": 3, "feat_c": 6}` — no sum
-validation, unlike `constrained_budget_split`'s resolved payload.
+Resolved payload: `{"values": {"feat_a": 8, "feat_b": 3, "feat_c": 6}}` —
+wrapped under `values`, matching every other multi-field card in this
+codebase (`AnchorAdjustCard`, `FieldGroupCard`); the flat example
+originally written here was never validated against that convention. No
+sum validation, unlike `constrained_budget_split`'s resolved payload.
 
 ## Where this lands on the tree / matrix
 

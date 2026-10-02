@@ -47,4 +47,18 @@ for (const [cardType, fnName] of Object.entries(NEW_CARDS)) {
   )
 }
 
+// Codex regression (PR #23): the guard originally only checked
+// choices[0]/[1] !== undefined, so a 3- or 4-choice push (push_decision
+// accepts 2-4 in general) silently dropped every choice past index 1
+// instead of falling back to the plain list.
+{
+  const match = source.match(/function BinaryToggleCard\([\s\S]*?\n\}\n/)
+  assert.ok(match, 'BinaryToggleCard must be defined')
+  assert.match(
+    match[0],
+    /choices\.length\s*!==\s*2/,
+    'BinaryToggleCard must reject choice lists that are not exactly 2 long, not just check [0]/[1] are defined'
+  )
+}
+
 console.log('v2 card type definitions (binary_toggle/ranked_score/spotlight_pick/cluster_overlap/bipartite_assign/field_group/precedence_graph/rating_grid) structural test passed')

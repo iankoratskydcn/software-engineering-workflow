@@ -2591,13 +2591,16 @@ function BinaryToggleCard({ decision, onResolve, resolving }) {
   // choices[0] is the "on" state, choices[1] the "off" state. No
   // card_payload needed, just a Switch instead of the plain button list.
   const choices = safeArray(decision.choices)
-  const onLabel = choices[0]
-  const offLabel = choices[1]
   const [checked, setChecked] = React.useState(true)
 
-  if (onLabel === undefined || offLabel === undefined) {
+  // push_decision accepts 2-4 choices in general; binary_toggle only
+  // means something for exactly 2 -- 3+ choices fall back to the plain
+  // list instead of silently dropping everything past index 1.
+  if (choices.length !== 2) {
     return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
   }
+  const onLabel = choices[0]
+  const offLabel = choices[1]
 
   return jsxs('div', {
     className: 'flex flex-col items-center gap-3 py-1',
