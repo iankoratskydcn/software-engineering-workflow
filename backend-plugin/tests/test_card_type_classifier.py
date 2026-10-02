@@ -43,6 +43,26 @@ def test_zone_select_detected_from_tier_choices():
     _assert_survives_engine(result)
 
 
+def test_zone_select_result_includes_derived_payload():
+    """ZoneSelectCard needs card_payload.zones or it falls back to the plain
+    list (plugin.js) -- the classifier must derive it, not just the verdict."""
+    result = card_type_classifier.classify("How severe is this bug?", ["Low", "Medium", "High"])
+    assert result["card_payload"] == {
+        "zones": [
+            {"key": "low", "label": "Low"},
+            {"key": "medium", "label": "Medium"},
+            {"key": "high", "label": "High"},
+        ]
+    }
+
+
+def test_tier_substring_inside_unrelated_word_is_not_a_false_positive():
+    """'Workflow A' contains the literal substring 'low' (inside 'flow') --
+    a plain substring check wrongly reads that as a tier label. Must not."""
+    result = card_type_classifier.classify("Which workflow?", ["Workflow A", "Workflow B"])
+    assert result is None
+
+
 def test_balance_scale_detected_from_two_options_and_tradeoff_wording():
     result = card_type_classifier.classify(
         "Strict schema vs loose schema — which should we weigh in favor of?",
@@ -51,6 +71,36 @@ def test_balance_scale_detected_from_two_options_and_tradeoff_wording():
     assert result is not None
     assert result["card_type"] == "balance_scale"
     _assert_survives_engine(result)
+
+
+def test_balance_scale_result_includes_payload_note():
+    """considerations is a THIRD list distinct from the two choices -- the
+    classifier has no source for it and must say so, not silently omit it."""
+    result = card_type_classifier.classify(
+        "Strict schema vs loose schema?", ["Strict schema", "Loose schema"]
+    )
+    assert "card_payload" not in result
+    assert "considerations" in result["payload_note"]
+
+
+def test_balance_scale_detects_inflected_weigh_forms():
+    """Canonical tradeoff phrasing ('weighing X against Y', 'X outweighs Y')
+    must match, not just the bare token 'weigh'."""
+    for question in (
+        "Weighing cost against reliability, which should we choose?",
+        "Which option outweighs the other?",
+    ):
+        result = card_type_classifier.classify(question, ["Cost", "Reliability"])
+        assert result is not None, question
+        assert result["card_type"] == "balance_scale"
+
+
+def test_two_tier_choices_with_comparison_wording_prefers_zone_select():
+    """Both detectors' raw conditions are satisfied here (2 tier choices +
+    'vs' wording) -- zone_select must win outright, not cancel out to None."""
+    result = card_type_classifier.classify("Should the setting be low vs high?", ["Low", "High"])
+    assert result is not None
+    assert result["card_type"] == "zone_select"
 
 
 def test_two_plain_choices_with_no_tradeoff_wording_is_not_classified():

@@ -123,7 +123,11 @@ def decision_classify_card_type(question: str, choices: list[str]) -> str:
     On a hit, the returned card_type/card_type_bucket/card_type_answers can
     be passed straight through to decision_push — they are pre-verified
     against the same engine push_decision enforces, so the push cannot fail
-    _verify_card_type.
+    _verify_card_type. A hit may also include card_payload (fully derived,
+    e.g. zone_select's zones — pass it straight through too) and/or
+    payload_note (the card's renderer needs payload fields this tool can't
+    derive, e.g. balance_scale's considerations — supply them yourself or
+    the push renders as the plain button list despite the card_type match).
 
     Args:
         question: the exact text you intend to pass to decision_push.
