@@ -146,7 +146,7 @@ adapter is the one refactor that unlocks everything else.
 
 ## Open questions for you
 
-1. ~~Is `swe.html` available to commit?~~ Committed as `docs/prototype/swe.dc.html`. It needs `support.js`, the Claude Design `x-dc` runtime, which is not in the repo yet.
+1. ~~Is `swe.html` available to commit?~~ Committed as `docs/prototype/swe.dc.html`. Runtime `docs/prototype/support.js` also committed. It renders (verified headless), but loads React 18 and Babel from unpkg at runtime, so it needs network. MindMap canvas is a placeholder in the prototype; the other tabs carry hardcoded demo data and in-memory state only.
 2. Browser support: is Chromium-only acceptable for the standalone file?
 3. Should the suite data live in the *same* repo as the code being documented
    (`.swe/` folder), or a separate docs-only repo?
