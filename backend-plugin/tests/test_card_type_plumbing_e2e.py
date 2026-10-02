@@ -24,11 +24,10 @@ import db  # noqa: E402
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
-_SCALAR_ANSWERS = {
+_CONTINUOUS_SINGLE_ANSWERS = {
     "is_interval_not_point": False,
-    "is_fixed_total_split": False,
     "needs_confidence_axis": False,
-    "prefers_visual_segments": False,
+    "has_safe_defaults_to_confirm": False,
 }
 
 
@@ -103,8 +102,8 @@ def test_mcp_decision_push_forwards_card_type_bucket_and_answers(tmp_path, monke
     raw = mod.decision_push(
         project_id=pid, question="Pick cache TTL", choices=["Confirm", "Cancel"],
         card_type="scalar_slider",
-        card_type_bucket="scalar",
-        card_type_answers_json=json.dumps(_SCALAR_ANSWERS),
+        card_type_bucket="continuous_single",
+        card_type_answers_json=json.dumps(_CONTINUOUS_SINGLE_ANSWERS),
     )
     result = json.loads(raw)
     assert result["ok"] is True, result
@@ -120,8 +119,8 @@ def test_mcp_decision_push_still_rejects_mismatched_card_type(tmp_path, monkeypa
     raw = mod.decision_push(
         project_id=pid, question="Pick cache TTL", choices=["Confirm", "Cancel"],
         card_type="quad_choice",  # answers actually resolve to scalar_slider
-        card_type_bucket="scalar",
-        card_type_answers_json=json.dumps(_SCALAR_ANSWERS),
+        card_type_bucket="continuous_single",
+        card_type_answers_json=json.dumps(_CONTINUOUS_SINGLE_ANSWERS),
     )
     result = json.loads(raw)
     assert result["ok"] is False
@@ -133,7 +132,7 @@ def test_mcp_decision_push_rejects_invalid_answers_json(tmp_path, monkeypatch):
     pid = _mkproject(tmp_path)
     raw = mod.decision_push(
         project_id=pid, question="q?", choices=["a", "b"],
-        card_type="scalar_slider", card_type_bucket="scalar",
+        card_type="scalar_slider", card_type_bucket="continuous_single",
         card_type_answers_json="{not valid json",
     )
     result = json.loads(raw)
@@ -190,8 +189,8 @@ def test_cli_push_forwards_card_type_bucket_and_answers(tmp_path, monkeypatch):
     --card-type-bucket/--card-type-answers hard-failed. GREEN after."""
     result = _run_cli_push(tmp_path, monkeypatch, [
         "--card-type", "scalar_slider",
-        "--card-type-bucket", "scalar",
-        "--card-type-answers", json.dumps(_SCALAR_ANSWERS),
+        "--card-type-bucket", "continuous_single",
+        "--card-type-answers", json.dumps(_CONTINUOUS_SINGLE_ANSWERS),
     ])
     assert result["ok"] is True, result
     assert result["decision"]["card_type"] == "scalar_slider"
@@ -200,8 +199,8 @@ def test_cli_push_forwards_card_type_bucket_and_answers(tmp_path, monkeypatch):
 def test_cli_push_still_rejects_mismatched_card_type(tmp_path, monkeypatch):
     result = _run_cli_push(tmp_path, monkeypatch, [
         "--card-type", "quad_choice",
-        "--card-type-bucket", "scalar",
-        "--card-type-answers", json.dumps(_SCALAR_ANSWERS),
+        "--card-type-bucket", "continuous_single",
+        "--card-type-answers", json.dumps(_CONTINUOUS_SINGLE_ANSWERS),
     ])
     assert result["ok"] is False
     message = result["error"]["message"]
@@ -210,7 +209,7 @@ def test_cli_push_still_rejects_mismatched_card_type(tmp_path, monkeypatch):
 def test_cli_push_rejects_invalid_answers_json(tmp_path, monkeypatch):
     result = _run_cli_push(tmp_path, monkeypatch, [
         "--card-type", "scalar_slider",
-        "--card-type-bucket", "scalar",
+        "--card-type-bucket", "continuous_single",
         "--card-type-answers", "{not valid json",
     ])
     assert result["ok"] is False

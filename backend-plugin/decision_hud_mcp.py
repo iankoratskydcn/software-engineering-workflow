@@ -76,9 +76,10 @@ def decision_push(project_id: str, question: str, choices: list[str],
         card_payload_json: optional JSON string with card-specific config
             (e.g. '{"considerations": ["Needs strict schema", ...]}' for
             balance_scale). Must be valid JSON if provided.
-        card_type_bucket: the card-type-gate taxonomy bucket (e.g. "scalar",
-            "discrete_choice") that card_type belongs to. Required whenever
-            card_type is set.
+        card_type_bucket: the taxonomy bucket (e.g. "continuous_single",
+            "categorical_constrained" -- see decision_classify_card_type's
+            own docstring for the full list) that card_type belongs to.
+            Required whenever card_type is set.
         card_type_answers_json: JSON string of the discriminant answers dict
             for card_type_bucket (e.g. '{"is_interval_not_point": false, ...}').
             Must resolve, together with card_type_bucket, to exactly the
@@ -141,10 +142,15 @@ def decision_classify_card_type(bucket: str | None = None, answers_json: str | N
                     (the plain choice list).
 
     Args:
-        bucket: one of the card-type-gate buckets (e.g. "scalar",
-            "discrete_choice", "compare_tradeoff", "categorize",
-            "rank_sequence", "mapping", "compose", "membership", "info_only",
-            "recommend_override", "reactive_config", "none_of_these"). Omit
+        bucket: one of the taxonomy buckets -- a value_type x cardinality
+            cut ("continuous_single", "continuous_independent",
+            "continuous_constrained", "categorical_single",
+            "categorical_independent", "categorical_constrained",
+            "ordinal_constrained", "relational_constrained",
+            "compound_single"), plus "info_only" (the one pre-gate bucket
+            outside that grid -- "is anything being decided at all").
+            Single/independent are structurally absent for ordinal and
+            relational (both need >=2 related items by definition). Omit
             to list all buckets instead of resolving one.
         answers_json: JSON string of {discriminant_key: true/false} covering
             every key the bucket listing names. Required when bucket is set.

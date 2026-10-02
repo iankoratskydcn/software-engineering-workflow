@@ -1,5 +1,15 @@
 # Proposal: deterministic resolution for `card_type_selector.py`'s `incomplete` / `ambiguous` gate outcomes
 
+**v2 superseded this doc's bucket names.** The 12 ad-hoc buckets this doc
+reasons about (`scalar`, `discrete_choice`, `none_of_these`, etc.) were
+replaced by a value_type × cardinality grid — see
+`docs/card-type-decision-tree.md`. The structural argument below
+(`_CARD_TYPE_RULES` partitions each bucket with no overlap, proven
+exhaustively now in
+`test_card_type_enforcement.py::test_every_bucket_rule_set_is_total_and_partitioned`)
+and the tie-break procedure still apply to the new buckets; only the names
+changed. Kept as the original design record.
+
 Status: proposal (no code changed by this doc). Source gate:
 `~/.hermes/skills/decision-hud-cards/card-type-gate/scripts/card_type_selector.py`
 (23 card types, forward-chaining `RULES` list, `verdict()` returns
