@@ -1,0 +1,8 @@
+{
+  "criteria": [],
+  "id": "inventory",
+  "kind": "epic",
+  "parent_id": "root",
+  "status": "draft",
+  "title": "Inventory Accuracy"
+}

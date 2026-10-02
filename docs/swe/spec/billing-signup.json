@@ -1,0 +1,28 @@
+{
+  "criteria": [
+    "A default model is assigned at signup."
+  ],
+  "decision": {
+    "options": [
+      {
+        "id": "flat",
+        "label": "Flat monthly"
+      },
+      {
+        "id": "usage",
+        "label": "Usage-based"
+      },
+      {
+        "id": "hybrid",
+        "label": "Hybrid"
+      }
+    ],
+    "prompt": "Default billing model for new signups:",
+    "type": "choice"
+  },
+  "id": "billing-signup",
+  "kind": "story",
+  "parent_id": "billing-default",
+  "status": "draft",
+  "title": "New signups get a default billing model assigned."
+}

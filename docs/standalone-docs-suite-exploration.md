@@ -144,11 +144,16 @@ adapter is the one refactor that unlocks everything else.
    standalone -> push -> pull -> Hermes -> push -> pull -> standalone.
 6. Only then decide what to prune from this repo.
 
-## Open questions for you
+## Decisions
 
-1. ~~Is `swe.html` available to commit?~~ Committed as `docs/prototype/swe.dc.html`. Runtime `docs/prototype/support.js` also committed. It renders (verified headless), but loads React 18 and Babel from unpkg at runtime, so it needs network. MindMap canvas is a placeholder in the prototype; the other tabs carry hardcoded demo data and in-memory state only.
-2. Browser support: is Chromium-only acceptable for the standalone file?
-3. Should the suite data live in the *same* repo as the code being documented
-   (`.swe/` folder), or a separate docs-only repo?
-4. Decision links and MindMap choice/rank/scalar widgets: keep or drop in standalone?
-5. Should Hermes keep SQLite as a cache, or read files directly?
+1. Standalone file is Chromium-only for write access. Other browsers get a read-only folder fallback.
+2. Suite data lives in the documented repo, under `docs/swe/`.
+3. Decision links and MindMap choice/rank/scalar widgets are kept.
+4. Repo files are the only source of truth. Any Hermes SQLite is a disposable index rebuilt from files. The live decision queue stays in SQLite.
+
+## Spike (this branch)
+
+- `swe-suite/swe.html`: one offline file, vanilla JS, no build step. Opens a repo folder, reads `docs/swe/`, renders MindMap and Spec Digest. Read-only.
+- `docs/swe/`: sample data. `project.json` plus one `spec/<id>.json` per node, optional sibling `<id>.md` for prose. No timestamps (git has history).
+- Validation fails closed: bad JSON, unknown kind, missing parent, duplicate id, id/filename mismatch, multiple roots, cycles, and size limits all show as errors. File text is rendered with `textContent` only.
+- Storage is already behind one `read/paths/size` interface, the seed of the adapter.
