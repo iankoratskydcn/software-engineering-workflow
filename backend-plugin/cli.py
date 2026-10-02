@@ -29,6 +29,9 @@ try:
         _cmd_observe_add, _cmd_observe_list, _cmd_observe_verify, _cmd_observe_checkpoint,
         OBSERVE_AUTHORS, OBSERVE_KINDS,
     )
+    from .cli_day_cmds import (
+        _cmd_day_plan, _cmd_day_start, _cmd_day_status, _cmd_day_hat, _cmd_day_end, DAY_HATS,
+    )
 except ImportError:
     # See __init__.py's matching try/except for the full explanation
     # (GAP G3 — pytest-collection-only artifact, production loader unaffected).
@@ -47,6 +50,9 @@ except ImportError:
     from cli_observe_cmds import (  # type: ignore[import-not-found]
         _cmd_observe_add, _cmd_observe_list, _cmd_observe_verify, _cmd_observe_checkpoint,
         OBSERVE_AUTHORS, OBSERVE_KINDS,
+    )
+    from cli_day_cmds import (  # type: ignore[import-not-found]
+        _cmd_day_plan, _cmd_day_start, _cmd_day_status, _cmd_day_hat, _cmd_day_end, DAY_HATS,
     )
 
 _TRIAGE_SYSTEM_PROMPT = (
@@ -467,6 +473,25 @@ def setup(p) -> None:
     v.add_argument("--actor-token", required=True, dest="actor_token",
                    help="Capability token from 'hermes decision issue-token'; refused in delegated-child processes")
     v.set_defaults(func=_cmd_observe_checkpoint)
+
+    day = verbs.add_parser("day", help="Daily cadence clock: plan, start, status, hat, end")
+    day_verbs = day.add_subparsers(dest="day_verb", required=True)
+    v = day_verbs.add_parser("plan", help="Preview the block layout for a day (saves nothing)")
+    v.add_argument("--hours", type=int, required=True, help="hours available today")
+    v.add_argument("--at", default=None, help="ISO-8601 start time (default: now)")
+    v.set_defaults(func=_cmd_day_plan)
+    v = day_verbs.add_parser("start", help="Start the day: lay out its blocks and hours")
+    v.add_argument("--hours", type=int, required=True, help="hours available today")
+    v.add_argument("--at", default=None, help="ISO-8601 start time (default: now)")
+    v.set_defaults(func=_cmd_day_start)
+    v = day_verbs.add_parser("status", help="Where now falls in the active day: hour, ceremony, countdown")
+    v.add_argument("--now", default=None, help="ISO-8601 time to evaluate (default: now)")
+    v.set_defaults(func=_cmd_day_status)
+    v = day_verbs.add_parser("hat", help="Record which hat you are wearing now")
+    v.add_argument("--hat", required=True, choices=DAY_HATS)
+    v.set_defaults(func=_cmd_day_hat)
+    v = day_verbs.add_parser("end", help="End the active day")
+    v.set_defaults(func=_cmd_day_end)
 
     p.set_defaults(func=lambda args: p.print_help())
 
