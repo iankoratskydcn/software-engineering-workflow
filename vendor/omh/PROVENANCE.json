@@ -1,0 +1,11 @@
+{
+  "source": "rlaope/oh-my-hermes",
+  "source_commit": "4ab239b10ae37763a774168ad25f091005c5d738",
+  "license": "MIT",
+  "usage": "verbatim copy; no modifications in this commit",
+  "files": [
+    {"upstream_path": "src/plugin_bundle/omh/jev_ask_client.py", "local_path": "vendor/omh/plugin_bundle/omh/jev_ask_client.py", "sha256": "3bf95028af3ef522d64353bcb8f87c4fdca56d547504ec73f253762d3e990186"},
+    {"upstream_path": "src/plugin_bundle/omh/jev_presets.py", "local_path": "vendor/omh/plugin_bundle/omh/jev_presets.py", "sha256": "92318204ceafcc93ddfaa1eecb4d8e10bde9b87bb34ee185e2176e6c9bc5bca8"},
+    {"upstream_path": "src/plugin_bundle/omh/jev_consent.py", "local_path": "vendor/omh/plugin_bundle/omh/jev_consent.py", "sha256": "3d894f9994382bdfd57d192bcc446a0f76b9150cab5c6919552ec1fd3bd58732"}
+  ]
+}
