@@ -1,6 +1,14 @@
 # `rating_grid` card type — proposal
 
-Status: **proposal**. Nothing here exists in `db.py` or `plugin.js` today.
+Status: **implemented** (v2 taxonomy). `rating_grid` is now the sole
+`continuous_independent` leaf in `_CARD_TYPE_RULES`, with an empty requires
+dict (needs zero discriminants — see
+`docs/card-type-decision-tree.md`). Renderer: `RatingGridCard` in
+`plugin.js`. Kept below as the original design record; the bucket name
+(`scalar` → `continuous_independent`) is the only material drift from what
+shipped.
+
+Original status: **proposal**. Nothing here exists in `db.py` or `plugin.js` today.
 Fills the one real gap found while building
 `docs/card-type-decision-tree.md`'s coverage matrix: **Continuous ×
 Independent set** — no card type lets several items each get their own

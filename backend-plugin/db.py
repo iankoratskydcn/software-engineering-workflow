@@ -1854,48 +1854,95 @@ def _row_to_dict(row: sqlite3.Row, _proj: Optional[dict[str, str]] = None) -> di
 # `require_batch_approval` applies to Rule 1 — a UI-only convention (a
 # skill doc an agent can skip) was explicitly rejected as insufficient.
 _CARD_TYPE_RULES: list[tuple[str, str, dict]] = [
-    ("wire_match", "mapping", {"one_to_one_sets": True}),
-
-    ("range_slider", "scalar", {"is_interval_not_point": True}),
-    ("constrained_budget_split", "scalar",
-     {"is_interval_not_point": False, "is_fixed_total_split": True, "prefers_visual_segments": False}),
-    ("stacked_bar_split", "scalar",
-     {"is_interval_not_point": False, "is_fixed_total_split": True, "prefers_visual_segments": True}),
-    ("confidence_rating", "scalar",
-     {"is_interval_not_point": False, "is_fixed_total_split": False, "needs_confidence_axis": True}),
-    ("scalar_slider", "scalar",
-     {"is_interval_not_point": False, "is_fixed_total_split": False, "needs_confidence_axis": False}),
-
-    ("quad_choice", "discrete_choice", {"is_and_or_neither_logic": True}),
-    ("multi_select", "discrete_choice",
-     {"is_and_or_neither_logic": False, "is_independent_subset": True}),
-    ("zone_select", "discrete_choice",
-     {"is_and_or_neither_logic": False, "is_independent_subset": False, "is_quantized_few_levels": True}),
-
-    ("tree_placement", "categorize", {"is_tree_not_flat": True}),
-    ("matrix_2x2", "categorize", {"is_tree_not_flat": False, "is_two_axis_grid": True}),
-    ("sort_to_bin", "categorize", {"is_tree_not_flat": False, "is_two_axis_grid": False}),
-
-    ("timeline_placement", "rank_sequence", {"is_absolute_dates_not_relative": True}),
-    ("sequence_order", "rank_sequence", {"is_absolute_dates_not_relative": False}),
-
-    ("assemble_pieces", "compose", {"is_one_choice_per_slot": True}),
-
-    ("balance_scale", "compare_tradeoff", {"is_exactly_two_options": True}),
-    ("pairwise_duel", "compare_tradeoff",
-     {"is_exactly_two_options": False, "is_many_options_reduce": True}),
-    ("spider_compare", "compare_tradeoff",
-     {"is_exactly_two_options": False, "is_many_options_reduce": False, "is_multi_axis_no_dominant": True}),
-
-    ("venn_overlap", "membership", {"is_shared_vs_exclusive": True}),
-
-    ("anchor_adjust", "recommend_override", {"has_safe_defaults_to_confirm": True}),
-
-    ("mode_radial_gauge", "reactive_config", {"cross_card_reactive": True}),
-
+    # v2 taxonomy (2026-10): buckets are now a value_type x cardinality cut
+    # (continuous/categorical/ordinal/relational/compound x single/
+    # independent/constrained) instead of 12 ad-hoc per-shape names. See
+    # docs/card-type-decision-tree.md for the full rationale and flowchart.
+    # `info_only` is the one bucket outside that grid -- a pre-gate checked
+    # before value_type even applies ("is anything being decided at all").
     ("context_readout", "info_only", {"is_pure_context_no_decision": True}),
 
-    ("mcq_context", "none_of_these", {}),
+    # continuous x single
+    ("range_slider", "continuous_single", {"is_interval_not_point": True}),
+    ("confidence_rating", "continuous_single",
+     {"is_interval_not_point": False, "needs_confidence_axis": True}),
+    ("anchor_adjust", "continuous_single",
+     {"is_interval_not_point": False, "needs_confidence_axis": False, "has_safe_defaults_to_confirm": True}),
+    ("scalar_slider", "continuous_single",
+     {"is_interval_not_point": False, "needs_confidence_axis": False, "has_safe_defaults_to_confirm": False}),
+
+    # continuous x independent -- one card type, no discriminants needed
+    # (an empty requires dict resolves unconditionally once this bucket is
+    # chosen, same mechanism "compound_single" below uses).
+    ("rating_grid", "continuous_independent", {}),
+
+    # continuous x constrained
+    ("stacked_bar_split", "continuous_constrained",
+     {"is_fixed_total_split": True, "prefers_visual_segments": True}),
+    ("constrained_budget_split", "continuous_constrained",
+     {"is_fixed_total_split": True, "prefers_visual_segments": False}),
+    ("spider_compare", "continuous_constrained",
+     {"is_fixed_total_split": False, "is_multi_axis_no_dominant": True}),
+    ("ranked_score", "continuous_constrained",
+     {"is_fixed_total_split": False, "is_multi_axis_no_dominant": False}),
+
+    # categorical x single
+    ("binary_toggle", "categorical_single", {"is_simple_boolean": True}),
+    ("quad_choice", "categorical_single",
+     {"is_simple_boolean": False, "is_and_or_neither_logic": True}),
+    ("zone_select", "categorical_single",
+     {"is_simple_boolean": False, "is_and_or_neither_logic": False, "is_quantized_few_levels": True}),
+    ("mode_radial_gauge", "categorical_single",
+     {"is_simple_boolean": False, "is_and_or_neither_logic": False, "is_quantized_few_levels": False,
+      "cross_card_reactive": True}),
+    ("mcq_context", "categorical_single",
+     {"is_simple_boolean": False, "is_and_or_neither_logic": False, "is_quantized_few_levels": False,
+      "cross_card_reactive": False}),
+
+    # categorical x independent
+    ("multi_select", "categorical_independent", {"is_independent_subset": True}),
+    ("tree_placement", "categorical_independent",
+     {"is_independent_subset": False, "is_tree_not_flat": True}),
+    ("matrix_2x2", "categorical_independent",
+     {"is_independent_subset": False, "is_tree_not_flat": False, "is_two_axis_grid": True}),
+    ("assemble_pieces", "categorical_independent",
+     {"is_independent_subset": False, "is_tree_not_flat": False, "is_two_axis_grid": False,
+      "is_one_choice_per_slot": True}),
+    ("sort_to_bin", "categorical_independent",
+     {"is_independent_subset": False, "is_tree_not_flat": False, "is_two_axis_grid": False,
+      "is_one_choice_per_slot": False}),
+
+    # categorical x constrained
+    ("balance_scale", "categorical_constrained", {"is_exactly_two_options": True}),
+    ("pairwise_duel", "categorical_constrained",
+     {"is_exactly_two_options": False, "is_many_options_reduce": True}),
+    ("spotlight_pick", "categorical_constrained",
+     {"is_exactly_two_options": False, "is_many_options_reduce": False}),
+
+    # ordinal x constrained (single/independent are structurally N/A --
+    # ordinal needs >=2 related items by definition)
+    ("timeline_placement", "ordinal_constrained", {"is_absolute_dates_not_relative": True}),
+    ("sequence_order", "ordinal_constrained", {"is_absolute_dates_not_relative": False}),
+
+    # relational x constrained (single/independent are structurally N/A --
+    # relational needs >=2 related items by definition)
+    ("precedence_graph", "relational_constrained", {"is_single_set_relation": True}),
+    ("wire_match", "relational_constrained",
+     {"is_single_set_relation": False, "one_to_one_sets": True}),
+    ("venn_overlap", "relational_constrained",
+     {"is_single_set_relation": False, "one_to_one_sets": False, "is_shared_vs_exclusive": True}),
+    ("cluster_overlap", "relational_constrained",
+     {"is_single_set_relation": False, "one_to_one_sets": False, "is_shared_vs_exclusive": False,
+      "is_group_membership_not_pairing": True}),
+    ("bipartite_assign", "relational_constrained",
+     {"is_single_set_relation": False, "one_to_one_sets": False, "is_shared_vs_exclusive": False,
+      "is_group_membership_not_pairing": False}),
+
+    # compound x single -- a value that's several linked fields (a date
+    # range, a schedule, a color), not one scalar and not one category.
+    # One card type, no discriminants needed (same empty-dict mechanism as
+    # continuous_independent above).
+    ("field_group", "compound_single", {}),
 ]
 
 
@@ -1907,8 +1954,11 @@ def _card_type_verdict(bucket: str, answers: dict) -> dict:
     bucket_rules = [(ct, reqs) for ct, b, reqs in _CARD_TYPE_RULES if b == bucket]
     if not bucket_rules:
         return {"status": "no_match", "open_questions": [], "matches": []}
-    if bucket == "none_of_these":
-        return {"status": "resolved", "open_questions": [], "matches": [("mcq_context", "")]}
+    # A rule with an empty requires dict (continuous_independent's
+    # rating_grid, compound_single's field_group) resolves unconditionally
+    # here -- needed/open_qs/hits below all fall out correctly for an empty
+    # dict with no special-case needed (all(() for k,v in {}.items()) is
+    # vacuously True), same as every other rule.
     needed = {q for _, reqs in bucket_rules for q in reqs}
     open_qs = sorted(q for q in needed if q not in answers)
     if open_qs:

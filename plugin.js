@@ -2586,6 +2586,614 @@ function TreePlacementCard({ decision, onResolve, resolving }) {
   })
 }
 
+function BinaryToggleCard({ decision, onResolve, resolving }) {
+  // decision.choices: exactly 2 labels, e.g. ["Enable", "Disable"] --
+  // choices[0] is the "on" state, choices[1] the "off" state. No
+  // card_payload needed, just a Switch instead of the plain button list.
+  const choices = safeArray(decision.choices)
+  const onLabel = choices[0]
+  const offLabel = choices[1]
+  const [checked, setChecked] = React.useState(true)
+
+  if (onLabel === undefined || offLabel === undefined) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col items-center gap-3 py-1',
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2.5',
+        children: [
+          jsx('span', {
+            className: 'text-[0.75rem]',
+            style: { color: checked ? 'var(--ui-text-tertiary)' : 'var(--ui-accent)', fontWeight: checked ? 400 : 600 },
+            children: safeText(offLabel),
+          }),
+          jsx(Switch, { 'aria-label': safeText(decision.question), checked, disabled: resolving, onCheckedChange: setChecked }),
+          jsx('span', {
+            className: 'text-[0.75rem]',
+            style: { color: checked ? 'var(--ui-accent)' : 'var(--ui-text-tertiary)', fontWeight: checked ? 600 : 400 },
+            children: safeText(onLabel),
+          }),
+        ],
+      }),
+      jsx(ConfirmButton, {
+        disabled: false,
+        resolving,
+        onClick: () => onResolve(decision.id, checked ? onLabel : offLabel, { value: checked }),
+        children: `Confirm ${checked ? safeText(onLabel) : safeText(offLabel)}`,
+      }),
+    ],
+  })
+}
+
+function RankedScoreCard({ decision, onResolve, resolving }) {
+  // card_payload: { scale: number[] (Fibonacci by convention: 1,2,3,5,8,
+  // 13,21...), items: [{ id, label }] }. Items are scored on the same
+  // scale and re-sort live so the relative ranking is visible while
+  // scoring -- distinct from rating_grid (independent items, no
+  // comparison implied, continuous_independent) and from a fixed-total
+  // split (no sum constraint here, continuous_constrained's other leaf).
+  const payload = decision.card_payload
+  const scale = safeArray(payload && payload.scale).filter((n) => typeof n === 'number')
+  const items = safeArray(payload && payload.items)
+  const defaultScore = scale.length ? scale[0] : 1
+  const idOf = (it, i) => (it && it.id !== undefined && it.id !== null ? safeText(it.id) : `item-${i}`)
+  const [scores, setScores] = React.useState(() => Object.fromEntries(items.map((it, i) => [idOf(it, i), defaultScore])))
+
+  if (items.length === 0 || scale.length === 0) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  const ranked = items
+    .map((it, i) => ({ id: idOf(it, i), label: safeText(it && it.label, idOf(it, i)), score: scores[idOf(it, i)] }))
+    .sort((a, b) => b.score - a.score)
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      jsx('div', { className: 'text-[0.7rem] text-(--ui-text-tertiary)', children: 'Items re-sort live as you score them.' }),
+      jsx('div', {
+        className: 'flex flex-col gap-1.5',
+        children: ranked.map((r) =>
+          jsxs('div', {
+            key: r.id,
+            className: 'flex items-center gap-2 rounded-md px-2.5 py-1.5',
+            style: { border: '1px solid var(--ui-stroke-secondary)' },
+            children: [
+              jsx('span', { className: 'flex-1 truncate text-[0.8rem]', children: r.label }),
+              jsx('span', { className: 'w-6 text-right text-[0.8rem] font-semibold', style: { color: 'var(--ui-accent)' }, children: r.score }),
+              jsx('div', {
+                className: 'flex gap-0.5',
+                children: scale.map((n) =>
+                  jsx('button', {
+                    key: n,
+                    type: 'button',
+                    disabled: resolving,
+                    onClick: () => setScores((prev) => ({ ...prev, [r.id]: n })),
+                    className: 'rounded px-1 py-0.5 text-[0.65rem] transition-colors hover:bg-(--chrome-action-hover)',
+                    style: { border: `1px solid ${r.score === n ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
+                    children: n,
+                  })
+                ),
+              }),
+            ],
+          })
+        ),
+      }),
+      jsx(ConfirmButton, {
+        disabled: false,
+        resolving,
+        onClick: () => {
+          const summary = ranked.map((r) => `${r.label}=${r.score}`).join(', ')
+          onResolve(decision.id, summary, { scores })
+        },
+        children: 'Confirm ranking',
+      }),
+    ],
+  })
+}
+
+function SpotlightPickCard({ decision, onResolve, resolving }) {
+  // card_payload: { criterion: string, options: [{ label, value }] } --
+  // one deciding factor, its value shown per option; thinner than
+  // spider_compare (one factor, not several) and not 2-sided like
+  // balance_scale.
+  const payload = decision.card_payload
+  const criterion = safeText(payload && payload.criterion)
+  const options = safeArray(payload && payload.options)
+
+  if (options.length === 0) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      criterion ? jsx('div', { className: 'text-[0.7rem] text-(--ui-text-tertiary)', children: `Deciding factor: ${criterion}` }) : null,
+      jsx('div', {
+        className: 'flex flex-col gap-1.5',
+        children: options.map((opt, i) => {
+          const label = safeText(opt && opt.label, `Option ${i + 1}`)
+          return jsx('button', {
+            key: label,
+            type: 'button',
+            disabled: resolving,
+            onClick: () => onResolve(decision.id, label, { picked: label, value: opt && opt.value }),
+            className: 'flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors hover:bg-(--chrome-action-hover)',
+            style: { border: '1px solid var(--ui-stroke-secondary)' },
+            children: [
+              jsx('span', { children: label }),
+              jsx('span', { className: 'text-[0.75rem] font-semibold', style: { color: 'var(--ui-accent)' }, children: safeText(opt && opt.value) }),
+            ],
+          })
+        }),
+      }),
+    ],
+  })
+}
+
+function ClusterOverlapCard({ decision, onResolve, resolving }) {
+  // card_payload: { groups: [{ key, label }], items: [{ id, label }] } --
+  // 3+ overlapping groups; items can belong to any number of them.
+  // Rendered as an item x group toggle grid rather than a true N-circle
+  // Venn (circle-intersection geometry doesn't generalize past 2 circles
+  // the way VennOverlapCard's evenodd-path trick does; venn_overlap stays
+  // the dedicated 2-set card for that case).
+  const payload = decision.card_payload
+  const groups = safeArray(payload && payload.groups)
+  const items = safeArray(payload && payload.items)
+  const [membership, setMembership] = React.useState({}) // item_key -> Set(group_key)
+
+  if (groups.length < 2 || items.length === 0) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  const itemKeyOf = (it, i) => (it && it.id !== undefined && it.id !== null ? safeText(it.id) : `item-${i}`)
+  const groupKeyOf = (g, i) => (g && g.key !== undefined && g.key !== null ? safeText(g.key) : `group-${i}`)
+
+  const toggle = (itemKey, groupKey) => {
+    setMembership((prev) => {
+      const current = new Set(prev[itemKey] || [])
+      current.has(groupKey) ? current.delete(groupKey) : current.add(groupKey)
+      return { ...prev, [itemKey]: current }
+    })
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2 overflow-x-auto',
+    children: [
+      jsx('div', {
+        className: 'text-[0.7rem] text-(--ui-text-tertiary)',
+        children: 'Click a cell to toggle whether that item belongs to that group — items can belong to more than one.',
+      }),
+      jsxs('table', {
+        className: 'w-full border-collapse text-[0.75rem]',
+        children: [
+          jsx('thead', {
+            children: jsxs('tr', {
+              children: [
+                jsx('th', { className: 'text-left font-normal' }),
+                ...groups.map((g, i) =>
+                  jsx('th', {
+                    key: groupKeyOf(g, i),
+                    className: 'px-1.5 pb-1 text-center font-normal',
+                    style: { color: 'var(--ui-text-tertiary)' },
+                    children: safeText(g && g.label, groupKeyOf(g, i)),
+                  })
+                ),
+              ],
+            }),
+          }),
+          jsx('tbody', {
+            children: items.map((it, i) => {
+              const itemKey = itemKeyOf(it, i)
+              return jsxs('tr', {
+                key: itemKey,
+                children: [
+                  jsx('td', { className: 'py-1 pr-2 text-left', children: safeText(it && it.label, itemKey) }),
+                  ...groups.map((g, gi) => {
+                    const groupKey = groupKeyOf(g, gi)
+                    const checked = (membership[itemKey] || new Set()).has(groupKey)
+                    return jsx('td', {
+                      key: groupKey,
+                      className: 'px-1.5 text-center',
+                      children: jsx('button', {
+                        type: 'button',
+                        disabled: resolving,
+                        onClick: () => toggle(itemKey, groupKey),
+                        className: 'h-5 w-5 rounded transition-colors hover:bg-(--chrome-action-hover)',
+                        style: {
+                          border: `1px solid ${checked ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}`,
+                          background: checked ? 'var(--ui-accent)' : 'transparent',
+                        },
+                      }),
+                    })
+                  }),
+                ],
+              })
+            }),
+          }),
+        ],
+      }),
+      jsx(ConfirmButton, {
+        disabled: false,
+        resolving,
+        onClick: () => {
+          const result = Object.fromEntries(
+            items.map((it, i) => {
+              const key = itemKeyOf(it, i)
+              return [key, [...(membership[key] || [])]]
+            })
+          )
+          const summary = Object.entries(result).map(([k, gs]) => `${k}: ${gs.join('+') || 'none'}`).join(', ')
+          onResolve(decision.id, summary, { membership: result })
+        },
+        children: 'Confirm groups',
+      }),
+    ],
+  })
+}
+
+function BipartiteAssignCard({ decision, onResolve, resolving }) {
+  // card_payload: { left: [{ key, label }], right: [{ key, label }] } --
+  // many-to-many assignment between two named sides, unlike wire_match's
+  // strict one line per item. Click a left item, then click any number of
+  // right items to toggle links; click the left item again to switch
+  // which left item you're linking from.
+  const payload = decision.card_payload
+  const left = safeArray(payload && payload.left)
+  const right = safeArray(payload && payload.right)
+  const [selectedLeft, setSelectedLeft] = React.useState(null)
+  const [links, setLinks] = React.useState({}) // left_key -> Set(right_key)
+  const [paths, setPaths] = React.useState([])
+  const wrapRef = React.useRef(null)
+  const leftRefs = React.useRef({})
+  const rightRefs = React.useRef({})
+
+  const leftKeyOf = (it, i) => (it && it.key !== undefined && it.key !== null ? safeText(it.key) : `left-${i}`)
+  const rightKeyOf = (it, i) => (it && it.key !== undefined && it.key !== null ? safeText(it.key) : `right-${i}`)
+
+  const recalc = React.useCallback(() => {
+    if (!wrapRef.current) return
+    const wrapRect = wrapRef.current.getBoundingClientRect()
+    const next = []
+    for (const [lk, rks] of Object.entries(links)) {
+      const ln = leftRefs.current[lk]
+      if (!ln) continue
+      for (const rk of rks) {
+        const rn = rightRefs.current[rk]
+        if (!rn) continue
+        const lr = ln.getBoundingClientRect()
+        const rr = rn.getBoundingClientRect()
+        const x1 = lr.right - wrapRect.left
+        const y1 = lr.top - wrapRect.top + lr.height / 2
+        const x2 = rr.left - wrapRect.left
+        const y2 = rr.top - wrapRect.top + rr.height / 2
+        const mx = (x1 + x2) / 2
+        next.push(`M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`)
+      }
+    }
+    setPaths(next)
+  }, [links])
+
+  React.useEffect(() => {
+    recalc()
+    if (typeof window === 'undefined') return undefined
+    window.addEventListener('resize', recalc)
+    return () => window.removeEventListener('resize', recalc)
+  }, [recalc])
+
+  if (left.length === 0 || right.length === 0) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  const toggleLink = (rightKey) => {
+    if (!selectedLeft) return
+    setLinks((prev) => {
+      const current = new Set(prev[selectedLeft] || [])
+      current.has(rightKey) ? current.delete(rightKey) : current.add(rightKey)
+      return { ...prev, [selectedLeft]: current }
+    })
+  }
+
+  const anyLinks = Object.values(links).some((s) => s && s.size > 0)
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      jsx('div', {
+        className: 'text-[0.7rem] text-(--ui-text-tertiary)',
+        children: 'Click a left item, then any number of right items to link them. Click the left item again to switch.',
+      }),
+      jsxs('div', {
+        ref: wrapRef,
+        className: 'relative flex items-stretch justify-between gap-8',
+        children: [
+          jsx('svg', {
+            className: 'pointer-events-none absolute inset-0 h-full w-full overflow-visible',
+            children: paths.map((d, i) => jsx('path', { key: i, d, fill: 'none', stroke: 'var(--ui-accent)', strokeWidth: 2 })),
+          }),
+          jsx('div', {
+            className: 'flex flex-1 flex-col gap-2',
+            children: left.map((it, i) => {
+              const key = leftKeyOf(it, i)
+              const count = (links[key] || new Set()).size
+              return jsxs('button', {
+                key,
+                type: 'button',
+                ref: (el) => { leftRefs.current[key] = el },
+                disabled: resolving,
+                onClick: () => setSelectedLeft((prev) => (prev === key ? null : key)),
+                className: cn(
+                  'flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors',
+                  'hover:bg-(--chrome-action-hover)'
+                ),
+                style: { border: `1px solid ${selectedLeft === key ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
+                children: [safeText(it && it.label, key), count > 0 ? jsx('span', { className: 'text-(--ui-text-tertiary)', children: count }) : null],
+              })
+            }),
+          }),
+          jsx('div', {
+            className: 'flex flex-1 flex-col gap-2',
+            children: right.map((it, i) => {
+              const key = rightKeyOf(it, i)
+              const linked = Boolean(selectedLeft) && (links[selectedLeft] || new Set()).has(key)
+              return jsx('button', {
+                key,
+                type: 'button',
+                ref: (el) => { rightRefs.current[key] = el },
+                disabled: resolving || !selectedLeft,
+                onClick: () => toggleLink(key),
+                className: cn(
+                  'rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors',
+                  'hover:bg-(--chrome-action-hover) disabled:opacity-50'
+                ),
+                style: { border: `1px solid ${linked ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
+                children: safeText(it && it.label, key),
+              })
+            }),
+          }),
+        ],
+      }),
+      jsx(ConfirmButton, {
+        disabled: !anyLinks,
+        resolving,
+        onClick: () => {
+          const pairs = []
+          for (const [lk, rks] of Object.entries(links)) {
+            for (const rk of rks) pairs.push({ left_key: lk, right_key: rk })
+          }
+          const summary = pairs.map((p) => `${p.left_key}→${p.right_key}`).join(', ')
+          onResolve(decision.id, summary, { pairs })
+        },
+        children: 'Confirm assignments',
+      }),
+    ],
+  })
+}
+
+function FieldGroupCard({ decision, onResolve, resolving }) {
+  // card_payload.fields: [{ key, label, type: "date"|"number"|"text"|
+  // "select", options? }]. A compound value -- several linked fields of
+  // possibly mixed type (a date range, a schedule, a color), not one
+  // scalar and not one category.
+  const fields = safeArray(decision.card_payload && decision.card_payload.fields)
+  const [values, setValues] = React.useState({})
+
+  if (fields.length === 0) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  const keyOf = (f, i) => (f && f.key !== undefined && f.key !== null ? safeText(f.key) : `field-${i}`)
+  const allFilled = fields.every((f, i) => {
+    const v = values[keyOf(f, i)]
+    return v !== undefined && v !== ''
+  })
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      jsx('div', {
+        className: 'flex flex-col gap-1.5',
+        children: fields.map((f, i) => {
+          const key = keyOf(f, i)
+          const type = safeText(f && f.type, 'text')
+          const label = safeText(f && f.label, key)
+          const options = safeArray(f && f.options)
+          return jsxs('label', {
+            key,
+            className: 'flex flex-col gap-0.5 text-[0.75rem]',
+            children: [
+              jsx('span', { className: 'text-(--ui-text-tertiary)', children: label }),
+              type === 'select'
+                ? jsx('select', {
+                    value: values[key] ?? '',
+                    disabled: resolving,
+                    onChange: (e) => setValues((prev) => ({ ...prev, [key]: e.target.value })),
+                    className: 'rounded-md px-2 py-1',
+                    style: { border: '1px solid var(--ui-stroke-secondary)', background: 'transparent' },
+                    children: [
+                      jsx('option', { value: '', children: '— select —' }),
+                      ...options.map((opt) => jsx('option', { key: safeText(opt), value: safeText(opt), children: safeText(opt) })),
+                    ],
+                  })
+                : jsx('input', {
+                    type: type === 'date' ? 'date' : type === 'number' ? 'number' : 'text',
+                    value: values[key] ?? '',
+                    disabled: resolving,
+                    onChange: (e) => setValues((prev) => ({ ...prev, [key]: e.target.value })),
+                    className: 'rounded-md px-2 py-1',
+                    style: { border: '1px solid var(--ui-stroke-secondary)', background: 'transparent' },
+                  }),
+            ],
+          })
+        }),
+      }),
+      jsx(ConfirmButton, {
+        disabled: !allFilled,
+        resolving,
+        onClick: () => {
+          const summary = fields.map((f, i) => `${keyOf(f, i)}=${values[keyOf(f, i)]}`).join(', ')
+          onResolve(decision.id, summary, { values })
+        },
+        children: 'Confirm',
+      }),
+    ],
+  })
+}
+
+function PrecedenceGraphCard({ decision, onResolve, resolving }) {
+  // card_payload: { items: [{ id, label }] } -- directed edges within ONE
+  // set ("which blocks which"), not a two-sided pairing like wire_match.
+  // Click a "from" item, then a "to" item to add a directed edge; edges
+  // list below with a remove control. No left/right SVG lines needed --
+  // there's no spatial two-column split for a single-set graph.
+  const items = safeArray(decision.card_payload && decision.card_payload.items)
+  const [from, setFrom] = React.useState(null)
+  const [edges, setEdges] = React.useState([]) // [{ from, to }]
+
+  if (items.length < 2) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  const idOf = (it, i) => (it && it.id !== undefined && it.id !== null ? safeText(it.id) : `item-${i}`)
+  const labelOf = (id) => {
+    const i = items.findIndex((it, idx) => idOf(it, idx) === id)
+    return i >= 0 ? safeText(items[i] && items[i].label, id) : id
+  }
+
+  const addEdge = (to) => {
+    if (!from || from === to) return
+    setEdges((prev) => (prev.some((e) => e.from === from && e.to === to) ? prev : [...prev, { from, to }]))
+    setFrom(null)
+  }
+
+  const removeEdge = (i) => setEdges((prev) => prev.filter((_, idx) => idx !== i))
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      jsx('div', {
+        className: 'text-[0.7rem] text-(--ui-text-tertiary)',
+        children: from ? `Blocking: ${labelOf(from)} — click what it blocks.` : 'Click the item that blocks something first.',
+      }),
+      jsx('div', {
+        className: 'flex flex-wrap gap-1',
+        children: items.map((it, i) => {
+          const id = idOf(it, i)
+          return jsx('button', {
+            key: id,
+            type: 'button',
+            disabled: resolving,
+            onClick: () => (from ? addEdge(id) : setFrom(id)),
+            className: 'rounded-md px-2 py-1 text-[0.75rem] transition-colors hover:bg-(--chrome-action-hover)',
+            style: { border: `1px solid ${from === id ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
+            children: safeText(it && it.label, id),
+          })
+        }),
+      }),
+      edges.length > 0
+        ? jsx('div', {
+            className: 'flex flex-col gap-1',
+            children: edges.map((e, i) =>
+              jsxs('div', {
+                key: `${e.from}->${e.to}`,
+                className: 'flex items-center justify-between rounded-md px-2 py-1 text-[0.75rem]',
+                style: { border: '1px solid var(--ui-stroke-secondary)' },
+                children: [
+                  jsx('span', { children: `${labelOf(e.from)} blocks ${labelOf(e.to)}` }),
+                  jsx('button', {
+                    type: 'button',
+                    disabled: resolving,
+                    onClick: () => removeEdge(i),
+                    className: 'text-(--ui-text-tertiary) hover:text-(--ui-accent)',
+                    children: '✕',
+                  }),
+                ],
+              })
+            ),
+          })
+        : null,
+      jsx(ConfirmButton, {
+        disabled: edges.length === 0,
+        resolving,
+        onClick: () => {
+          const summary = edges.map((e) => `${labelOf(e.from)}→${labelOf(e.to)}`).join(', ')
+          onResolve(decision.id, summary, { edges })
+        },
+        children: 'Confirm dependencies',
+      }),
+    ],
+  })
+}
+
+function RatingGridCard({ decision, onResolve, resolving }) {
+  // card_payload: { items: [{ id, label, min, max, default }], unit? } --
+  // each item gets its own independent scalar value; no sum constraint,
+  // no cross-item comparison (unlike ranked_score, items don't re-sort
+  // against each other here).
+  const payload = decision.card_payload
+  const items = safeArray(payload && payload.items)
+  const unit = safeText(payload && payload.unit, '')
+  const idOf = (it, i) => (it && it.id !== undefined && it.id !== null ? safeText(it.id) : `item-${i}`)
+  const [values, setValues] = React.useState(() =>
+    Object.fromEntries(
+      items.map((it, i) => [idOf(it, i), typeof (it && it.default) === 'number' ? it.default : (it && typeof it.min === 'number' ? it.min : 0)])
+    )
+  )
+
+  if (items.length === 0) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      jsx('div', {
+        className: 'flex flex-col gap-2',
+        children: items.map((it, i) => {
+          const key = idOf(it, i)
+          const min = typeof (it && it.min) === 'number' ? it.min : 0
+          const max = typeof (it && it.max) === 'number' ? it.max : 10
+          return jsxs('div', {
+            key,
+            className: 'flex flex-col gap-0.5',
+            children: [
+              jsxs('div', {
+                className: 'flex items-center justify-between text-[0.75rem]',
+                children: [
+                  jsx('span', { children: safeText(it && it.label, key) }),
+                  jsx('span', { className: 'font-semibold', style: { color: 'var(--ui-accent)' }, children: `${values[key]}${unit}` }),
+                ],
+              }),
+              jsx('input', {
+                type: 'range',
+                min,
+                max,
+                value: values[key],
+                disabled: resolving,
+                onChange: (e) => setValues((prev) => ({ ...prev, [key]: Number(e.target.value) })),
+                className: 'w-full',
+              }),
+            ],
+          })
+        }),
+      }),
+      jsx(ConfirmButton, {
+        disabled: false,
+        resolving,
+        onClick: () => {
+          const summary = items.map((it, i) => `${idOf(it, i)}=${values[idOf(it, i)]}${unit}`).join(', ')
+          onResolve(decision.id, summary, { values })
+        },
+        children: 'Confirm ratings',
+      }),
+    ],
+  })
+}
+
 const CARD_RENDERERS = {
   quad_choice: QuadChoiceCard,
   multi_select: MultiSelectCard,
@@ -2610,6 +3218,14 @@ const CARD_RENDERERS = {
   tree_placement: TreePlacementCard,
   confidence_rating: ConfidenceRatingCard,
   constrained_budget_split: ConstrainedBudgetSplitCard,
+  binary_toggle: BinaryToggleCard,
+  ranked_score: RankedScoreCard,
+  spotlight_pick: SpotlightPickCard,
+  cluster_overlap: ClusterOverlapCard,
+  bipartite_assign: BipartiteAssignCard,
+  field_group: FieldGroupCard,
+  precedence_graph: PrecedenceGraphCard,
+  rating_grid: RatingGridCard,
 }
 
 // CardErrorBoundary: isolates a single card's render exception so a

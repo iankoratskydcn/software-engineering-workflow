@@ -17,11 +17,10 @@ import db  # noqa: E402
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
 
-_SCALAR_ANSWERS = {
+_CONTINUOUS_SINGLE_ANSWERS = {
     "is_interval_not_point": False,
-    "is_fixed_total_split": False,
     "needs_confidence_axis": False,
-    "prefers_visual_segments": False,
+    "has_safe_defaults_to_confirm": False,
 }
 
 
@@ -66,9 +65,15 @@ def test_no_bucket_lists_every_bucket_and_its_discriminants(tmp_path, monkeypatc
     mod = _import_mcp_module(tmp_path, monkeypatch)
     result = json.loads(mod.decision_classify_card_type())
     assert result["ok"] is True
-    assert "scalar" in result["buckets"]
-    assert "scalar_slider" in result["buckets"]["scalar"]["card_types"]
-    assert set(_SCALAR_ANSWERS) == set(result["buckets"]["scalar"]["discriminants"])
+    assert "continuous_single" in result["buckets"]
+    assert "scalar_slider" in result["buckets"]["continuous_single"]["card_types"]
+    assert set(_CONTINUOUS_SINGLE_ANSWERS) == set(result["buckets"]["continuous_single"]["discriminants"])
+    # compound_single/continuous_independent each hold one card_type with an
+    # empty requires dict -- listed with zero discriminants, not omitted.
+    assert result["buckets"]["compound_single"]["card_types"] == ["field_group"]
+    assert result["buckets"]["compound_single"]["discriminants"] == []
+    assert result["buckets"]["continuous_independent"]["card_types"] == ["rating_grid"]
+    assert result["buckets"]["continuous_independent"]["discriminants"] == []
 
 
 def test_resolved_result_is_accepted_straight_through_by_decision_push(tmp_path, monkeypatch):
@@ -77,7 +82,7 @@ def test_resolved_result_is_accepted_straight_through_by_decision_push(tmp_path,
     accepts -- same engine on both sides, zero drift possible."""
     mod = _import_mcp_module(tmp_path, monkeypatch)
     classify_result = json.loads(mod.decision_classify_card_type(
-        bucket="scalar", answers_json=json.dumps(_SCALAR_ANSWERS),
+        bucket="continuous_single", answers_json=json.dumps(_CONTINUOUS_SINGLE_ANSWERS),
     ))
     assert classify_result["status"] == "resolved"
     assert classify_result["card_type"] == "scalar_slider"
@@ -105,28 +110,27 @@ def test_resolved_result_is_accepted_straight_through_by_decision_push(tmp_path,
 def test_incomplete_answers_lists_open_questions(tmp_path, monkeypatch):
     mod = _import_mcp_module(tmp_path, monkeypatch)
     result = json.loads(mod.decision_classify_card_type(
-        bucket="scalar", answers_json=json.dumps({"is_interval_not_point": True}),
+        bucket="continuous_single", answers_json=json.dumps({"is_interval_not_point": True}),
     ))
     assert result["status"] == "incomplete"
-    assert set(result["open_questions"]) == set(_SCALAR_ANSWERS) - {"is_interval_not_point"}
+    assert set(result["open_questions"]) == set(_CONTINUOUS_SINGLE_ANSWERS) - {"is_interval_not_point"}
 
 
-def test_no_match_status_for_impossible_combination(tmp_path, monkeypatch):
+def test_no_match_status_for_unknown_bucket(tmp_path, monkeypatch):
+    """Every v2 bucket's rule chain is now total (each False falls through
+    to a real catch-all card_type -- the old no_match dead ends were
+    deliberately closed, see ranked_score/spotlight_pick/bipartite_assign).
+    The only way to hit no_match is a bucket name the table doesn't have."""
     mod = _import_mcp_module(tmp_path, monkeypatch)
     result = json.loads(mod.decision_classify_card_type(
-        bucket="discrete_choice",
-        answers_json=json.dumps({
-            "is_and_or_neither_logic": False,
-            "is_independent_subset": False,
-            "is_quantized_few_levels": False,
-        }),
+        bucket="not_a_real_bucket", answers_json="{}",
     ))
     assert result["status"] == "no_match"
 
 
 def test_invalid_answers_json_is_reported_not_raised(tmp_path, monkeypatch):
     mod = _import_mcp_module(tmp_path, monkeypatch)
-    result = json.loads(mod.decision_classify_card_type(bucket="scalar", answers_json="{not json"))
+    result = json.loads(mod.decision_classify_card_type(bucket="continuous_single", answers_json="{not json"))
     assert result["ok"] is False
     assert "answers_json" in result["error"]
 
@@ -137,6 +141,6 @@ def test_non_object_answers_json_is_reported_not_raised(tmp_path, monkeypatch):
     ValueError from dict(answers) on a non-mapping."""
     mod = _import_mcp_module(tmp_path, monkeypatch)
     for bad in ("true", "42", '"x"', "[1]"):
-        result = json.loads(mod.decision_classify_card_type(bucket="scalar", answers_json=bad))
+        result = json.loads(mod.decision_classify_card_type(bucket="continuous_single", answers_json=bad))
         assert result["ok"] is False, bad
         assert "answers_json" in result["error"], bad

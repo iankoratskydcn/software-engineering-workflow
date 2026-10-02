@@ -1,197 +1,181 @@
-# Card-type decision tree
+# Card-type decision tree (v2)
 
-Which of the 24 Decision HUD card types to use, as a flowchart. Derived
-directly from the gate's rule table (`_CARD_TYPE_RULES` in
-`backend-plugin/db.py`, mirrored from card-type-gate's
-`card_type_selector.py`) and the frontend renderer map (`CARD_RENDERERS`
-in `plugin.js`). Where this doc and the code disagree, the code wins.
+Which of the 31 gated Decision HUD card types to use, as a flowchart.
+Derived
+directly from the rule table (`_CARD_TYPE_RULES` in `backend-plugin/db.py`)
+and the frontend renderer map (`CARD_RENDERERS` in `plugin.js`). Where this
+doc and the code disagree, the code wins.
 
-The 24 = the gate's 23 types plus `weighted_allocation`, which has a
-renderer but no gate rule (see [Gaps](#gaps)).
+This supersedes the v1 taxonomy (12 ad-hoc bucket names: `scalar`,
+`discrete_choice`, `compare_tradeoff`, `categorize`, `rank_sequence`,
+`mapping`, `compose`, `membership`, `recommend_override`,
+`reactive_config`, `none_of_these`, `info_only`). v2 replaces 11 of those
+12 with a 2-axis categorical assessment — **value_type** × **cardinality**
+— and closes every former `no_match` dead end with a real card type.
 
 ## How to read it
 
-Two steps, same as the gate:
+Three steps:
 
-1. **Pick the bucket** — what shape is the answer? (top of the chart)
-2. **Answer the bucket's discriminants** — each diamond below the bucket
-   is one `card_type_answers` key. Every discriminant must be answered;
-   pass `card_type_bucket` + `card_type_answers` with the push.
+1. **Pre-gate**: is anything being decided at all? No → `context_readout`,
+   stop here. Yes → continue.
+2. **Categorical assessment**: what `value_type` is the answer (continuous
+   / categorical / ordinal / relational / compound), and what `cardinality`
+   (single item / independent set / constrained set)? This picks the
+   bucket.
+3. **Discriminants**: answer that bucket's questions (its own booleans,
+   covering every card_type in it) to resolve the exact `card_type`.
 
-Bucket questions are ordered so the first "yes" wins: check "is there a
-decision at all?" and "are there defaults to confirm?" before looking at
-answer shape.
+Call `decision_classify_card_type` with no `bucket` to get the live list of
+buckets, their card_types, and their discriminant keys straight from the
+rule table — no need to read `db.py` by hand. Pass `bucket` +
+`answers_json` to resolve.
+
+## Why value_type × cardinality
+
+- **value_type** — what kind of thing is the answer: a number
+  (`continuous`), a label (`categorical`), a position among related items
+  (`ordinal`), a relationship between items (`relational`), or several
+  linked fields that aren't one scalar or one category (`compound`).
+- **cardinality** — how many items get that value, and whether they're
+  decided independently or jointly: one item (`single`), several items
+  each decided on their own (`independent`), or several items bound
+  together — a sum, a comparison, a sequence, a pairing (`constrained`).
+
+`ordinal` and `relational` have no `single` or `independent` cells —
+both need ≥2 related items by definition, so only `constrained` applies.
 
 ## Flowchart
 
 ```mermaid
 flowchart TD
-    START([New decision to push]) --> Q_INFO{Is any choice<br/>being requested?}
-    Q_INFO -- "No — purely informational" --> B_INFO[/info_only/]
-    Q_INFO -- Yes --> Q_REC{Every field already has a<br/>current / recommended value<br/>to confirm or tweak?}
-    Q_REC -- Yes --> B_REC[/recommend_override/]
-    Q_REC -- No --> Q_REACT{Does one selector visibly<br/>change a live gauge/number?}
-    Q_REACT -- Yes --> B_REACT[/reactive_config/]
-    Q_REACT -- No --> Q_SHAPE{What shape is the answer?}
+    START(["new decision"]) --> GATE{"is_pure_context_no_decision?"}
+    GATE -- "True" --> CTX[["context_readout"]]
+    GATE -- "False" --> VT{"value_type?"}
 
-    Q_SHAPE -- "A number / amount" --> B_SCALAR[/scalar/]
-    Q_SHAPE -- "Pick from options" --> B_DISC[/discrete_choice/]
-    Q_SHAPE -- "Weigh options against each other" --> B_CMP[/compare_tradeoff/]
-    Q_SHAPE -- "Put items into groups" --> B_CAT[/categorize/]
-    Q_SHAPE -- "Put items in order / on dates" --> B_RANK[/rank_sequence/]
-    Q_SHAPE -- "Pair items across two sets" --> B_MAP[/mapping/]
-    Q_SHAPE -- "Fill named slots" --> B_COMP[/compose/]
-    Q_SHAPE -- "Which set(s) an item belongs to" --> B_MEM[/membership/]
-    Q_SHAPE -- "None of these fit" --> MCQ[mcq_context]
+    VT -- continuous --> CARD1{"cardinality?"}
+    VT -- categorical --> CARD2{"cardinality?"}
+    VT -- ordinal --> CARD3["constrained only"]
+    VT -- relational --> CARD4["constrained only"]
+    VT -- compound --> CARD5["single only"]
 
-    %% info_only
-    B_INFO --> D_CTX{is_pure_context_no_decision}
-    D_CTX -- T --> CTX[context_readout]
+    %% continuous
+    CARD1 -- single --> C_S1{"is_interval_not_point?"}
+    C_S1 -- true --> RANGE[["range_slider"]]
+    C_S1 -- false --> C_S2{"needs_confidence_axis?"}
+    C_S2 -- true --> CONF[["confidence_rating"]]
+    C_S2 -- false --> C_S3{"has_safe_defaults_to_confirm?"}
+    C_S3 -- true --> ANCH[["anchor_adjust"]]
+    C_S3 -- false --> SLIDER[["scalar_slider"]]
 
-    %% recommend_override
-    B_REC --> D_ANCH{has_safe_defaults_to_confirm}
-    D_ANCH -- T --> ANCH[anchor_adjust]
+    CARD1 -- independent --> RGRID[["rating_grid"]]
 
-    %% reactive_config
-    B_REACT --> D_RX{cross_card_reactive}
-    D_RX -- T --> GAUGE[mode_radial_gauge]
+    CARD1 -- constrained --> C_C1{"is_fixed_total_split?"}
+    C_C1 -- true --> C_C2{"prefers_visual_segments?"}
+    C_C2 -- true --> STACK[["stacked_bar_split"]]
+    C_C2 -- false --> BUDGET[["constrained_budget_split"]]
+    C_C1 -- false --> C_C3{"is_multi_axis_no_dominant?"}
+    C_C3 -- true --> SPIDER[["spider_compare"]]
+    C_C3 -- false --> RSCORE[["ranked_score"]]
 
-    %% scalar
-    B_SCALAR --> D_INT{is_interval_not_point<br/>min–max band?}
-    D_INT -- T --> RANGE[range_slider]
-    D_INT -- F --> D_TOT{is_fixed_total_split<br/>parts sum to a total?}
-    D_TOT -- T --> D_SEG{prefers_visual_segments<br/>~3 parts as one bar?}
-    D_SEG -- T --> STACK[stacked_bar_split]
-    D_SEG -- F --> BUDGET[constrained_budget_split]
-    D_TOT -- F --> D_CONF{needs_confidence_axis<br/>value + how sure?}
-    D_CONF -- T --> CONF[confidence_rating]
-    D_CONF -- F --> SLIDER[scalar_slider]
+    %% categorical
+    CARD2 -- single --> CS0{"is_simple_boolean?"}
+    CS0 -- true --> TOGGLE[["binary_toggle"]]
+    CS0 -- false --> CS1{"is_and_or_neither_logic?"}
+    CS1 -- true --> QUAD[["quad_choice"]]
+    CS1 -- false --> CS2{"is_quantized_few_levels?"}
+    CS2 -- true --> ZONE[["zone_select"]]
+    CS2 -- false --> CS3{"cross_card_reactive?"}
+    CS3 -- true --> GAUGE[["mode_radial_gauge"]]
+    CS3 -- false --> MCQ[["mcq_context"]]
 
-    %% discrete_choice
-    B_DISC --> D_QUAD{is_and_or_neither_logic<br/>2 factors: A / B / both / neither?}
-    D_QUAD -- T --> QUAD[quad_choice]
-    D_QUAD -- F --> D_SUB{is_independent_subset<br/>select all that apply?}
-    D_SUB -- T --> MULTI[multi_select]
-    D_SUB -- F --> D_LVL{is_quantized_few_levels<br/>low / med / high tiers?}
-    D_LVL -- T --> ZONE[zone_select]
+    CARD2 -- independent --> CI1{"is_independent_subset?"}
+    CI1 -- true --> MULTI[["multi_select"]]
+    CI1 -- false --> CI2{"is_tree_not_flat?"}
+    CI2 -- true --> TREE[["tree_placement"]]
+    CI2 -- false --> CI3{"is_two_axis_grid?"}
+    CI3 -- true --> MATRIX[["matrix_2x2"]]
+    CI3 -- false --> CI4{"is_one_choice_per_slot?"}
+    CI4 -- true --> ASSEMBLE[["assemble_pieces"]]
+    CI4 -- false --> BIN[["sort_to_bin"]]
 
-    %% compare_tradeoff
-    B_CMP --> D_TWO{is_exactly_two_options}
-    D_TWO -- T --> BAL[balance_scale]
-    D_TWO -- F --> D_MANY{is_many_options_reduce<br/>≥5 options?}
-    D_MANY -- T --> DUEL[pairwise_duel]
-    D_MANY -- F --> D_AX{is_multi_axis_no_dominant<br/>≥3 criteria, none primary?}
-    D_AX -- T --> SPIDER[spider_compare]
+    CARD2 -- constrained --> CC1{"is_exactly_two_options?"}
+    CC1 -- true --> BAL[["balance_scale"]]
+    CC1 -- false --> CC2{"is_many_options_reduce?"}
+    CC2 -- true --> DUEL[["pairwise_duel"]]
+    CC2 -- false --> SPOT[["spotlight_pick"]]
 
-    %% categorize
-    B_CAT --> D_TREE{is_tree_not_flat<br/>nested parent › child?}
-    D_TREE -- T --> TREE[tree_placement]
-    D_TREE -- F --> D_GRID{is_two_axis_grid<br/>two named axes?}
-    D_GRID -- T --> MATRIX[matrix_2x2]
-    D_GRID -- F --> BIN[sort_to_bin]
+    %% ordinal
+    CARD3 --> O1{"is_absolute_dates_not_relative?"}
+    O1 -- true --> TIME[["timeline_placement"]]
+    O1 -- false --> SEQ[["sequence_order"]]
 
-    %% rank_sequence
-    B_RANK --> D_DATE{is_absolute_dates_not_relative<br/>real calendar dates?}
-    D_DATE -- T --> TIMELINE[timeline_placement]
-    D_DATE -- F --> SEQ[sequence_order]
+    %% relational
+    CARD4 --> R0{"is_single_set_relation?"}
+    R0 -- true --> PREC[["precedence_graph"]]
+    R0 -- false --> R1{"one_to_one_sets?"}
+    R1 -- true --> WIRE[["wire_match"]]
+    R1 -- false --> R2{"is_shared_vs_exclusive?"}
+    R2 -- true --> VENN[["venn_overlap"]]
+    R2 -- false --> R3{"is_group_membership_not_pairing?"}
+    R3 -- true --> CLUSTER[["cluster_overlap"]]
+    R3 -- false --> BIPART[["bipartite_assign"]]
 
-    %% mapping / compose / membership
-    B_MAP --> D_WIRE{one_to_one_sets}
-    D_WIRE -- T --> WIRE[wire_match]
-    B_COMP --> D_SLOT{is_one_choice_per_slot}
-    D_SLOT -- T --> ASSEMBLE[assemble_pieces]
-    B_MEM --> D_VENN{is_shared_vs_exclusive<br/>both / only-A / only-B?}
-    D_VENN -- T --> VENN[venn_overlap]
-
-    %% renderer with no gate rule
-    WEIGHTED[weighted_allocation<br/>⚠ no gate rule — unreachable]:::orphan
-
-    classDef orphan stroke-dasharray: 5 5
+    %% compound
+    CARD5 --> FGROUP[["field_group"]]
 ```
 
-A diamond with no `F` arrow is a dead end: answering `F` there gives
-`no_match`, which means the gate rejects the claimed `card_type`. Push with
-`card_type=None` (the plain button list — usually the right answer for
-"pick exactly one of N") or re-bucket as `none_of_these` → `mcq_context`.
+Every one of these 9 matrix buckets is now a **total, non-overlapping
+chain** — every boolean combination resolves to exactly one card_type,
+proven exhaustively in
+`backend-plugin/tests/test_card_type_enforcement.py::test_every_bucket_rule_set_is_total_and_partitioned`.
+`no_match` can now only happen by naming a bucket that doesn't exist.
 
 ## Quick reference
 
 | # | card_type | bucket | Use when… |
 |---|---|---|---|
 | 1 | `context_readout` | info_only | Nothing to decide — just show state/context |
-| 2 | `anchor_adjust` | recommend_override | Every field has a recommended value; user confirms or nudges |
-| 3 | `mode_radial_gauge` | reactive_config | Picking a mode visibly moves a live gauge/number |
-| 4 | `range_slider` | scalar | Answer is a min–max band, not one number |
-| 5 | `stacked_bar_split` | scalar | Parts sum to a fixed total, ~3 parts shown as one bar |
-| 6 | `constrained_budget_split` | scalar | Parts sum to a fixed total, shown as separate sliders (>3 parts) |
-| 7 | `confidence_rating` | scalar | One value **plus** "how sure are you?" |
-| 8 | `scalar_slider` | scalar | One number / setting, nothing else |
-| 9 | `quad_choice` | discrete_choice | Two factors combined: A, B, both, or neither |
-| 10 | `multi_select` | discrete_choice | "Select all that apply" |
-| 11 | `zone_select` | discrete_choice | One of a few exclusive ordered tiers (low/med/high) |
-| 12 | `balance_scale` | compare_tradeoff | Exactly two alternatives weighed against each other |
-| 13 | `pairwise_duel` | compare_tradeoff | ≥5 options to whittle down head-to-head |
-| 14 | `spider_compare` | compare_tradeoff | 3–4 options across ≥3 criteria, none dominant |
-| 15 | `tree_placement` | categorize | Items go into nested categories |
-| 16 | `matrix_2x2` | categorize | Items placed on two independent axes (impact × effort) |
-| 17 | `sort_to_bin` | categorize | Items go into flat buckets |
-| 18 | `timeline_placement` | rank_sequence | Items land on real calendar dates |
-| 19 | `sequence_order` | rank_sequence | Items put in relative order (first → last) |
-| 20 | `wire_match` | mapping | Pair each item in set A with one in set B |
-| 21 | `assemble_pieces` | compose | Named slots, each with its own option list |
-| 22 | `venn_overlap` | membership | Two sets — which items are shared vs exclusive |
-| 23 | `mcq_context` | none_of_these | Nothing above fits; multiple choice with context |
-| 24 | `weighted_allocation` | — | ⚠ Renderer exists, no gate rule (see Gaps) |
+| 2 | `range_slider` | continuous_single | Answer is a min–max band |
+| 3 | `confidence_rating` | continuous_single | One value **plus** "how sure are you?" |
+| 4 | `anchor_adjust` | continuous_single | Every field has a recommended value; confirm or nudge |
+| 5 | `scalar_slider` | continuous_single | One number / setting, nothing else |
+| 6 | `rating_grid` | continuous_independent | Rate N items independently, no total, no comparison |
+| 7 | `stacked_bar_split` | continuous_constrained | Parts sum to a fixed total, ~3 parts, one bar |
+| 8 | `constrained_budget_split` | continuous_constrained | Parts sum to a fixed total, separate sliders |
+| 9 | `spider_compare` | continuous_constrained | 3–4 options across ≥3 criteria, none dominant |
+| 10 | `ranked_score` | continuous_constrained | Score items on one axis, Fibonacci scale, live re-rank |
+| 11 | `binary_toggle` | categorical_single | A single on/off switch |
+| 12 | `quad_choice` | categorical_single | Two factors: A, B, both, or neither |
+| 13 | `zone_select` | categorical_single | One of a few exclusive ordered tiers |
+| 14 | `mode_radial_gauge` | categorical_single | Picking a mode visibly moves a live gauge |
+| 15 | `mcq_context` | categorical_single | Nothing else in this bucket fits |
+| 16 | `multi_select` | categorical_independent | "Select all that apply" |
+| 17 | `tree_placement` | categorical_independent | Items go into nested categories |
+| 18 | `matrix_2x2` | categorical_independent | Items placed on two independent axes |
+| 19 | `assemble_pieces` | categorical_independent | Named slots, each with its own option list |
+| 20 | `sort_to_bin` | categorical_independent | Items go into flat buckets |
+| 21 | `balance_scale` | categorical_constrained | Exactly two alternatives weighed against each other |
+| 22 | `pairwise_duel` | categorical_constrained | ≥5 options to whittle down head-to-head |
+| 23 | `spotlight_pick` | categorical_constrained | 3–4 options, one named deciding factor |
+| 24 | `timeline_placement` | ordinal_constrained | Items land on real calendar dates |
+| 25 | `sequence_order` | ordinal_constrained | Items in relative order (first → last) |
+| 26 | `precedence_graph` | relational_constrained | Directed edges within one set ("which blocks which") |
+| 27 | `wire_match` | relational_constrained | Pair each item in set A with one in set B |
+| 28 | `venn_overlap` | relational_constrained | Two sets — shared vs exclusive membership |
+| 29 | `cluster_overlap` | relational_constrained | 3+ overlapping groups, items can belong to several |
+| 30 | `bipartite_assign` | relational_constrained | Many-to-many assignment between two named sides |
+| 31 | `field_group` | compound_single | Several linked fields (a date range, a schedule, a color) |
 
-## Coverage matrix
+31 gated card_types reachable through `_CARD_TYPE_RULES`, plus one orphan
+(`weighted_allocation`, see Known issue below) = 32 total `CARD_RENDERERS`
+entries in `plugin.js`.
 
-Same 24 types, cut a different way: **value type** (what kind of answer
-each item gets) × **structure** (how many items, and whether they're
-decided independently or jointly). Cells hold every card_type that fits;
-`—` marks a combination that's structurally impossible (e.g. "ordinal"
-needs ≥2 items, so there's no single-item ordinal cell).
+## Known issue
 
-| value type ↓ / structure → | Single item | Independent set (each item decided on its own) | Constrained set (items bound together — sum, comparison, sequence, pairing) |
-|---|---|---|---|
-| **Continuous** (a number) | `scalar_slider`, `range_slider`, `confidence_rating`, `anchor_adjust` | ⚠️ gap — proposed `rating_grid`, see below | `constrained_budget_split`, `stacked_bar_split`, `spider_compare`, `weighted_allocation`* |
-| **Categorical** (a label) | `quad_choice`, `zone_select`, `mcq_context`, `mode_radial_gauge` | `multi_select`, `sort_to_bin`, `tree_placement`, `matrix_2x2`, `assemble_pieces` | `balance_scale`, `pairwise_duel` |
-| **Ordinal** (relative position) | — | — | `sequence_order`, `timeline_placement` |
-| **Relational** (pairing / membership across sets) | — | — | `wire_match`, `venn_overlap` |
-
-\* `weighted_allocation` has no gate rule — see [Gaps](#gaps).
-
-`context_readout` (info_only) isn't on the grid — no value is being
-chosen, so it has no value type.
-
-**Real gap found:** nothing covers **Continuous × Independent set** — a
-card where each of several items gets its own number, independently, with
-no sum constraint and no cross-item comparison (e.g. "rate each of these 5
-features 1–10, no total, not compared to each other"). Every existing
-continuous card_type is either single-item or ties items together. If that
-pattern comes up, it currently has no `card_type` — falls back to
-`card_type=None`. Proposed fix: a new `rating_grid` card_type — see
-[`docs/proposals/rating-grid-card-type.md`](proposals/rating-grid-card-type.md)
-for the exact rule-table edit and renderer.
-
-The other two dead ends noted below ("pick exactly one of N", and
-`compare_tradeoff` with one dominant criterion) aren't proposed as new
-card types — the plain button list already serves "pick one of N" well,
-and a single dominant criterion is really just a sorted list, not a
-distinct card shape.
-
-## Gaps
-
-Found while building this tree; not fixed here.
-
-- **`weighted_allocation` is unreachable.** It is in `CARD_RENDERERS` but
-  not in `_CARD_TYPE_RULES`, so `_verify_card_type` rejects any push that
-  claims it. It overlaps `constrained_budget_split` (both = weights summing
-  to a total); `CARD_TYPE_GATE_AMBIGUITY_RESOLUTION.md` already flags it as
-  confusable. Either add a discriminant that separates it or delete the
-  renderer.
-- **`mcq_context` has no dedicated renderer.** It falls through to
-  `DefaultChoiceCard`.
-- **Gaps in the tree that route to `no_match`:** plain "pick exactly one
-  of N" in `discrete_choice` (all three discriminants false), and
-  `compare_tradeoff` with 3–4 options and one dominant criterion. Both
-  fall back to the plain list.
+`weighted_allocation` has a `CARD_RENDERERS` entry in `plugin.js` but no
+rule in `_CARD_TYPE_RULES` — unreachable, `_verify_card_type` rejects any
+push naming it. Pre-dates v2 and is out of scope here; see the "Gaps"
+history in this file's git log for the original v1 discussion. Either give
+it a discriminant inside `continuous_constrained` (distinct from
+`ranked_score`/`spider_compare`/the two splits) or delete the renderer.

@@ -109,10 +109,9 @@ decision_push(
   choices=["Even split (~$6k each)", "Weight dev hours heaviest", "Weight ads heaviest", "Custom split"],
   recommended="Weight dev hours heaviest",
   card_type="stacked_bar_split",
-  card_type_bucket="scalar",
+  card_type_bucket="continuous_constrained",
   card_type_answers_json=json.dumps({
-      "is_interval_not_point": False, "is_fixed_total_split": True,
-      "prefers_visual_segments": True, "needs_confidence_axis": False}),
+      "is_fixed_total_split": True, "prefers_visual_segments": True}),
   card_payload_json=json.dumps({"segments": [
       {"key": "ads", "label": "Paid ads"},
       {"key": "dev", "label": "Dev contractor hours"},
@@ -125,10 +124,9 @@ decision_push(
   question="Which of the six shortlisted freelance webmasters should we bring on for the redesign?",
   choices=["Candidate A", "Candidate B", "Let bracket decide", "None — reopen search"],
   card_type="pairwise_duel",
-  card_type_bucket="compare_tradeoff",
+  card_type_bucket="categorical_constrained",
   card_type_answers_json=json.dumps({
-      "is_exactly_two_options": False, "is_many_options_reduce": True,
-      "is_multi_axis_no_dominant": False}),
+      "is_exactly_two_options": False, "is_many_options_reduce": True}),
   card_payload_json=json.dumps({"options": [
       {"key": "cand_a", "label": "Alex R."}, {"key": "cand_b", "label": "Priya K."},
       {"key": "cand_c", "label": "Sam T."}, {"key": "cand_d", "label": "Jordan M."},
@@ -142,7 +140,7 @@ decision_push(
   choices=["Early Nov (pre-Black Friday freeze)", "Late Nov", "Mid Dec", "Push to Jan"],
   recommended="Early Nov (pre-Black Friday freeze)",
   card_type="timeline_placement",
-  card_type_bucket="rank_sequence",
+  card_type_bucket="ordinal_constrained",
   card_type_answers_json=json.dumps({"is_absolute_dates_not_relative": True}),
   card_payload_json=json.dumps({"ticks": [
       {"key": "nov_early", "label": "Nov 3"}, {"key": "nov_late", "label": "Nov 24"},
