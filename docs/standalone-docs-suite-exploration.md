@@ -146,7 +146,7 @@ adapter is the one refactor that unlocks everything else.
 
 ## Open questions for you
 
-1. Is `swe.html` available to commit? Where does it live now?
+1. ~~Is `swe.html` available to commit?~~ Committed as `docs/prototype/swe.dc.html`. It needs `support.js`, the Claude Design `x-dc` runtime, which is not in the repo yet.
 2. Browser support: is Chromium-only acceptable for the standalone file?
 3. Should the suite data live in the *same* repo as the code being documented
    (`.swe/` folder), or a separate docs-only repo?
