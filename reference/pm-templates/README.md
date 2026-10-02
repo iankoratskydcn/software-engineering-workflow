@@ -5,32 +5,61 @@ Decision HUD. Nothing here is wired into the product.
 
 ## Status
 
-Page content **not yet downloaded**: `projectmanagers.net` was blocked by the cloud
-environment's network policy when this folder was created. Run `./fetch.sh` once the
-domain (and `docs.google.com`, for Sheets/Docs exports) is allowed. It saves the raw
-pages to `pages/`, every outbound link to `links.txt`, and direct/Google files to
-`files/`. The script has not been run against the live site yet.
+Downloaded on October 2, 2026 from the three public article pages. The raw HTML is
+in `pages/`, the 552 absolute links extracted by `fetch.sh` are in `links.txt`, and
+the downloaded/validated files plus builder assets are in `files/`. See
+[`MANIFEST.md`](MANIFEST.md) for one row per template or builder item, including
+items that were not downloaded and why.
+
+Run `./fetch.sh` from this directory to refresh the pages, link inventory, and the
+supported direct/Google exports. The script exits nonzero when a page or supported
+file download fails.
+
+## What the pages actually contain
+
+- **House of Quality:** the page links to three directly downloadable Excel/QFD
+  files hosted by other sites. Its PowerPoint and PDF entries are landing pages,
+  not direct files. The interactive builder is an inline page app backed by
+  `files/house-of-quality-builder.min.js` and the extracted
+  `files/house-of-quality-builder.css`. Its structure is **customer needs** with
+  importance, user/competitor ratings; **technical features** with improvement
+  direction and target values; a needs-to-features relationship grid; and a roof
+  showing feature-to-feature correlations. Grid strengths are 9/3/1 (strong,
+  medium, weak); roof values are 2/1/-1/-2 (strong synergy, synergy, trade-off,
+  strong trade-off). Feature scores are the sum of need importance multiplied by
+  relationship strength, then ranked with the top three highlighted.
+- **Lessons learned:** the advertised 40 templates are exactly **30 Google Docs
+  exports and 10 Google Sheets exports**, plus five linked PDF templates from
+  external sites. The interactive builder's actual lesson fields are: ID, title,
+  type (went well / needs improvement), phase, category, impact, what happened,
+  why it happened, recommendation, follow-up action, owner, due date, status,
+  raised by, and a computed “ready to reuse” result. Project metadata is separate
+  (project name/type, department or client, manager, sponsor, dates, report date,
+  prepared by, summary).
+- **RACI:** the page lists **27 Google Sheets templates**, ten Excel links, PDF,
+  Word, PowerPoint, ZIP, and online-tool links. The interactive matrix is a task
+  by role grid with editable task and role names, cells using R/A/C/I plus A/R,
+  A/C, and C/I combinations, and a check column. Its rules are at least one
+  Responsible and exactly one Accountable per task; it can export Word or CSV.
+
+A notable pattern is that these pages are indexes: most template links point to
+Google or other third-party sites rather than files hosted on
+`projectmanagers.net`.
 
 ## Sources
 
 | Topic | Page | Advertised content |
 |---|---|---|
-| House of Quality | https://projectmanagers.net/house-of-quality-templates/ | Excel (basic + full QFD, 11+ columns), PDF, PowerPoint, plus an interactive HoQ builder |
-| Lessons learned | https://projectmanagers.net/50-lessons-learned-templates-google-sheets-docs-pdf/ | 50 templates in Google Sheets, Docs, PDF |
-| RACI | https://projectmanagers.net/free-raci-matrix-templates/ | 40+ templates: 27 Google Sheets, plus Excel, PDF, Word |
+| House of Quality | https://projectmanagers.net/house-of-quality-templates/ | Excel/QFD files, PDF and PowerPoint links, plus an interactive HoQ builder |
+| Lessons learned | https://projectmanagers.net/50-lessons-learned-templates-google-sheets-docs-pdf/ | 40 Google Docs/Sheets templates and five PDF links |
+| RACI | https://projectmanagers.net/free-raci-matrix-templates/ | 27 Google Sheets templates plus external Excel, PDF, Word, PowerPoint, ZIP and online-tool links |
 
-## Notes from search snippets only
+## Offline artifacts
 
-Second-hand, not read from the pages themselves; verify after fetching.
-
-- **HoQ builder:** weight each customer need; set each need-to-feature cell to
-  strong/medium/weak; roof diamonds mark features that support or conflict; features are
-  scored live and the top three highlighted.
-- **Lessons log, typical columns** (from other sites, not this one): ID, date, phase, area,
-  positive/negative, issue, impact, root cause, resolution, status, owner, lesson, action.
-  Rule: write the lesson as an instruction; one named person owns it.
-- **RACI:** tasks x roles, cell = R/A/C/I from a dropdown with colour-coding. Rule: at least
-  one R, exactly one A per task. Variants: RASCI, DRASCI, RASI, RASIC, CAIRO.
+- `pages/` contains the three raw article pages.
+- `links.txt` contains every absolute URL extracted from those pages, tagged by source slug.
+- `files/` contains successful direct downloads and public Google exports. Builder JS/CSS is saved separately where needed for offline inspection.
+- `MANIFEST.md` records provenance, usage notes shown on the pages, and every not-downloaded item.
 
 ## Where they could attach in this repo
 
