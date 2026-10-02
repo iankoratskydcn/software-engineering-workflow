@@ -91,6 +91,9 @@ Notes for the runner (not yet built): postcondition commands are argv-split, not
 
 ## Next steps
 
-1. Add fail-closed "Laya unavailable != approval" test at the tool/policy boundary (`policy_result` already maps non-answers to the preset's fail outcome; test it end to end with the client).
-2. Decide `jev_consent`.
-3. Size/scan closure for `verification_plan`/`handoff_contract` (batch 2), then `approval_receipts`.
+1. (done) Laya unavailable != approval: `ext/tests/test_unavailable_is_not_approval.py`, 53 cases.
+2. (done) `jev_consent` dropped.
+3. Decide `context_safety` (question the requirement first).
+4. Postcondition runner with a command allowlist, wired to Decision HUD authority (design first).
+5. Trim `executors.py` to what `fanout_contracts` needs (EXECUTOR_PROFILES, status ladder) in `ext/handoff`, test-first.
+6. Back-port client hardening (redirect refusal, bounds, key scrub) to the hermes-agent `sidecar_client.py` (separate session on that repo).
