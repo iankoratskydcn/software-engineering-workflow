@@ -20,7 +20,7 @@ Raw reports: `scans/`.
 |---|---|---|---|---|
 | `jev_ask_client.py` | 716 | none (stdlib) | 1 MEDIUM: hardcoded `api.typesafe.ai` / `openrouter.ai` routes. True but expected. Code is the hardened client. | **ADAPT**: keep hardening (HTTPS-only, refuse redirects, byte/deadline bounds, key redaction, retry only on not-processed codes). Replace `ROUTES` with local Jev endpoint config. Never ship with the external routes active. Also adopt hardening into `sidecar_client.py`. |
 | `jev_presets.py` | 384 | none | clean | **ADAPT**: typed-question presets + deterministic policy (probability != permission). |
-| `jev_consent.py` | 525 | none | clean | **EVALUATE**: consent gate is OMH/Hermes-session specific (reads Kanban/env flags). Likely rewire to Decision HUD authority. |
+| `jev_consent.py` | 525 | none | clean | **DROPPED** (removed from `vendor/`; recoverable from git history). It gates data leaving the machine to a public Jev on the person naming Jev this turn, via Hermes hook internals pinned to specific hermes-agent commits. Laya is on our LAN and `LayaEndpoint` already refuses non-LAN hosts, so the requirement is gone. Authority for acting on Laya answers belongs to the Decision HUD/policy layer, not this gate. |
 
 Scan of the exact copies (`scans/batch1-jev.json`): score 7 LOW, 1 MEDIUM (the routes above), partial coverage 75%.
 
@@ -72,6 +72,22 @@ for the target (50 failing), then implementation, now 113 green (`cd ext && pyth
 - Review defect 2 fixed: `done_check/v1` returns `objection_unsupported` when supports < 0.5.
 - Rescan of `ext/jev`: score 0, no issues (partial coverage, parser limit on `client.py`).
 - Still open: Laya model id and any wire differences from `/v1/systemone` (assumed same wire); `jev_consent` decision; preset thresholds are unmeasured and `action_check/v1` numbers came from another plugin's different questions.
+
+## Batch 2 (scanned closures)
+
+Closures computed by AST import walk (including lazy imports):
+
+| Candidate | Closure | Scan | Decision |
+|---|---|---|---|
+| `handoff_contract` + `verification_plan` | 5 files, 1,389 lines (`executors`, `fanout_contracts`, `verification_environment`) | score 0, no issues, coverage 80% (parser limit on `verification_plan`); grep clean | **COPIED** verbatim to `vendor/omh/coding/`; working copy `ext/handoff/` |
+| `context_safety` | 2 files, 1,321 lines (+`wait_strategy`) | score 0, coverage 50% (parser limit); grep clean | **DEFERRED**: requirement unclear (OMH/Codex-specific run-history and wrapper stripping). Question before copying. |
+| `approval_receipts` | 6 files, 3,421 lines (+`system/{paths,local_store,append_only_store,metadata_safety,output_truncation}`) | 7 flags, all false positives: `self_update` strings in OMH's own venv path helpers (`paths.py`), `chmod` in a comment, refusal text; coverage only 33% | **NOT COPIED**: drags in 852-line OMH path layout, weak scan coverage, and overlaps the Decision HUD decision store. Take the idea (append-only, revision-bound approvals), not the code. |
+
+`ext/handoff` (test-first, `ext/tests/test_handoff_contract.py`): 28 characterization tests green on the copy, then 5 red tests for the defect below, then fix. Rescan: score 0, no issues, coverage 83%.
+
+**Defect found (ours, not from a review bot):** `contract_verification_observed` trusted the receipt's own `status`/`verdict` labels plus the digest, so a hand-written receipt `{digest, status: observed, verdict: passed}` with no rows counted as verified. Fixed: the receipt must carry one row per declared postcondition with matching id/check_id and integer exit status 0, labels must agree.
+
+Notes for the runner (not yet built): postcondition commands are argv-split, not shell-run (`&&`, `$(...)`, `;` stay literal arguments), but `rm -rf /` is accepted as a declaration. Whatever executes postconditions must enforce an allowlist/authority; the contract only declares.
 
 ## Next steps
 

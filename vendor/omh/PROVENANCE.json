@@ -2,7 +2,7 @@
   "source": "rlaope/oh-my-hermes",
   "source_commit": "4ab239b10ae37763a774168ad25f091005c5d738",
   "license": "MIT",
-  "usage": "verbatim copy; no modifications in this commit",
+  "usage": "verbatim copies; no modifications to files under vendor/",
   "files": [
     {
       "upstream_path": "src/plugin_bundle/omh/jev_ask_client.py",
@@ -15,9 +15,34 @@
       "sha256": "92318204ceafcc93ddfaa1eecb4d8e10bde9b87bb34ee185e2176e6c9bc5bca8"
     },
     {
-      "upstream_path": "src/plugin_bundle/omh/jev_consent.py",
-      "local_path": "vendor/omh/plugin_bundle/omh/jev_consent.py",
-      "sha256": "3d894f9994382bdfd57d192bcc446a0f76b9150cab5c6919552ec1fd3bd58732"
+      "upstream_path": "src/coding/__init__.py",
+      "local_path": "vendor/omh/coding/__init__.py",
+      "sha256": "af11a51af15501a4324ea04dce7af5458b2276d08914aef1bfa030bbccae8199"
+    },
+    {
+      "upstream_path": "src/coding/executors.py",
+      "local_path": "vendor/omh/coding/executors.py",
+      "sha256": "7a07fa25eadcf4977eff5cc55af8a019eb8a5072f49ef179e7887954838eb9d4"
+    },
+    {
+      "upstream_path": "src/coding/fanout_contracts.py",
+      "local_path": "vendor/omh/coding/fanout_contracts.py",
+      "sha256": "8aae2a2219f66ba9d6014045104aeb1d9eab8c9f5d7920375b2ed512e9ba82a7"
+    },
+    {
+      "upstream_path": "src/coding/verification_environment.py",
+      "local_path": "vendor/omh/coding/verification_environment.py",
+      "sha256": "a38cbe14a4bb0726cabf081cdb20137f41eb5408c00bb062e9775b2059e0b7fb"
+    },
+    {
+      "upstream_path": "src/coding/verification_plan.py",
+      "local_path": "vendor/omh/coding/verification_plan.py",
+      "sha256": "80c182ce692baf07df9ab3714518f197816de1f6a451f63d561759c05c9c4228"
+    },
+    {
+      "upstream_path": "src/coding/handoff_contract.py",
+      "local_path": "vendor/omh/coding/handoff_contract.py",
+      "sha256": "aa19952920471fac79eebe176596e2cfe16b0ac76d4626e7dfa073c6b1705c90"
     }
   ],
   "derivatives": [
@@ -32,6 +57,12 @@
       "local_path": "ext/jev/presets.py",
       "usage": "adapted",
       "modifications": "done_check ladder gains positive-support gate (supports<0.5 -> objection_unsupported)"
+    },
+    {
+      "upstream_path": "src/coding/handoff_contract.py (+ executors, fanout_contracts, verification_environment, verification_plan)",
+      "local_path": "ext/handoff/",
+      "usage": "adapted",
+      "modifications": "handoff_contract.contract_verification_observed now re-derives the receipt from its postcondition rows instead of trusting its status/verdict labels; other files unmodified so far"
     }
   ]
 }
