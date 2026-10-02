@@ -81,6 +81,17 @@ function pickDefaultBoardSlug(boards) {
   return (named || boards[0]).slug || null
 }
 
+async function cliExec(argv) {
+  const res = await host.request('cli.exec', { argv, timeout: 30 })
+  if (!res || res.blocked) {
+    throw new Error((res && res.hint) || 'cli.exec blocked')
+  }
+  if (res.code !== 0) {
+    throw new Error(`decision CLI exited ${res.code}: ${res.output || ''}`)
+  }
+  return parseTrailingJson(res.output || '')
+}
+
 function parseTrailingJson(output) {
   const trimmed = output.trim()
   if (trimmed) {
