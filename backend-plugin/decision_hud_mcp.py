@@ -50,9 +50,10 @@ def decision_push(project_id: str, question: str, choices: list[str],
     also applies whenever the decision has a natural card shape (a range, a
     split of a fixed total, a tradeoff between options, items to group/order/
     map) — prefer this push over inline clarify so it renders as the matching
-    card_type instead of a plain button list; call decision_classify_card_type
-    first (or walk card-type-gate's discriminant table for shapes it doesn't
-    recognize) rather than defaulting to no card_type.
+    card_type instead of a plain button list; pick the bucket matching the
+    shape (docs/card-type-decision-tree.md), answer its discriminants
+    yourself, and call decision_classify_card_type to resolve + verify the
+    card_type before pushing, rather than defaulting to no card_type.
 
     Args:
         project_id: id of a real project from `hermes project list` (v6: no
@@ -105,42 +106,76 @@ def decision_push(project_id: str, question: str, choices: list[str],
 
 
 @mcp.tool()
-def decision_classify_card_type(question: str, choices: list[str]) -> str:
-    """Suggest a card_type for a decision_push call, without writing anything.
+def decision_classify_card_type(bucket: str | None = None, answers_json: str | None = None) -> str:
+    """Resolve card_type/card_type_bucket/card_type_answers for decision_push,
+    without writing anything. A thin, read-only wrapper around
+    db._card_type_verdict — the SAME engine push_decision's _verify_card_type
+    enforces — so a "resolved" result is always accepted by decision_push.
 
-    Call this BEFORE decision_push instead of manually re-deriving the
-    card-type-gate discriminant table by hand. It only recognizes the small
-    subset of card types whose shape is fully encoded in (question, choices)
-    alone — quad_choice (choices include an explicit "Both"/"Neither"),
-    zone_select (every choice is an ordered tier label like low/medium/high),
-    balance_scale (exactly 2 choices and the question itself names a
-    tradeoff/comparison). Returns {"ok": true, "card_type": None} when
-    nothing confidently matches (most of the taxonomy — ranges, splits,
-    grids, trees, sequences, mappings, slots — needs structure that only
-    exists in card_payload, which you build yourself when you already know
-    the shape; this tool never guesses that structure).
+    This does NOT try to guess your decision's shape from question text:
+    guessing from English prose is unreliable and was deleted from this repo
+    for exactly that reason (it covered 3 of 24 card types and still
+    misfired on plain wording). You already know your decision's shape —
+    you're the one writing the question — so you answer the discriminants
+    yourself; this tool only resolves them deterministically and verifies
+    the result, the part a human/regex shouldn't have to re-derive by hand.
 
-    On a hit, the returned card_type/card_type_bucket/card_type_answers can
-    be passed straight through to decision_push — they are pre-verified
-    against the same engine push_decision enforces, so the push cannot fail
-    _verify_card_type. A hit may also include card_payload (fully derived,
-    e.g. zone_select's zones — pass it straight through too) and/or
-    payload_note (the card's renderer needs payload fields this tool can't
-    derive, e.g. balance_scale's considerations — supply them yourself or
-    the push renders as the plain button list despite the card_type match).
+    Call with no args (bucket omitted) to list every bucket, the card_types
+    in it, and the discriminant keys it needs answered — each key's own name
+    describes what it's asking (e.g. is_interval_not_point,
+    needs_confidence_axis). Pick the bucket matching your decision's shape
+    (see docs/card-type-decision-tree.md for the full picture), answer every
+    listed key, then call again with bucket + answers_json.
+
+    Verdict on a bucket + full answers:
+      resolved   -> exactly one card_type matched; pass card_type/
+                    card_type_bucket/card_type_answers straight through to
+                    decision_push (plus card_payload if that card_type needs
+                    one — see decision_push's own docstring).
+      incomplete -> answers is missing some of the bucket's keys (listed in
+                    open_questions).
+      ambiguous  -> more than one card_type matched these answers (should
+                    not happen while the rule table stays partitioned —
+                    report it rather than guessing which one you meant).
+      no_match   -> no card_type matched; push with card_type=None instead
+                    (the plain choice list).
 
     Args:
-        question: the exact text you intend to pass to decision_push.
-        choices: the exact 2-4 choices you intend to pass to decision_push.
+        bucket: one of the card-type-gate buckets (e.g. "scalar",
+            "discrete_choice", "compare_tradeoff", "categorize",
+            "rank_sequence", "mapping", "compose", "membership", "info_only",
+            "recommend_override", "reactive_config", "none_of_these"). Omit
+            to list all buckets instead of resolving one.
+        answers_json: JSON string of {discriminant_key: true/false} covering
+            every key the bucket listing names. Required when bucket is set.
     """
+    if not bucket:
+        buckets: dict[str, dict[str, object]] = {}
+        for card_type, b, reqs in db._CARD_TYPE_RULES:
+            entry = buckets.setdefault(b, {"card_types": [], "discriminants": set()})
+            entry["card_types"].append(card_type)
+            entry["discriminants"].update(reqs.keys())
+        return json.dumps({"ok": True, "buckets": {
+            b: {"card_types": v["card_types"], "discriminants": sorted(v["discriminants"])}
+            for b, v in buckets.items()
+        }})
     try:
-        import card_type_classifier
-        result = card_type_classifier.classify(question, choices)
-    except Exception as exc:  # classifier failure must never block the push path
+        answers = db.parse_json_kwarg(answers_json, "answers_json") or {}
+    except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)})
-    if result is None:
-        return json.dumps({"ok": True, "card_type": None})
-    return json.dumps({"ok": True, **result})
+    if not isinstance(answers, dict):
+        return json.dumps({"ok": False, "error": "answers_json must decode to a JSON object"})
+    verdict = db._card_type_verdict(bucket, dict(answers))
+    result: dict[str, object] = {"ok": True, "status": verdict["status"]}
+    if verdict["status"] == "resolved":
+        result["card_type"] = verdict["matches"][0][0]
+        result["card_type_bucket"] = bucket
+        result["card_type_answers"] = answers
+    elif verdict["status"] == "incomplete":
+        result["open_questions"] = verdict["open_questions"]
+    elif verdict["status"] == "ambiguous":
+        result["matches"] = [m[0] for m in verdict["matches"]]
+    return json.dumps(result)
 
 
 @mcp.tool()
