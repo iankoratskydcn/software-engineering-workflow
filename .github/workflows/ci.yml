@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Installs react/react-dom/jsdom without saving them, then copies the
+      # committed @hermes/plugin-sdk stub from test/stubs into node_modules.
+      - run: npm run test:setup
+      - run: npm test
+
+  backend-plugin:
+    name: Backend plugin tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pytest pyyaml
+      - run: python -m pytest backend-plugin/tests
+
+  backend-telemetry:
+    name: Backend telemetry tests (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: dashboard
+          POSTGRES_PASSWORD: dashboard
+          POSTGRES_DB: dashboard
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dashboard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DASHBOARD_TEST_DATABASE_URL: postgresql://dashboard:dashboard@localhost:5432/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install pytest pytest-asyncio "psycopg[binary]"
+      # Two HTTP-route tests skip unless the plugin is installed at this path.
+      - run: |
+          mkdir -p ~/.hermes/plugins
+          ln -s "$GITHUB_WORKSPACE/backend-plugin" ~/.hermes/plugins/decision-hud
+      # backend/pyproject.toml's paths only resolve from the repo root with
+      # backend/ on PYTHONPATH; running from backend/ (as the README once said)
+      # does not collect agent_telemetry.
+      - run: PYTHONPATH=backend python -m pytest -c backend/pyproject.toml backend/tests

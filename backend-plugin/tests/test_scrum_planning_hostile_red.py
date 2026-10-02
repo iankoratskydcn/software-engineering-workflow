@@ -45,7 +45,7 @@ def _spec_root(conn: sqlite3.Connection, project_id: str = "p_1") -> dict:
 
 def test_v13_creates_planning_items_after_v12_with_canonical_constraints(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.LATEST_SCHEMA_VERSION
 
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(planning_items)")}
     assert {

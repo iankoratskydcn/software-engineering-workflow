@@ -13,13 +13,10 @@ Cross-project Decision HUD desktop plugin for Hermes: a card-stack decision queu
 gh repo clone iankoratskydcn/decision-hud
 ```
 
-### 2. Frontend tests need node_modules that are NOT in package.json
-`package.json` only declares a `test` script — no dependencies. The test suite (`test/*.test.mjs`, run via `node --test test/*.test.mjs` or `npm test`) imports real `react`, `react-dom`, and `jsdom` **symlinked in from a full local hermes-agent checkout**, plus a minimal hand-written `@hermes/plugin-sdk` stub. None of this ships in the repo (`node_modules/` is gitignored), so a fresh clone has failing/erroring tests until you wire it up. Full instructions, including Windows-specific junction/symlink gotchas and the exact SDK constants to stub, are in the Hermes skill `decision-hud-dev-setup` (`skill_view(name='decision-hud-dev-setup')` if you're a Hermes agent). Short version:
+### 2. Frontend tests
+`package.json` declares no dependencies. `npm run test:setup` installs `react`, `react-dom` and `jsdom` with `--no-save`, then copies the committed `@hermes/plugin-sdk` stub (`test/stubs/plugin-sdk/`) into `node_modules/`. Then `npm test` runs the suite (`test/*.test.mjs`). Re-run `npm run test:setup` after any `npm install`, which prunes the stub. CI does exactly this.
 
-1. Find a local `hermes-agent` checkout that has run `npm install` (carries the app's real `node_modules/react`, `react-dom`, `jsdom`).
-2. Symlink/junction those three packages into this repo's `node_modules/`.
-3. Add a minimal `node_modules/@hermes/plugin-sdk/{package.json,index.js}` stub exporting exactly what `plugin.js`'s top `import` line pulls in — get the `PALETTE_AREA` / `ROUTES_AREA` / `SIDEBAR_NAV_AREA` string constants from the real SDK source (`apps/desktop/src/app/routes.ts`, `apps/desktop/src/app/command-palette/contrib.ts` in the hermes-agent checkout) rather than guessing; a wrong string breaks registration-matching tests even when the plugin code is correct.
-4. `npm test` should then show all tests passing (18/18 as of Sep 2026).
+The stub exports exactly what `plugin.js`'s top `import` line pulls in. Its `PALETTE_AREA` / `ROUTES_AREA` / `SIDEBAR_NAV_AREA` strings match hermes-agent (`apps/desktop/src/app/command-palette/contrib.ts`, `apps/desktop/src/app/routes.ts`). If `plugin.js` starts importing another name from the SDK, add it to the stub; a wrong area string breaks registration-matching tests even when the plugin code is correct.
 
 ### 3. Deploy for live use in the desktop app
 Symlink the whole repo directory into the desktop plugin root so edits hot-reload with no copy step:
@@ -29,14 +26,21 @@ cmd /c mklink "%LOCALAPPDATA%\hermes\desktop-plugins\decision-hud" "<path to thi
 (macOS/Linux: `ln -s <path to this repo> "$HERMES_HOME/desktop-plugins/decision-hud"`.)
 Then Command Palette → "Reload desktop plugins" to force the first load. Subsequent saves hot-reload automatically.
 
-### 4. Backend (agent dashboard) tests
+### 4. Backend tests
+Plugin backend (SQLite, no services needed), from the repo root:
 ```
-cd backend
-uv pip install -e .   # or pip install -e ., per pyproject.toml
-docker compose up -d  # disposable Postgres for integration tests
-pytest
+pip install pytest pyyaml
+python -m pytest backend-plugin/tests
 ```
-See `backend/pyproject.toml` for markers (`integration` tests require the Postgres container).
+
+Agent dashboard telemetry (needs Postgres), also from the repo root. The pytest config in `backend/pyproject.toml` only resolves from the repo root with `backend/` on `PYTHONPATH`; running from `backend/` does not work.
+```
+docker compose -f backend/docker-compose.yml up -d   # disposable Postgres on 127.0.0.1:55432
+pip install pytest pytest-asyncio "psycopg[binary]"
+export DASHBOARD_TEST_DATABASE_URL=postgresql://dashboard:dashboard@127.0.0.1:55432/dashboard
+PYTHONPATH=backend python -m pytest -c backend/pyproject.toml backend/tests
+```
+Two HTTP-route tests skip unless the plugin is installed at `~/.hermes/plugins/decision-hud/` (symlink `backend-plugin` there to run them). Without `DASHBOARD_TEST_DATABASE_URL`, the Postgres tests fail rather than skip. See `backend/pyproject.toml` for the `integration` marker.
 
 ## Windows gotcha: CRLF breaks structural tests
 Some frontend tests (`test/settings-gear.test.mjs`, `test/sidebar-order-swap.test.mjs`, etc.) read `plugin.js` as raw text and match regexes containing literal `\n`. A Windows checkout with `core.autocrlf=true` normalizes the file to CRLF, silently breaking those regexes — the test fails with a misleading message (e.g. "DecisionHudPane function must exist") even though the function is present. This repo ships a `.gitattributes` forcing LF on checkout, so a fresh clone is unaffected; if you still hit this, `git config core.autocrlf false` and re-checkout the affected file(s) (`git checkout -- plugin.js`), then verify with `file plugin.js` (should say "UTF-8 text" with no "CRLF line terminators").

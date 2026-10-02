@@ -145,6 +145,10 @@ JSON_DEPTH_LIMIT = 8
 COORDINATE_MIN = -100000
 COORDINATE_MAX = 100000
 
+# Newest schema version init_db migrates to. Bump together with the newest
+# _migrate_vN; the tests assert init_db lands exactly here.
+LATEST_SCHEMA_VERSION = 13
+
 
 class BoundaryError(ValueError):
     """Safe, machine-readable rejection at a trust boundary."""
