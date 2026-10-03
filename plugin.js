@@ -2666,11 +2666,15 @@ function RankedScoreCard({ decision, onResolve, resolving }) {
               jsx('span', { className: 'flex-1 truncate text-[0.8rem]', children: r.label }),
               jsx('div', {
                 className: 'flex gap-0.5',
+                role: 'group',
+                'aria-label': `Score for ${r.label}`,
                 children: scale.map((n) =>
                   jsx('button', {
                     key: n,
                     type: 'button',
                     disabled: resolving,
+                    'aria-pressed': r.score === n,
+                    'aria-label': `${r.label}: ${n}`,
                     onClick: () => setScores((prev) => ({ ...prev, [r.id]: n })),
                     className: 'rounded px-1 py-0.5 text-[0.65rem] transition-colors hover:bg-(--chrome-action-hover)',
                     style: { border: `1px solid ${r.score === n ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
