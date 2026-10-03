@@ -24,22 +24,12 @@ const NEW_CARDS = {
   rating_grid: 'RatingGridCard',
 }
 
-// spotlight_pick resolves on a single click, same as QuadChoiceCard's
-// existing one-click-resolves precedent (a simple pick list doesn't need
-// a separate confirm step) -- every other new card is multi-step and
-// does need ConfirmButton.
-const NO_CONFIRM_BUTTON = new Set(['spotlight_pick'])
-
 for (const [cardType, fnName] of Object.entries(NEW_CARDS)) {
   const match = source.match(new RegExp(`function ${fnName}\\([\\s\\S]*?\\n\\}\\n`))
   assert.ok(match, `${fnName} must be defined`)
   const body = match[0]
   assert.match(body, /DefaultChoiceCard/, `${fnName} must fall back to DefaultChoiceCard on malformed/empty payload`)
-  if (!NO_CONFIRM_BUTTON.has(cardType)) {
-    assert.match(body, /ConfirmButton/, `${fnName} must confirm through ConfirmButton`)
-  } else {
-    assert.match(body, /onResolve\(/, `${fnName} must resolve directly on click`)
-  }
+  assert.match(body, /ConfirmButton/, `${fnName} must confirm through ConfirmButton`)
   assert.match(
     source,
     new RegExp(`${cardType}:\\s*${fnName}`),
@@ -58,6 +48,19 @@ for (const [cardType, fnName] of Object.entries(NEW_CARDS)) {
     match[0],
     /choices\.length\s*!==\s*2/,
     'BinaryToggleCard must reject choice lists that are not exactly 2 long, not just check [0]/[1] are defined'
+  )
+}
+
+// Codex regression (PR #28): selection was tracked by option label, so two
+// options sharing a display label with different values would conflate --
+// clicking the second always resolved the first's value via Array#find.
+{
+  const match = source.match(/function SpotlightPickCard\([\s\S]*?\n\}\n/)
+  assert.ok(match, 'SpotlightPickCard must be defined')
+  assert.match(
+    match[0],
+    /pickedIndex/,
+    'SpotlightPickCard must track the selected option by index, not by label, so duplicate labels with distinct values resolve correctly'
   )
 }
 
