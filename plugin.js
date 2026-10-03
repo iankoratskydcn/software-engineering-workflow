@@ -2703,14 +2703,21 @@ function SpotlightPickCard({ decision, onResolve, resolving }) {
   // card_payload: { criterion: string, options: [{ label, value }] } --
   // one deciding factor, its value shown per option; thinner than
   // spider_compare (one factor, not several) and not 2-sided like
-  // balance_scale.
+  // balance_scale. Click selects, ConfirmButton resolves -- every card in
+  // this app confirms before resolving, this one is no exception.
   const payload = decision.card_payload
   const criterion = safeText(payload && payload.criterion)
   const options = safeArray(payload && payload.options)
+  // Indexed, not keyed by label -- two options can share a display label
+  // with different values, and label equality would conflate them.
+  const [pickedIndex, setPickedIndex] = React.useState(null)
 
   if (options.length === 0) {
     return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
   }
+
+  const picked = pickedIndex !== null ? options[pickedIndex] : null
+  const pickedLabel = picked ? safeText(picked.label, `Option ${pickedIndex + 1}`) : null
 
   return jsxs('div', {
     className: 'flex flex-col gap-2',
@@ -2721,18 +2728,25 @@ function SpotlightPickCard({ decision, onResolve, resolving }) {
         children: options.map((opt, i) => {
           const label = safeText(opt && opt.label, `Option ${i + 1}`)
           return jsx('button', {
-            key: label,
+            key: i,
             type: 'button',
             disabled: resolving,
-            onClick: () => onResolve(decision.id, label, { picked: label, value: opt && opt.value }),
+            'aria-pressed': pickedIndex === i,
+            onClick: () => setPickedIndex(i),
             className: 'flex items-center justify-between rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors hover:bg-(--chrome-action-hover)',
-            style: { border: '1px solid var(--ui-stroke-secondary)' },
+            style: { border: `1px solid ${pickedIndex === i ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
             children: [
               jsx('span', { children: label }),
               jsx('span', { className: 'text-[0.75rem] font-semibold', style: { color: 'var(--ui-accent)' }, children: safeText(opt && opt.value) }),
             ],
           })
         }),
+      }),
+      jsx(ConfirmButton, {
+        disabled: !picked,
+        resolving,
+        onClick: () => onResolve(decision.id, pickedLabel, { picked: pickedLabel, value: picked && picked.value }),
+        children: 'Confirm pick',
       }),
     ],
   })
