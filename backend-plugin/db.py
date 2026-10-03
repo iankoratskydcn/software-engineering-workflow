@@ -147,7 +147,7 @@ COORDINATE_MAX = 100000
 
 # Newest schema version init_db migrates to. Bump together with the newest
 # _migrate_vN; the tests assert init_db lands exactly here.
-LATEST_SCHEMA_VERSION = 16
+LATEST_SCHEMA_VERSION = 17
 
 
 class BoundaryError(ValueError):
@@ -1357,6 +1357,34 @@ def _migrate_v16_spec_readiness(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_v17_spec_node_order(conn: sqlite3.Connection) -> None:
+    """Add sort_index to spec_nodes so siblings have an explicit, user-movable
+    order instead of relying on created_at/id. Backfills existing rows in
+    their current (level, created_at, id) order, grouped by parent, so
+    pre-v17 trees keep their visible order after upgrade."""
+    if conn.execute("PRAGMA user_version").fetchone()[0] >= 17:
+        return
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(spec_nodes)")}
+        if "sort_index" not in columns:
+            conn.execute("ALTER TABLE spec_nodes ADD COLUMN sort_index INTEGER NOT NULL DEFAULT 0")
+            rows = conn.execute(
+                "SELECT id, project_id, parent_id FROM spec_nodes ORDER BY level, created_at, id"
+            ).fetchall()
+            next_index: dict[tuple[str, str | None], int] = {}
+            for row in rows:
+                key = (row["project_id"], row["parent_id"])
+                idx = next_index.get(key, 0)
+                conn.execute("UPDATE spec_nodes SET sort_index = ? WHERE id = ?", (idx, row["id"]))
+                next_index[key] = idx + 1
+        conn.execute("PRAGMA user_version = 17")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -1441,6 +1469,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             criteria_json TEXT,
             metadata_json TEXT NOT NULL DEFAULT '{}',
             decision_id TEXT,
+            sort_index INTEGER NOT NULL DEFAULT 0,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
             UNIQUE(project_id, id),
@@ -1471,6 +1500,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v14_observation_checkpoints(conn)
     _migrate_v15_days(conn)
     _migrate_v16_spec_readiness(conn)
+    _migrate_v17_spec_node_order(conn)
     conn.commit()
 
 
@@ -2796,11 +2826,16 @@ def create_spec_node(
     try:
         conn.execute("BEGIN IMMEDIATE")
         _spec_validate_parent(conn, project_id=project_id, parent_id=parent_id, level=level)
+        next_sort_index = conn.execute(
+            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM spec_nodes WHERE project_id = ? AND parent_id IS ?",
+            (project_id, parent_id),
+        ).fetchone()[0]
         conn.execute(
-            "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, sort_index, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (node_id, project_id, kind, parent_id, level, title, status, note, description, rationale,
-             criteria_json, json.dumps(metadata, separators=(",", ":"), ensure_ascii=False), decision_id, now, now),
+             criteria_json, json.dumps(metadata, separators=(",", ":"), ensure_ascii=False), decision_id,
+             next_sort_index, now, now),
         )
         conn.commit()
     except Exception:
@@ -2891,9 +2926,41 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
     return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
 
 
+def move_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, direction: str) -> dict[str, Any]:
+    """Swap a node's sort_index with its nearest sibling in the given
+    direction ('up' or 'down'), reordering only among siblings that share
+    the same parent_id. A no-op at either end of the sibling list (e.g.
+    moving the first sibling up) returns the node unchanged rather than
+    raising, so callers can disable the button instead of handling an error."""
+    if direction not in ("up", "down"):
+        raise BoundaryError("invalid_input", "direction must be 'up' or 'down'")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None or (project_id is not None and row["project_id"] != _spec_project(project_id)):
+            raise BoundaryError("not_found", "resource not found")
+        siblings = conn.execute(
+            "SELECT id, sort_index FROM spec_nodes WHERE project_id = ? AND parent_id IS ? ORDER BY sort_index, created_at, id",
+            (row["project_id"], row["parent_id"]),
+        ).fetchall()
+        index = next((i for i, sib in enumerate(siblings) if sib["id"] == node_id), None)
+        if index is None:
+            raise BoundaryError("internal_error", "node missing from its own sibling list")
+        neighbor_index = index - 1 if direction == "up" else index + 1
+        if 0 <= neighbor_index < len(siblings):
+            neighbor = siblings[neighbor_index]
+            conn.execute("UPDATE spec_nodes SET sort_index = ? WHERE id = ?", (neighbor["sort_index"], node_id))
+            conn.execute("UPDATE spec_nodes SET sort_index = ? WHERE id = ?", (siblings[index]["sort_index"], neighbor["id"]))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
 def get_spec_tree(conn: sqlite3.Connection, *, project_id: str) -> dict[str, Any] | None:
     project_id = _spec_project(project_id)
-    rows = conn.execute("SELECT * FROM spec_nodes WHERE project_id = ? ORDER BY level, created_at, id", (project_id,)).fetchall()
+    rows = conn.execute("SELECT * FROM spec_nodes WHERE project_id = ? ORDER BY level, sort_index, created_at, id", (project_id,)).fetchall()
     by_id = {row["id"]: row for row in rows}
     for row in rows:
         parent_id = row["parent_id"]

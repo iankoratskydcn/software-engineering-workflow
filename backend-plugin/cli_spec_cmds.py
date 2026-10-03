@@ -151,9 +151,9 @@ def _cmd_spec_list(args):
     def action(db, conn):
         project = db._spec_project(args.project_id)
         rows = conn.execute(
-            "SELECT id, project_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, kanban_task_id, estimate, created_at, updated_at "
+            "SELECT id, project_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, kanban_task_id, estimate, sort_index, created_at, updated_at "
             "FROM spec_nodes WHERE project_id = ?" + (" AND kind = ?" if args.kind else "") +
-            " ORDER BY kind, created_at, id",
+            " ORDER BY kind, sort_index, created_at, id",
             (project, args.kind) if args.kind else (project,),
         ).fetchall()
         _print({"ok": True, "nodes": [dict(row) for row in rows]})
@@ -234,4 +234,11 @@ def _cmd_spec_link_kanban(args):
 def _cmd_spec_check_ready(args):
     def action(db, conn):
         _print({"ok": True, "node_id": args.id, "readiness": db.spec_node_readiness(conn, args.id, project_id=args.project_id)})
+    _run(args, action)
+
+
+def _cmd_spec_move_node(args):
+    def action(db, conn):
+        node = db.move_spec_node(conn, args.id, project_id=args.project_id, direction=args.direction)
+        _print({"ok": True, "node": node})
     _run(args, action)
