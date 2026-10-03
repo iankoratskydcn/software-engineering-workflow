@@ -11,11 +11,12 @@ installLocalStorageStub()
 
 const source = await readFile(resolve('plugin.js'), 'utf8')
 
-test('workflow tabs lead with the Day clock, then the supplied prototype order, and default to Day', () => {
+test('workflow tabs lead with Queue then Day, then the supplied prototype order, and default to Day', () => {
   const match = source.match(/const ENGINEERING_TABS = \[[\s\S]*?\n\]/)
   assert.ok(match, 'ENGINEERING_TABS must exist')
   const tabs = [...match[0].matchAll(/id: '([^']+)'[\s\S]*?label: '([^']+)'/g)].map(([, id, label]) => ({ id, label }))
   assert.deepEqual(tabs, [
+    { id: 'queue', label: 'Queue' },
     { id: 'day', label: 'Day' },
     { id: 'mindmap', label: 'MindMap' },
     { id: 'roadmap', label: 'Roadmap' },

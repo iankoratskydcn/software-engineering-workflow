@@ -23,6 +23,7 @@ try:
         _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
         _cmd_spec_tree, _cmd_spec_seed_demo, _cmd_spec_link_kanban, _cmd_spec_check_ready,
+        _cmd_spec_move_node,
     )
     from .cli_workflow_cmds import _cmd_workflow_seed_demo
     from .cli_observe_cmds import (
@@ -49,6 +50,7 @@ except ImportError:
         _cmd_spec_add_node, _cmd_spec_list, _cmd_spec_update_node,
         _cmd_spec_set_criteria, _cmd_spec_link_decision, _cmd_spec_delete_node,
         _cmd_spec_tree, _cmd_spec_seed_demo, _cmd_spec_link_kanban, _cmd_spec_check_ready,
+        _cmd_spec_move_node,
     )
     from cli_workflow_cmds import _cmd_workflow_seed_demo  # type: ignore[import-not-found]
     from cli_observe_cmds import (  # type: ignore[import-not-found]
@@ -302,6 +304,12 @@ def setup(p) -> None:
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--id", required=True)
     v.set_defaults(func=_cmd_spec_delete_node)
+
+    v = spec_verbs.add_parser("move-node", help="Swap a node with its nearest sibling up or down")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--id", required=True)
+    v.add_argument("--direction", required=True, choices=["up", "down"])
+    v.set_defaults(func=_cmd_spec_move_node)
 
     node = verbs.add_parser("node", help="Manage mindmap hierarchy nodes")
     node_verbs = node.add_subparsers(dest="node_verb", required=True)
