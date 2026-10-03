@@ -2633,11 +2633,11 @@ function BinaryToggleCard({ decision, onResolve, resolving }) {
 
 function RankedScoreCard({ decision, onResolve, resolving }) {
   // card_payload: { scale: number[] (Fibonacci by convention: 1,2,3,5,8,
-  // 13,21...), items: [{ id, label }] }. Items are scored on the same
-  // scale and re-sort live so the relative ranking is visible while
-  // scoring -- distinct from rating_grid (independent items, no
-  // comparison implied, continuous_independent) and from a fixed-total
-  // split (no sum constraint here, continuous_constrained's other leaf).
+  // 13,21...), items: [{ id, label }] }. Each item is scored independently,
+  // in any order -- the selected button is the only indicator, items never
+  // move -- distinct from rating_grid (independent items, no comparison
+  // implied, continuous_independent) and from a fixed-total split (no sum
+  // constraint here, continuous_constrained's other leaf).
   const payload = decision.card_payload
   const scale = safeArray(payload && payload.scale).filter((n) => typeof n === 'number')
   const items = safeArray(payload && payload.items)
@@ -2649,14 +2649,12 @@ function RankedScoreCard({ decision, onResolve, resolving }) {
     return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
   }
 
-  const ranked = items
-    .map((it, i) => ({ id: idOf(it, i), label: safeText(it && it.label, idOf(it, i)), score: scores[idOf(it, i)] }))
-    .sort((a, b) => b.score - a.score)
+  const ranked = items.map((it, i) => ({ id: idOf(it, i), label: safeText(it && it.label, idOf(it, i)), score: scores[idOf(it, i)] }))
 
   return jsxs('div', {
     className: 'flex flex-col gap-2',
     children: [
-      jsx('div', { className: 'text-[0.7rem] text-(--ui-text-tertiary)', children: 'Items re-sort live as you score them.' }),
+      jsx('div', { className: 'text-[0.7rem] text-(--ui-text-tertiary)', children: 'Score each item independently, in any order.' }),
       jsx('div', {
         className: 'flex flex-col gap-1.5',
         children: ranked.map((r) =>
@@ -2666,14 +2664,17 @@ function RankedScoreCard({ decision, onResolve, resolving }) {
             style: { border: '1px solid var(--ui-stroke-secondary)' },
             children: [
               jsx('span', { className: 'flex-1 truncate text-[0.8rem]', children: r.label }),
-              jsx('span', { className: 'w-6 text-right text-[0.8rem] font-semibold', style: { color: 'var(--ui-accent)' }, children: r.score }),
               jsx('div', {
                 className: 'flex gap-0.5',
+                role: 'group',
+                'aria-label': `Score for ${r.label}`,
                 children: scale.map((n) =>
                   jsx('button', {
                     key: n,
                     type: 'button',
                     disabled: resolving,
+                    'aria-pressed': r.score === n,
+                    'aria-label': `${r.label}: ${n}`,
                     onClick: () => setScores((prev) => ({ ...prev, [r.id]: n })),
                     className: 'rounded px-1 py-0.5 text-[0.65rem] transition-colors hover:bg-(--chrome-action-hover)',
                     style: { border: `1px solid ${r.score === n ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
