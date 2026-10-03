@@ -5590,6 +5590,7 @@ function DayPane() {
 }
 
 const ENGINEERING_TABS = [
+  { id: 'queue', label: 'Queue', codicon: 'checklist' },
   { id: 'day', label: 'Day', codicon: 'clock' },
   { id: 'mindmap', label: 'MindMap', codicon: 'type-hierarchy-sub' },
   { id: 'roadmap', label: 'Roadmap', codicon: 'milestone' },
@@ -5599,6 +5600,89 @@ const ENGINEERING_TABS = [
   { id: 'spec', label: 'Spec Digest', codicon: 'file-tree' },
   { id: 'planning', label: 'Scrum Planning', codicon: 'calendar' },
 ]
+
+function DecisionQueuePane({ projectId }) {
+  // Dedicated tab for the actual pending-decision queue: card-stack
+  // rendering was previously built (useDecisionQueue + DecisionCard) but
+  // never exposed in ENGINEERING_TABS after the workflow-tabs rewrite, so
+  // this is the first UI surface that calls it.
+  const { decisions, loading, error, refresh } = useDecisionQueue(projectId, 50)
+  const [resolving, setResolving] = React.useState(false)
+
+  const onResolve = React.useCallback(async (id, choice, payload) => {
+    haptic('tap')
+    setResolving(true)
+    try {
+      const actorToken = await getActorToken()
+      const argv = ['decision', 'resolve', id, choice, '--actor-token', actorToken]
+      if (payload) argv.push('--payload', JSON.stringify(payload))
+      await cliExec(argv)
+      host.notify({ kind: 'success', message: `Resolved: ${choice}` })
+      await refresh()
+    } catch (e) {
+      host.notify({ kind: 'error', message: String(e.message || e) })
+    } finally {
+      setResolving(false)
+    }
+  }, [refresh])
+
+  const onDefer = React.useCallback(async (id) => {
+    haptic('tap')
+    setResolving(true)
+    try {
+      await cliExec(['decision', 'defer', id])
+      host.notify({ kind: 'success', message: 'Deferred' })
+      await refresh()
+    } catch (e) {
+      host.notify({ kind: 'error', message: String(e.message || e) })
+    } finally {
+      setResolving(false)
+    }
+  }, [refresh])
+
+  const onDismiss = React.useCallback(async (id) => {
+    if (!window.confirm('Dismiss this decision? It will be marked resolved and removed from the queue.')) return
+    haptic('tap')
+    setResolving(true)
+    try {
+      const actorToken = await getActorToken()
+      await cliExec(['decision', 'resolve', id, DISMISS_SENTINEL_CHOICE, '--actor-token', actorToken])
+      host.notify({ kind: 'success', message: 'Dismissed' })
+      await refresh()
+    } catch (e) {
+      host.notify({ kind: 'error', message: String(e.message || e) })
+    } finally {
+      setResolving(false)
+    }
+  }, [refresh])
+
+  if (!projectId) {
+    return jsx('div', { className: 'flex h-full items-center justify-center p-6 text-(--ui-text-tertiary)', children: 'Select a project to see its decision queue.' })
+  }
+  if (loading && decisions.length === 0) {
+    return jsx('div', { className: 'flex h-full items-center justify-center p-6 text-(--ui-text-tertiary)', children: 'Loading queue…' })
+  }
+  if (error) {
+    return jsx('div', { className: 'p-3 text-[0.8rem] text-(--ui-danger,#e5484d)', children: error })
+  }
+  if (decisions.length === 0) {
+    return jsx('div', { className: 'flex h-full items-center justify-center p-6 text-(--ui-text-tertiary)', children: 'No pending decisions.' })
+  }
+  return jsx('div', {
+    className: 'flex flex-col gap-2 p-1',
+    children: decisions.map((decision) => jsx(CardErrorBoundary, {
+      decisionId: decision.id,
+      children: jsx(DecisionCard, {
+        decision,
+        onResolve,
+        onDefer,
+        onDiscuss: () => {},
+        onDismiss,
+        resolving,
+      }),
+    }, decision.id)),
+  })
+}
 
 function DecisionHudPane({ rest }) {
   // The selected board is the sole project scope: boards and projects are
@@ -5845,7 +5929,7 @@ function DecisionHudPane({ rest }) {
             ),
             children: [jsx(Codicon, { name: tab.codicon, size: '0.8rem' }), tab.label],
           }, tab.id)),
-          activeTab !== 'mindmap' && activeTab !== 'day'
+          activeTab !== 'mindmap' && activeTab !== 'day' && activeTab !== 'queue'
             ? jsx(StarterWorkflowButton, { projectId: selectedBoardProjectId, boardName: selectedBoardName, onGenerated: () => setStarterRevision((value) => value + 1) }, 'starter-workflow')
             : null,
         ],
@@ -5854,6 +5938,8 @@ function DecisionHudPane({ rest }) {
         className: 'flex min-h-0 flex-1 flex-col overflow-y-auto',
         children: activeTab === 'day'
           ? jsx(DayPane, {}, 'day')
+          : activeTab === 'queue'
+          ? jsx(DecisionQueuePane, { projectId: selectedBoardProjectId }, 'queue')
           : activeTab === 'mindmap'
           ? jsx(MindMapPane, { key: `mindmap-${starterRevision}`, projectId: selectedBoardProjectId, boardSlug: boardForControls || undefined, selectedNodeId: selectedSpecNodeId, onSelectNode: setSelectedSpecNodeId })
           : activeTab === 'spec'
@@ -6119,6 +6205,66 @@ function SpecNodeActions({ node, projectId, boardSlug, onChanged }) {
   ] })
 }
 
+function MindMapStructureActions({ node, projectId, boardSlug, onChanged }) {
+  // Add/delete/rename/reorder for the selected node — wired straight to the
+  // CLI verbs the backend-plugin exposes (decision spec add-node/
+  // update-node/delete-node/move-node). Siblings are ordered by sort_index
+  // (schema v17); move-node swaps the node with its nearest sibling under
+  // the same parent, so these buttons never reparent anything.
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState(null)
+  const run = async (argv) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await cliExec(argv)
+      setError(null)
+      onChanged()
+    } catch (failure) {
+      setError(String(failure.message || failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const control = 'rounded border border-(--ui-stroke-secondary) px-2 py-1 text-[0.7rem] disabled:opacity-50 hover:bg-(--chrome-action-hover)'
+  const childKindOf = { theme: 'epic', epic: 'feature', feature: 'story' }
+  const childKind = childKindOf[node.kind]
+
+  const addChild = () => {
+    if (!childKind || busy) return
+    const title = window.prompt(`Title for the new ${childKind} under "${node.title}"`)
+    if (!title || !title.trim()) return
+    run(['decision', 'spec', 'add-node', '--project-id', projectId, '--kind', childKind, '--title', title.trim(), '--parent-id', node.id])
+  }
+  const rename = () => {
+    if (busy) return
+    const title = window.prompt('New title', node.title)
+    if (!title || !title.trim() || title.trim() === node.title) return
+    run(['decision', 'spec', 'update-node', '--project-id', projectId, '--id', node.id, '--title', title.trim()])
+  }
+  const remove = () => {
+    if (busy) return
+    if (!window.confirm(`Delete "${node.title}"? This only works if it has no children.`)) return
+    run(['decision', 'spec', 'delete-node', '--project-id', projectId, '--id', node.id])
+  }
+  const move = (direction) => {
+    if (busy) return
+    run(['decision', 'spec', 'move-node', '--project-id', projectId, '--id', node.id, '--direction', direction])
+  }
+
+  return jsxs('section', { 'aria-label': 'MindMap structure', className: 'flex flex-col gap-2 border-t border-(--ui-stroke-secondary) pt-3', children: [
+    jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Structure' }),
+    jsxs('div', { className: 'flex flex-wrap gap-2', children: [
+      childKind ? jsx('button', { type: 'button', className: control, disabled: busy, onClick: addChild, children: `+ ${childKind}` }) : null,
+      jsx('button', { type: 'button', className: control, disabled: busy, onClick: rename, children: 'Rename' }),
+      jsx('button', { type: 'button', className: control, disabled: busy, onClick: () => move('up'), 'aria-label': 'Move up', children: '↑ Move up' }),
+      jsx('button', { type: 'button', className: control, disabled: busy, onClick: () => move('down'), 'aria-label': 'Move down', children: '↓ Move down' }),
+      jsx('button', { type: 'button', className: control, disabled: busy, onClick: remove, children: 'Delete' }),
+    ] }),
+    error ? jsx('p', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: error }) : null,
+  ] })
+}
+
 function MindMapPane({ projectId, boardSlug, selectedNodeId, onSelectNode }) {
   const [mindQuery, setMindQuery] = React.useState('')
   const [revision, setRevision] = React.useState(0)
@@ -6165,8 +6311,28 @@ function MindMapPane({ projectId, boardSlug, selectedNodeId, onSelectNode }) {
                 ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) })] })
                 : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No acceptance criteria recorded.' }),
             jsx(SpecNodeActions, { node: selectedMindNode, projectId, boardSlug, onChanged: () => setRevision((value) => value + 1) }, selectedMindNode.id),
+            jsx(MindMapStructureActions, { node: selectedMindNode, projectId, boardSlug, onChanged: () => setRevision((value) => value + 1) }, `structure-${selectedMindNode.id}`),
           ] })
-        : jsx('div', { className: 'flex h-full min-h-48 items-center justify-center text-(--ui-text-tertiary)', children: 'Select a story to inspect it.' }) }),
+        : state.nodes.length === 0 && !state.loading && !state.error
+          ? jsx('div', { className: 'flex h-full min-h-48 flex-col items-center justify-center gap-2 text-(--ui-text-tertiary)', children: [
+              jsx('div', { children: 'This project has no MindMap yet.' }),
+              jsx('button', {
+                type: 'button',
+                className: 'rounded border border-(--ui-stroke-secondary) px-2.5 py-1.5 text-xs hover:bg-(--chrome-action-hover)',
+                onClick: async () => {
+                  const title = window.prompt('Title for the root theme')
+                  if (!title || !title.trim()) return
+                  try {
+                    await cliExec(['decision', 'spec', 'add-node', '--project-id', projectId, '--kind', 'theme', '--title', title.trim()])
+                    setRevision((value) => value + 1)
+                  } catch (failure) {
+                    host.notify({ kind: 'error', message: String(failure.message || failure) })
+                  }
+                },
+                children: '+ Add root theme',
+              }),
+            ] })
+          : jsx('div', { className: 'flex h-full min-h-48 items-center justify-center text-(--ui-text-tertiary)', children: 'Select a story to inspect it.' }) }),
     ],
   })
 }
