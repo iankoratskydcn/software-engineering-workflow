@@ -2,6 +2,10 @@
 
 Sep 24, 2026 · @Ian Koratsky
 
+> **Superseded.** `spec_nodes` is the single tree (MindMap and Spec Digest are two views of it). The
+> `hermes decision node *` CLI, the hierarchy map pane and its route described below were removed; use
+> `hermes decision spec ...` (including `link-kanban`). Kept for history.
+
 ## Origin
 
 Started as a standalone plugin idea (`docs/mindmap.md` per project, rendered as a

@@ -54,22 +54,6 @@ def test_projects_db_enables_foreign_keys_before_select(tmp_path, monkeypatch):
     assert tracked[0].statements[0].strip().upper() == "PRAGMA FOREIGN_KEYS=ON"
 
 
-def test_kanban_db_enables_foreign_keys_before_select(tmp_path, monkeypatch):
-    path = tmp_path / "kanban.db"
-    conn = sqlite3.connect(path)
-    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT NOT NULL)")
-    conn.execute("INSERT INTO tasks VALUES ('t_1', 'done')")
-    conn.commit()
-    conn.close()
-    monkeypatch.setattr(db, "_hermes_home", lambda: tmp_path)
-    monkeypatch.delenv("HERMES_KANBAN_DB", raising=False)
-    tracked = []
-    monkeypatch.setattr(db.sqlite3, "connect", _tracked_connect(path, tracked))
-
-    assert db._kanban_statuses({"t_1"}) == {"t_1": "done"}
-    assert tracked[0].statements[0].strip().upper() == "PRAGMA FOREIGN_KEYS=ON"
-
-
 def test_queue_connection_enables_foreign_keys_before_init(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "db_path", lambda: tmp_path / "queue.db")
     tracked = []
