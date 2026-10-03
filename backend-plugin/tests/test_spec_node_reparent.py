@@ -154,3 +154,34 @@ def test_making_a_theme_root_is_allowed_when_project_has_no_root(conn):
 
     assert moved["parent_id"] is None
     assert moved["level"] == 0
+
+
+def test_a_corrupted_preexisting_cycle_not_involving_the_node_is_bounded_not_infinite(conn):
+    # reparent_spec_node's own validation can never CREATE a cycle (that's what this whole
+    # file tests), but it must still not hang forever if the DB already contains a cycle it
+    # didn't cause — e.g. a hand-edited row or a bug elsewhere. Force one directly via raw SQL
+    # (bypassing reparent_spec_node, which would itself reject it) and confirm the ancestor
+    # walk raises instead of looping forever when new_parent_id sits inside that foreign cycle.
+    root = db.create_spec_node(conn, project_id="p_1", kind="theme", title="Root")
+    target = db.create_spec_node(conn, project_id="p_1", kind="epic", title="Target", parent_id=root["id"])
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, sort_index, created_at, updated_at) "
+        "VALUES ('sn_cycle_a', 'p_1', 'epic', 'sn_cycle_b', 1, 'Cycle A', 'draft', NULL, NULL, NULL, NULL, '{}', NULL, 0, 0, 0)"
+    )
+    conn.execute(
+        "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, sort_index, created_at, updated_at) "
+        "VALUES ('sn_cycle_b', 'p_1', 'epic', 'sn_cycle_a', 1, 'Cycle B', 'draft', NULL, NULL, NULL, NULL, '{}', NULL, 0, 0, 0)"
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+    with pytest.raises(db.BoundaryError) as error:
+        db.reparent_spec_node(conn, target["id"], project_id="p_1", new_parent_id="sn_cycle_a")
+    # The seen-set check already catches any repeating chain (this 2-node foreign cycle
+    # included) well before the 1000-iteration cap, since it flags ANY revisited id, not just
+    # node_id — so this terminates fast with invalid_input. The cap exists as a second line of
+    # defense for a chain that grows without ever repeating (not reachable with only 2 extra
+    # rows here); this test's job is just to prove the walk terminates at all instead of
+    # hanging, which it does either way.
+    assert error.value.code == "invalid_input"

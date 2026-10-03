@@ -2949,12 +2949,16 @@ def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: st
                 raise BoundaryError("not_found", "parent node not found")
             current = descendant["parent_id"]
             seen = {node_id}
-            while current is not None:
+            for _ in range(1000):
+                if current is None:
+                    break
                 if current in seen:
                     raise BoundaryError("invalid_input", "cannot reparent a node under one of its own descendants")
                 seen.add(current)
                 parent_row = conn.execute("SELECT parent_id FROM spec_nodes WHERE id = ?", (current,)).fetchone()
                 current = parent_row["parent_id"] if parent_row else None
+            else:
+                raise BoundaryError("internal_error", f"ancestor chain from {new_parent_id!r} exceeds max depth 1000; refusing to trust malformed hierarchy")
         if new_parent_id is None and row["level"] != 0:
             raise BoundaryError("invalid_input", "only a theme (level 0) can become a root")
         if new_parent_id is None:
