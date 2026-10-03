@@ -2926,6 +2926,61 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
     return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
 
 
+def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str, new_parent_id: str | None) -> dict[str, Any]:
+    """Move a node to a different parent, appended after that parent's
+    existing children. Unlike move_spec_node (which only reorders siblings
+    under the SAME parent), this changes parent_id itself, so it re-validates
+    the kind/level relationship exactly like create_spec_node, rejects cycles
+    (new_parent_id being node_id or one of its own descendants), and — for
+    new_parent_id=None — respects the one-root-per-project unique index
+    instead of letting sqlite raise a raw IntegrityError. Sibling sort_index
+    values under the OLD parent are left untouched (gaps are fine)."""
+    project_id = _spec_project(project_id)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None or row["project_id"] != project_id:
+            raise BoundaryError("not_found", "resource not found")
+        if new_parent_id == node_id:
+            raise BoundaryError("invalid_input", "a node cannot be its own parent")
+        if new_parent_id is not None:
+            descendant = conn.execute("SELECT parent_id FROM spec_nodes WHERE id = ?", (new_parent_id,)).fetchone()
+            if descendant is None:
+                raise BoundaryError("not_found", "parent node not found")
+            current = descendant["parent_id"]
+            seen = {node_id}
+            while current is not None:
+                if current in seen:
+                    raise BoundaryError("invalid_input", "cannot reparent a node under one of its own descendants")
+                seen.add(current)
+                parent_row = conn.execute("SELECT parent_id FROM spec_nodes WHERE id = ?", (current,)).fetchone()
+                current = parent_row["parent_id"] if parent_row else None
+        if new_parent_id is None and row["level"] != 0:
+            raise BoundaryError("invalid_input", "only a theme (level 0) can become a root")
+        if new_parent_id is None:
+            existing_root = conn.execute(
+                "SELECT id FROM spec_nodes WHERE project_id = ? AND parent_id IS NULL AND level = 0 AND id != ?",
+                (project_id, node_id),
+            ).fetchone()
+            if existing_root is not None:
+                raise BoundaryError("conflict", f"project {project_id!r} already has a root theme ({existing_root['id']})")
+        else:
+            _spec_validate_parent(conn, project_id=project_id, parent_id=new_parent_id, level=row["level"])
+        next_sort_index = conn.execute(
+            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM spec_nodes WHERE project_id = ? AND parent_id IS ?",
+            (project_id, new_parent_id),
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE spec_nodes SET parent_id = ?, sort_index = ?, updated_at = ? WHERE id = ?",
+            (new_parent_id, next_sort_index, time.time(), node_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
+
+
 def move_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, direction: str) -> dict[str, Any]:
     """Swap a node's sort_index with its nearest sibling in the given
     direction ('up' or 'down'), reordering only among siblings that share

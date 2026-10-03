@@ -242,3 +242,12 @@ def _cmd_spec_move_node(args):
         node = db.move_spec_node(conn, args.id, project_id=args.project_id, direction=args.direction)
         _print({"ok": True, "node": node})
     _run(args, action)
+
+
+def _cmd_spec_reparent_node(args):
+    """Move a node to a different parent; an empty or omitted --parent-id means root."""
+    def action(db, conn):
+        new_parent_id = (args.parent_id or "").strip() or None
+        node = db.reparent_spec_node(conn, args.id, project_id=args.project_id, new_parent_id=new_parent_id)
+        _print({"ok": True, "node": node})
+    _run(args, action)

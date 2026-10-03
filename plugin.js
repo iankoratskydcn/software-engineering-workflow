@@ -6251,6 +6251,12 @@ function MindMapStructureActions({ node, projectId, boardSlug, onChanged }) {
     if (busy) return
     run(['decision', 'spec', 'move-node', '--project-id', projectId, '--id', node.id, '--direction', direction])
   }
+  const reparent = () => {
+    if (busy) return
+    const value = window.prompt('New parent node id (blank = make it a root theme)', node.parent_id || '')
+    if (value === null) return
+    run(['decision', 'spec', 'reparent-node', '--project-id', projectId, '--id', node.id, '--parent-id', value.trim()])
+  }
 
   return jsxs('section', { 'aria-label': 'MindMap structure', className: 'flex flex-col gap-2 border-t border-(--ui-stroke-secondary) pt-3', children: [
     jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Structure' }),
@@ -6259,6 +6265,7 @@ function MindMapStructureActions({ node, projectId, boardSlug, onChanged }) {
       jsx('button', { type: 'button', className: control, disabled: busy, onClick: rename, children: 'Rename' }),
       jsx('button', { type: 'button', className: control, disabled: busy, onClick: () => move('up'), 'aria-label': 'Move up', children: '↑ Move up' }),
       jsx('button', { type: 'button', className: control, disabled: busy, onClick: () => move('down'), 'aria-label': 'Move down', children: '↓ Move down' }),
+      jsx('button', { type: 'button', className: control, disabled: busy, onClick: reparent, children: 'Move to...' }),
       jsx('button', { type: 'button', className: control, disabled: busy, onClick: remove, children: 'Delete' }),
     ] }),
     error ? jsx('p', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: error }) : null,
