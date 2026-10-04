@@ -190,28 +190,6 @@ def test_cli_exposes_spec_tree_and_add_node_surface():
     assert add_args.func is not None
 
 
-@pytest.mark.parametrize(
-    "operation",
-    ["create", "update", "archive", "link"],
-)
-def test_post_v12_legacy_hierarchy_writes_are_rejected(tmp_path, monkeypatch, operation):
-    conn = _conn(tmp_path, monkeypatch)
-    story = {"id": _seed_v12_legacy_hierarchy(conn)}
-    before = conn.execute("SELECT * FROM hierarchy_nodes ORDER BY id").fetchall()
-
-    with pytest.raises((ValueError, db.BoundaryError, sqlite3.IntegrityError)):
-        if operation == "create":
-            db.create_node(conn, project_id="p_2", parent_id=None, level=0, title="Other")
-        elif operation == "update":
-            db.update_node(conn, story["id"], title="Mutated")
-        elif operation == "archive":
-            db.archive_node(conn, story["id"])
-        else:
-            db.link_node_to_kanban(conn, story["id"], "task-1")
-
-    assert conn.execute("SELECT * FROM hierarchy_nodes ORDER BY id").fetchall() == before
-
-
 def test_raw_cross_project_parent_reference_is_rejected_by_sqlite(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     p1 = db.create_spec_node(conn, project_id="p_1", kind="theme", title="P1")

@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import db  # noqa: E402
+import pytest  # noqa: E402
 
 
 def _projects(tmp_path: Path) -> None:
@@ -61,31 +62,6 @@ def test_v7_migration_is_idempotent_and_has_root_index(tmp_path, monkeypatch):
     assert "idx_hierarchy_one_root_per_project" in indexes
 
 
-def test_legacy_rows_preserve_project_parent_levels_and_single_root(tmp_path, monkeypatch):
-    conn = _conn(tmp_path, monkeypatch)
-    ids = _seed_legacy_hierarchy(conn)
-    root = conn.execute("SELECT * FROM hierarchy_nodes WHERE id = ?", (ids["root"],)).fetchone()
-    assert root["level"] == 0 and root["parent_id"] is None
-    assert db.list_nodes(conn, project_id="p_1", parent_id=ids["root"])[0]["id"] == ids["theme"]
-    assert conn.execute(
-        "SELECT COUNT(*) FROM hierarchy_nodes WHERE project_id = ? AND level = 0", ("p_1",)
-    ).fetchone()[0] == 1
-
-
-def test_get_subtree_rolls_up_story_kanban_status(tmp_path, monkeypatch):
-    conn = _conn(tmp_path, monkeypatch)
-    kanban = sqlite3.connect(str(tmp_path / "kanban.db"))
-    kanban.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT NOT NULL)")
-    kanban.executemany("INSERT INTO tasks VALUES (?, ?)", [("t_done", "done"), ("t_open", "running")])
-    kanban.commit()
-    kanban.close()
-    _seed_legacy_hierarchy(conn, include_tasks=True)
-    tree = db.get_subtree(conn, "p_1")
-    assert tree["done_count"] == 1 and tree["total_count"] == 2
-    assert tree["children"][0]["done_count"] == 1
-    assert len(tree["children"][0]["children"][0]["children"][0]["children"]) == 2
-
-
 def test_legacy_rows_preserve_mutable_fields_and_links(tmp_path, monkeypatch):
     conn = _conn(tmp_path, monkeypatch)
     ids = _seed_legacy_hierarchy(conn)
@@ -100,3 +76,16 @@ def test_legacy_rows_preserve_kanban_task_links(tmp_path, monkeypatch):
     assert conn.execute(
         "SELECT COUNT(*) FROM hierarchy_nodes WHERE kanban_task_id IS NOT NULL"
     ).fetchone()[0] == 2
+
+
+def test_hierarchy_nodes_have_no_cli_or_write_api():
+    """The legacy table is read-only after v12 and only the migrations touch it; spec nodes replace it."""
+    import argparse
+    import cli
+
+    parser = argparse.ArgumentParser()
+    cli.setup(parser)
+    with pytest.raises(SystemExit):
+        parser.parse_args(["node", "tree", "--project", "p_1"])
+    for name in ("create_node", "list_nodes", "get_subtree", "update_node", "archive_node", "link_node_to_kanban"):
+        assert not hasattr(db, name), name

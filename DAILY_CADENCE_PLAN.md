@@ -323,7 +323,7 @@ The clock drives navigation. Tabs become destinations the current phase sends yo
 
 | Change | Detail |
 |---|---|
-| **One tree** | `spec_nodes` is the single tree for Map and Spec views. Add `kanban_task_id`. Retire `hierarchy_nodes`, the `decision node *` CLI, `HierarchyMapPane`, and the `/decision-hud/map` route. |
+| **One tree** | `spec_nodes` is the single tree for Map and Spec views. Add `kanban_task_id`. Retire `hierarchy_nodes`, the `decision node *` CLI, `HierarchyMapPane`, and the `/decision-hud/map` route. **Done:** the CLI, pane, route and db functions are deleted; the `hierarchy_nodes` table and its migrations stay so old databases still open. Attaching a decision to a node (it lived only in that pane) returns with the Decide screen. |
 | **Typed diagrams** | One `diagrams(id, project_id, kind, title, source, spec_node_id, ...)` table replaces `flows` and `architecture_diagrams`. `kind` is chosen at creation and drives template, validation, and rendering. Start with `component` (code) and `process` (concept). Stored source: Mermaid (pending spike, section 13). |
 | **Roadmap** | Rank lives on feature-level `spec_nodes` (`rank`, depends-on). Retire `roadmap_lanes` / `roadmap_items`. |
 | **Cadence** | New `days`, `blocks(day_id, index, work_hours)`, `hours(block_id, index, kind retro/work, start, end)`. `planning_items.sprint` becomes `hour_id`. |
