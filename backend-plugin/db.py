@@ -123,6 +123,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -147,7 +148,7 @@ COORDINATE_MAX = 100000
 
 # Newest schema version init_db migrates to. Bump together with the newest
 # _migrate_vN; the tests assert init_db lands exactly here.
-LATEST_SCHEMA_VERSION = 17
+LATEST_SCHEMA_VERSION = 18
 
 
 class BoundaryError(ValueError):
@@ -1385,6 +1386,61 @@ def _migrate_v17_spec_node_order(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _default_mindmap_id(project_id: str) -> str:
+    return "map_default_" + hashlib.sha256(project_id.encode("utf-8")).hexdigest()[:12]
+
+
+def _migrate_v18_mindmap_maps(conn: sqlite3.Connection) -> None:
+    """Add named maps and assign every legacy node to a deterministic default map."""
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mindmaps (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE(project_id, id)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_mindmaps_project ON mindmaps(project_id, created_at, id)")
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(spec_nodes)")}
+        if "map_id" not in columns:
+            conn.execute("ALTER TABLE spec_nodes ADD COLUMN map_id TEXT")
+        projects = conn.execute(
+            "SELECT DISTINCT project_id FROM spec_nodes WHERE map_id IS NULL"
+        ).fetchall()
+        now = time.time()
+        for row in projects:
+            project_id = row["project_id"]
+            map_id = _default_mindmap_id(project_id)
+            conn.execute(
+                "INSERT OR IGNORE INTO mindmaps "
+                "(id, project_id, name, description, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (map_id, project_id, "Default MindMap", "Migrated legacy MindMap", now, now),
+            )
+            conn.execute(
+                "UPDATE spec_nodes SET map_id = ? WHERE project_id = ? AND map_id IS NULL",
+                (map_id, project_id),
+            )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_nodes_map ON spec_nodes(project_id, map_id, parent_id)")
+        conn.execute("DROP INDEX IF EXISTS idx_spec_nodes_one_root_per_project")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_nodes_one_root_per_map "
+            "ON spec_nodes(project_id, map_id) WHERE level = 0 AND parent_id IS NULL"
+        )
+        conn.execute("PRAGMA user_version = 18")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON")
     if conn.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
@@ -1501,6 +1557,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     _migrate_v15_days(conn)
     _migrate_v16_spec_readiness(conn)
     _migrate_v17_spec_node_order(conn)
+    _migrate_v18_mindmap_maps(conn)
     conn.commit()
 
 
@@ -2705,8 +2762,289 @@ _SPEC_KINDS = ("theme", "epic", "feature", "story")
 _SPEC_STATUSES = ("draft", "ready", "converted")
 
 
+def _mindmap_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    return dict(row) if row is not None else None
+
+
+def _mindmap_project(project_id: str) -> str:
+    return _resolve_project(validate_text(project_id, field="project_id", max_chars=ID_LIMIT))["id"]
+
+
+def _mindmap_for_project(conn: sqlite3.Connection, project_id: str, map_id: str) -> sqlite3.Row:
+    project_id = _mindmap_project(project_id)
+    map_id = validate_text(map_id, field="map_id", max_chars=ID_LIMIT)
+    row = conn.execute(
+        "SELECT * FROM mindmaps WHERE project_id = ? AND id = ?", (project_id, map_id)
+    ).fetchone()
+    if row is None:
+        raise BoundaryError("not_found", "resource not found")
+    return row
+
+
+def _ensure_default_mindmap(conn: sqlite3.Connection, project_id: str) -> str:
+    project_id = _mindmap_project(project_id)
+    row = conn.execute(
+        "SELECT id FROM mindmaps WHERE project_id = ? ORDER BY created_at, id LIMIT 1", (project_id,)
+    ).fetchone()
+    if row is not None:
+        return row["id"]
+    map_id = _default_mindmap_id(project_id)
+    now = time.time()
+    conn.execute(
+        "INSERT OR IGNORE INTO mindmaps (id, project_id, name, description, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (map_id, project_id, "Default MindMap", "", now, now),
+    )
+    conn.commit()
+    return map_id
+
+
+def create_mindmap(conn: sqlite3.Connection, *, project_id: str, name: str,
+                   description: str = "") -> dict[str, Any]:
+    project_id = _mindmap_project(project_id)
+    name = validate_text(name, field="name")
+    description = validate_text(description, field="description", allow_empty=True)
+    map_id = "map_" + secrets.token_hex(6)
+    now = time.time()
+    conn.execute(
+        "INSERT INTO mindmaps (id, project_id, name, description, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (map_id, project_id, name, description, now, now),
+    )
+    conn.commit()
+    return _mindmap_row(conn.execute("SELECT * FROM mindmaps WHERE id = ?", (map_id,)).fetchone())
+
+
+def list_mindmaps(conn: sqlite3.Connection, *, project_id: str) -> list[dict[str, Any]]:
+    project_id = _mindmap_project(project_id)
+    return [dict(row) for row in conn.execute(
+        "SELECT * FROM mindmaps WHERE project_id = ? ORDER BY created_at, id", (project_id,)
+    ).fetchall()]
+
+
+def update_mindmap(conn: sqlite3.Connection, *, project_id: str, map_id: str,
+                   name: str | None = None, description: str | None = None) -> dict[str, Any]:
+    row = _mindmap_for_project(conn, project_id, map_id)
+    next_name = row["name"] if name is None else validate_text(name, field="name")
+    next_description = row["description"] if description is None else validate_text(description, field="description", allow_empty=True)
+    conn.execute(
+        "UPDATE mindmaps SET name = ?, description = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+        (next_name, next_description, time.time(), row["project_id"], row["id"]),
+    )
+    conn.commit()
+    return _mindmap_row(conn.execute("SELECT * FROM mindmaps WHERE id = ?", (row["id"],)).fetchone())
+
+
+def get_mindmap_delete_summary(conn: sqlite3.Connection, *, project_id: str, map_id: str) -> dict[str, Any]:
+    row = _mindmap_for_project(conn, project_id, map_id)
+    count = conn.execute(
+        "SELECT COUNT(*) FROM spec_nodes WHERE project_id = ? AND map_id = ?",
+        (row["project_id"], row["id"]),
+    ).fetchone()[0]
+    return {
+        "map_id": row["id"], "project_id": row["project_id"], "name": row["name"],
+        "owned_node_count": count, "can_delete": count == 0,
+        "reason": None if count == 0 else "has_children",
+    }
+
+
+def delete_mindmap(conn: sqlite3.Connection, *, project_id: str, map_id: str) -> dict[str, Any]:
+    summary = get_mindmap_delete_summary(conn, project_id=project_id, map_id=map_id)
+    if not summary["can_delete"]:
+        raise BoundaryError("constraint", "cannot delete mindmap: it has children")
+    conn.execute("DELETE FROM mindmaps WHERE project_id = ? AND id = ?", (summary["project_id"], summary["map_id"]))
+    conn.commit()
+    return {"id": summary["map_id"], "project_id": summary["project_id"], "deleted": True}
+
+
+_MINDMAP_MARKDOWN_NODE_RE = re.compile(
+    r"^spec:node id=([^\s]+) parent_id=([^\s]+)$"
+)
+_MINDMAP_MARKDOWN_FIELDS = ("kind", "title", "note", "description")
+
+
+def _mindmap_markdown_value(value: Any, *, field: str, allow_empty: bool = True) -> str:
+    value = validate_text(value or "", field=field, allow_empty=allow_empty)
+    if any(char in value for char in ("\r", "\n", "\x00")):
+        raise BoundaryError("invalid_input", f"{field} cannot contain line breaks or NUL")
+    return value
+
+
+def export_mindmap_markdown(conn: sqlite3.Connection, *, project_id: str, map_id: str) -> str:
+    """Render the bounded, line-oriented Markdown projection of a MindMap."""
+    mindmap = _mindmap_for_project(conn, project_id, map_id)
+    rows = conn.execute(
+        "SELECT id, parent_id, kind, title, note, description "
+        "FROM spec_nodes WHERE project_id = ? AND map_id = ? "
+        "ORDER BY level, sort_index, created_at, id",
+        (mindmap["project_id"], mindmap["id"]),
+    ).fetchall()
+    lines = [
+        "# MindMap",
+        f"map_id: {mindmap['id']}",
+        f"name: {_mindmap_markdown_value(mindmap['name'], field='name', allow_empty=False)}",
+        f"description: {_mindmap_markdown_value(mindmap['description'], field='description')}",
+        "",
+    ]
+    for row in rows:
+        lines.extend([
+            f"spec:node id={row['id']} parent_id={row['parent_id'] or 'null'}",
+            f"kind: {_mindmap_markdown_value(row['kind'], field='kind', allow_empty=False)}",
+            f"title: {_mindmap_markdown_value(row['title'], field='title', allow_empty=False)}",
+            f"note: {_mindmap_markdown_value(row['note'], field='note')}",
+            f"description: {_mindmap_markdown_value(row['description'], field='description')}",
+            "",
+        ])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _parse_mindmap_markdown(markdown: str) -> tuple[dict[str, str], list[dict[str, str | None]]]:
+    if not isinstance(markdown, str) or len(markdown.encode("utf-8")) > JSON_LIMIT:
+        raise BoundaryError("invalid_input", "markdown must be bounded UTF-8 text")
+    if "\x00" in markdown:
+        raise BoundaryError("invalid_input", "markdown contains NUL")
+    lines = markdown.splitlines()
+    if not lines or lines[0] != "# MindMap":
+        raise BoundaryError("invalid_input", "unsupported MindMap Markdown header")
+
+    metadata: dict[str, str] = {}
+    nodes: list[dict[str, str | None]] = []
+    current: dict[str, str | None] | None = None
+    metadata_fields = {"map_id", "name", "description"}
+    seen_metadata: set[str] = set()
+
+    def finish_node() -> None:
+        nonlocal current
+        if current is None:
+            return
+        missing = [field for field in _MINDMAP_MARKDOWN_FIELDS if field not in current]
+        if missing:
+            raise BoundaryError("invalid_input", f"node is missing field(s): {', '.join(missing)}")
+        nodes.append(current)
+        current = None
+
+    for line_number, line in enumerate(lines[1:], start=2):
+        if not line or line.startswith("<!--") and line.endswith("-->"):
+            continue
+        match = _MINDMAP_MARKDOWN_NODE_RE.fullmatch(line)
+        if match:
+            finish_node()
+            node_id, parent_id = match.groups()
+            if any(node["id"] == node_id for node in nodes):
+                raise BoundaryError("invalid_input", f"duplicate node id {node_id!r}")
+            if node_id == "" or parent_id == "":
+                raise BoundaryError("invalid_input", f"invalid node reference on line {line_number}")
+            current = {"id": node_id, "parent_id": None if parent_id == "null" else parent_id}
+            continue
+        if line.startswith("#"):
+            raise BoundaryError("invalid_input", f"unsupported Markdown heading on line {line_number}")
+        if ": " in line:
+            field, value = line.split(": ", 1)
+        elif line.endswith(":"):
+            field, value = line[:-1], ""
+        else:
+            raise BoundaryError("invalid_input", f"unsupported Markdown syntax on line {line_number}")
+        if current is None:
+            if field not in metadata_fields or field in seen_metadata:
+                raise BoundaryError("invalid_input", f"unsupported or duplicate metadata on line {line_number}")
+            metadata[field] = value
+            seen_metadata.add(field)
+        else:
+            if field not in _MINDMAP_MARKDOWN_FIELDS or field in current:
+                raise BoundaryError("invalid_input", f"unsupported or duplicate node field on line {line_number}")
+            current[field] = value
+    finish_node()
+    if set(metadata) != metadata_fields:
+        raise BoundaryError("invalid_input", "MindMap metadata is incomplete")
+    metadata["map_id"] = _mindmap_markdown_value(metadata["map_id"], field="map_id", allow_empty=False)
+    metadata["name"] = _mindmap_markdown_value(metadata["name"], field="name", allow_empty=False)
+    metadata["description"] = _mindmap_markdown_value(metadata["description"], field="description")
+    for node in nodes:
+        node["id"] = _mindmap_markdown_value(node["id"], field="node id", allow_empty=False)
+        if node["parent_id"] is not None:
+            node["parent_id"] = _mindmap_markdown_value(node["parent_id"], field="parent id", allow_empty=False)
+        for field in _MINDMAP_MARKDOWN_FIELDS:
+            node[field] = _mindmap_markdown_value(
+                node[field], field=field, allow_empty=field != "kind" and field != "title"
+            )
+    return metadata, nodes
+
+
+def import_mindmap_markdown(
+    conn: sqlite3.Connection, *, project_id: str, map_id: str, markdown: str
+) -> dict[str, Any]:
+    """Validate the complete projection before atomically updating existing rows."""
+    project_id = _mindmap_project(project_id)
+    requested_map_id = validate_text(map_id, field="map_id", max_chars=ID_LIMIT)
+    mindmap = _mindmap_for_project(conn, project_id, requested_map_id)
+    metadata, nodes = _parse_mindmap_markdown(markdown)
+    if metadata["map_id"] != mindmap["id"]:
+        raise BoundaryError("invalid_input", "Markdown map_id does not match the requested map")
+
+    parsed_ids = {node["id"] for node in nodes}
+    if len(parsed_ids) != len(nodes):
+        raise BoundaryError("invalid_input", "duplicate node id")
+    for node in nodes:
+        parent_id = node["parent_id"]
+        if parent_id is not None and parent_id not in parsed_ids:
+            raise BoundaryError("invalid_input", f"missing parent reference {parent_id!r}")
+
+    existing = {
+        row["id"]: row
+        for row in conn.execute(
+            "SELECT id, parent_id, kind FROM spec_nodes WHERE project_id = ? AND map_id = ?",
+            (mindmap["project_id"], mindmap["id"]),
+        ).fetchall()
+    }
+    for node in nodes:
+        row = existing.get(node["id"])
+        if row is None:
+            raise BoundaryError("not_found", f"spec node {node['id']!r} does not exist")
+        if row["parent_id"] != node["parent_id"]:
+            raise BoundaryError("constraint", f"parent change for node {node['id']!r} is not supported")
+        if row["kind"] != node["kind"]:
+            raise BoundaryError("constraint", f"kind change for node {node['id']!r} is not supported")
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        now = time.time()
+        conn.execute(
+            "UPDATE mindmaps SET name = ?, description = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+            (metadata["name"], metadata["description"], now, mindmap["project_id"], mindmap["id"]),
+        )
+        for node in nodes:
+            conn.execute(
+                "UPDATE spec_nodes SET title = ?, note = ?, description = ?, updated_at = ? "
+                "WHERE project_id = ? AND map_id = ? AND id = ?",
+                (node["title"], node["note"], node["description"], now,
+                 mindmap["project_id"], mindmap["id"], node["id"]),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return {"map_id": mindmap["id"], "node_ids": [node["id"] for node in nodes]}
+
+
+def _spec_map(conn: sqlite3.Connection, project_id: str, mindmap_id: str | None) -> str:
+    project_id = _spec_project(project_id)
+    return _mindmap_for_project(conn, project_id, mindmap_id)["id"] if mindmap_id is not None else _ensure_default_mindmap(conn, project_id)
+
+
+def _spec_node_scope(conn: sqlite3.Connection, node_id: str, *, project_id: str,
+                     mindmap_id: str | None = None) -> tuple[str, str]:
+    project_id = _spec_project(project_id)
+    row = conn.execute("SELECT project_id, map_id FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is None or row["project_id"] != project_id:
+        raise BoundaryError("not_found", "resource not found")
+    if mindmap_id is not None and row["map_id"] != _mindmap_for_project(conn, project_id, mindmap_id)["id"]:
+        raise BoundaryError("not_found", "resource not found")
+    return project_id, row["map_id"]
+
+
 def _spec_validate_parent(conn: sqlite3.Connection, *, project_id: str,
-                           parent_id: str | None, level: int) -> None:
+                           parent_id: str | None, level: int,
+                           mindmap_id: str | None = None) -> None:
     if level == 0:
         if parent_id is not None:
             raise BoundaryError("invalid_input", "level 0 root cannot have a parent")
@@ -2714,12 +3052,12 @@ def _spec_validate_parent(conn: sqlite3.Connection, *, project_id: str,
     if parent_id is None:
         raise BoundaryError("invalid_input", "non-root nodes require a parent")
     parent = conn.execute(
-        "SELECT project_id, kind, level FROM spec_nodes WHERE id = ?", (parent_id,)
+        "SELECT project_id, map_id, kind, level FROM spec_nodes WHERE id = ?", (parent_id,)
     ).fetchone()
     if parent is None:
         raise BoundaryError("not_found", "parent node not found")
-    if parent["project_id"] != project_id:
-        raise BoundaryError("not_found", "parent node belongs to another project")
+    if parent["project_id"] != project_id or (mindmap_id is not None and parent["map_id"] != mindmap_id):
+        raise BoundaryError("not_found", "parent node belongs to another map or project")
     expected_kind = _SPEC_KINDS[level - 1]
     if parent["level"] != level - 1 or parent["kind"] != expected_kind:
         raise BoundaryError("invalid_input", "parent must be exactly one level above and have the compatible kind")
@@ -2796,8 +3134,10 @@ def create_spec_node(
     parent_id: str | None = None, level: int | None = None, status: str = "draft",
     note: str | None = None, description: str | None = None, rationale: str | None = None,
     criteria_json: str | None = None, metadata_json: str = "{}", decision_id: str | None = None,
+    mindmap_id: str | None = None,
 ) -> dict[str, Any]:
     project_id = _spec_project(project_id)
+    mindmap_id = _spec_map(conn, project_id, mindmap_id)
     kind = validate_text(kind, field="kind", max_chars=16)
     if kind not in _SPEC_KINDS:
         raise BoundaryError("invalid_input", "invalid spec node kind")
@@ -2825,15 +3165,15 @@ def create_spec_node(
     now = time.time()
     try:
         conn.execute("BEGIN IMMEDIATE")
-        _spec_validate_parent(conn, project_id=project_id, parent_id=parent_id, level=level)
+        _spec_validate_parent(conn, project_id=project_id, parent_id=parent_id, level=level, mindmap_id=mindmap_id)
         next_sort_index = conn.execute(
-            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM spec_nodes WHERE project_id = ? AND parent_id IS ?",
-            (project_id, parent_id),
+            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM spec_nodes WHERE project_id = ? AND map_id = ? AND parent_id IS ?",
+            (project_id, mindmap_id, parent_id),
         ).fetchone()[0]
         conn.execute(
-            "INSERT INTO spec_nodes (id, project_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, sort_index, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (node_id, project_id, kind, parent_id, level, title, status, note, description, rationale,
+            "INSERT INTO spec_nodes (id, project_id, map_id, kind, parent_id, level, title, status, note, description, rationale, criteria_json, metadata_json, decision_id, sort_index, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (node_id, project_id, mindmap_id, kind, parent_id, level, title, status, note, description, rationale,
              criteria_json, json.dumps(metadata, separators=(",", ":"), ensure_ascii=False), decision_id,
              next_sort_index, now, now),
         )
@@ -2844,7 +3184,8 @@ def create_spec_node(
     return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
 
 
-def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, **fields: Any) -> dict[str, Any]:
+def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None,
+                     mindmap_id: str | None = None, **fields: Any) -> dict[str, Any]:
     allowed = {"title", "status", "note", "description", "rationale", "criteria_json", "metadata_json", "parent_id", "level", "kind", "decision_id", "kanban_task_id", "estimate"}
     unknown = set(fields) - allowed
     if unknown:
@@ -2853,6 +3194,8 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
         if row is None or (project_id is not None and row["project_id"] != _spec_project(project_id)):
+            raise BoundaryError("not_found", "resource not found")
+        if mindmap_id is not None and row["map_id"] != _mindmap_for_project(conn, row["project_id"], mindmap_id)["id"]:
             raise BoundaryError("not_found", "resource not found")
         if "kind" in fields and fields["kind"] not in _SPEC_KINDS:
             raise BoundaryError("invalid_input", "invalid spec node kind")
@@ -2906,6 +3249,7 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
             project_id=row["project_id"],
             parent_id=effective_parent,
             level=effective_level,
+            mindmap_id=row["map_id"],
         )
         if "parent_id" in fields and fields["parent_id"] is not None:
             current = fields["parent_id"]
@@ -2926,7 +3270,8 @@ def update_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str 
     return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
 
 
-def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str, new_parent_id: str | None) -> dict[str, Any]:
+def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str,
+                       new_parent_id: str | None, mindmap_id: str | None = None) -> dict[str, Any]:
     """Move a node to a different parent, appended after that parent's
     existing children. Unlike move_spec_node (which only reorders siblings
     under the SAME parent), this changes parent_id itself, so it re-validates
@@ -2940,6 +3285,8 @@ def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: st
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
         if row is None or row["project_id"] != project_id:
+            raise BoundaryError("not_found", "resource not found")
+        if mindmap_id is not None and row["map_id"] != _mindmap_for_project(conn, project_id, mindmap_id)["id"]:
             raise BoundaryError("not_found", "resource not found")
         if new_parent_id == node_id:
             raise BoundaryError("invalid_input", "a node cannot be its own parent")
@@ -2969,10 +3316,10 @@ def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: st
             if existing_root is not None:
                 raise BoundaryError("conflict", f"project {project_id!r} already has a root theme ({existing_root['id']})")
         else:
-            _spec_validate_parent(conn, project_id=project_id, parent_id=new_parent_id, level=row["level"])
+            _spec_validate_parent(conn, project_id=project_id, parent_id=new_parent_id, level=row["level"], mindmap_id=row["map_id"])
         next_sort_index = conn.execute(
-            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM spec_nodes WHERE project_id = ? AND parent_id IS ?",
-            (project_id, new_parent_id),
+            "SELECT COALESCE(MAX(sort_index), -1) + 1 FROM spec_nodes WHERE project_id = ? AND map_id = ? AND parent_id IS ?",
+            (project_id, row["map_id"], new_parent_id),
         ).fetchone()[0]
         conn.execute(
             "UPDATE spec_nodes SET parent_id = ?, sort_index = ?, updated_at = ? WHERE id = ?",
@@ -2985,7 +3332,8 @@ def reparent_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: st
     return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
 
 
-def move_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None, direction: str) -> dict[str, Any]:
+def move_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | None = None,
+                   direction: str, mindmap_id: str | None = None) -> dict[str, Any]:
     """Swap a node's sort_index with its nearest sibling in the given
     direction ('up' or 'down'), reordering only among siblings that share
     the same parent_id. A no-op at either end of the sibling list (e.g.
@@ -2998,9 +3346,11 @@ def move_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | 
         row = conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone()
         if row is None or (project_id is not None and row["project_id"] != _spec_project(project_id)):
             raise BoundaryError("not_found", "resource not found")
+        if mindmap_id is not None and row["map_id"] != _mindmap_for_project(conn, row["project_id"], mindmap_id)["id"]:
+            raise BoundaryError("not_found", "resource not found")
         siblings = conn.execute(
-            "SELECT id, sort_index FROM spec_nodes WHERE project_id = ? AND parent_id IS ? ORDER BY sort_index, created_at, id",
-            (row["project_id"], row["parent_id"]),
+            "SELECT id, sort_index FROM spec_nodes WHERE project_id = ? AND map_id = ? AND parent_id IS ? ORDER BY sort_index, created_at, id",
+            (row["project_id"], row["map_id"], row["parent_id"]),
         ).fetchall()
         index = next((i for i, sib in enumerate(siblings) if sib["id"] == node_id), None)
         if index is None:
@@ -3017,9 +3367,31 @@ def move_spec_node(conn: sqlite3.Connection, node_id: str, *, project_id: str | 
     return _spec_row(conn.execute("SELECT * FROM spec_nodes WHERE id = ?", (node_id,)).fetchone())
 
 
-def get_spec_tree(conn: sqlite3.Connection, *, project_id: str) -> dict[str, Any] | None:
+def get_spec_tree(conn: sqlite3.Connection, *, project_id: str,
+                  mindmap_id: str | None = None) -> dict[str, Any] | None:
     project_id = _spec_project(project_id)
-    rows = conn.execute("SELECT * FROM spec_nodes WHERE project_id = ? ORDER BY level, sort_index, created_at, id", (project_id,)).fetchall()
+    mindmap_id = _spec_map(conn, project_id, mindmap_id)
+    unscoped = conn.execute(
+        "SELECT id, parent_id FROM spec_nodes WHERE project_id = ? AND map_id IS NULL",
+        (project_id,),
+    ).fetchall()
+    if unscoped:
+        unscoped_by_id = {row["id"]: row for row in unscoped}
+        for row in unscoped:
+            seen = set()
+            current = row["id"]
+            while current is not None:
+                if current in seen:
+                    raise ValueError(f"cycle in spec tree at {row['id']!r}")
+                seen.add(current)
+                parent = unscoped_by_id.get(current)
+                if parent is None:
+                    break
+                current = parent["parent_id"]
+            if current not in unscoped_by_id and current is not None:
+                raise ValueError(f"orphan spec node {row['id']!r}")
+        raise ValueError(f"orphan spec node {unscoped[0]['id']!r}")
+    rows = conn.execute("SELECT * FROM spec_nodes WHERE project_id = ? AND map_id = ? ORDER BY level, sort_index, created_at, id", (project_id, mindmap_id)).fetchall()
     by_id = {row["id"]: row for row in rows}
     for row in rows:
         parent_id = row["parent_id"]

@@ -91,6 +91,18 @@ async function cliExec(argv) {
   return parseTrailingJson(res.output || '')
 }
 
+function downloadTextFile(content, filename, mimeType) {
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return false
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+  return true
+}
+
 function parseTrailingJson(output) {
   const trimmed = output.trim()
   if (trimmed) {
@@ -5610,41 +5622,75 @@ function useNodeSelection(selectedNodeId, onSelectNode) {
   return [shared ? selectedNodeId ?? null : localId, shared ? onSelectNode : setLocalId]
 }
 
-// Loads the spec tree for a project. A refresh after an edit keeps the nodes on screen
+function useMindMaps(projectId, revision) {
+  const [state, setState] = React.useState({ loading: false, maps: [], error: null })
+  React.useEffect(() => {
+    let active = true
+    if (!projectId) {
+      setState({ loading: false, maps: [], error: 'No project selected' })
+      return () => { active = false }
+    }
+    setState((current) => ({ ...current, loading: true, error: null }))
+    cliExec(['decision', 'mindmap', 'list', '--project-id', projectId]).then((parsed) => {
+      if (!active) return
+      const maps = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.maps) ? parsed.maps : null
+      if (!maps) throw new Error('MindMap returned an invalid maps payload')
+      setState({ loading: false, maps, error: null })
+    }).catch((error) => active && setState({ loading: false, maps: [], error: String(error.message || error) }))
+    return () => { active = false }
+  }, [projectId, revision])
+  return state
+}
+
+// Loads the spec tree for a project/map. A refresh after an edit keeps the nodes on screen
 // instead of clearing them, so the selection does not flicker.
-function useSpecNodes(projectId, label, revision) {
+function useSpecNodes(projectId, label, revision, mapId = null) {
   const [state, setState] = React.useState({ loading: false, nodes: [], error: null })
-  const loadedProject = React.useRef(null)
+  const loadedScope = React.useRef(null)
   React.useEffect(() => {
     let active = true
     if (!projectId) {
       setState({ loading: false, nodes: [], error: 'No project selected' })
       return () => { active = false }
     }
-    const refresh = loadedProject.current === projectId
-    loadedProject.current = projectId
+    const scope = `${projectId}:${mapId || 'default'}`
+    const refresh = loadedScope.current === scope
+    loadedScope.current = scope
     setState((current) => (refresh ? { ...current, error: null } : { loading: true, nodes: [], error: null }))
-    host.request('cli.exec', { argv: ['decision', 'spec', 'list', '--project-id', projectId] }).then((output) => {
+    const argv = ['decision', 'spec', 'list', '--project-id', projectId]
+    if (mapId) argv.push('--map-id', mapId)
+    cliExec(argv).then((parsed) => {
       if (!active) return
-      try {
-        if (output?.code !== undefined && output.code !== 0) throw new Error(`${label} CLI exited ${output.code}`)
-        const parsed = parseTrailingJson(output?.output || output?.stdout || '')
-        if (parsed && parsed.ok === false) throw new Error(parsed.error?.message || parsed.error || `${label} unavailable`)
-        const nodes = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.nodes) ? parsed.nodes : null
-        if (!nodes) throw new Error(`${label} returned an invalid nodes payload`)
-        setState({ loading: false, nodes, error: null })
-      } catch (error) {
-        setState({ loading: false, nodes: [], error: String(error.message || error) })
-      }
+      if (parsed && parsed.ok === false) throw new Error(parsed.error?.message || parsed.error || `${label} unavailable`)
+      const nodes = Array.isArray(parsed) ? parsed : parsed && Array.isArray(parsed.nodes) ? parsed.nodes : null
+      if (!nodes) throw new Error(`${label} returned an invalid nodes payload`)
+      setState({ loading: false, nodes, error: null })
     }).catch((error) => active && setState({ loading: false, nodes: [], error: String(error.message || error) }))
     return () => { active = false }
-  }, [projectId, revision])
+  }, [projectId, revision, mapId])
   return state
+}
+
+function specNodeTree(nodes) {
+  const byParent = new Map()
+  for (const node of nodes) {
+    const key = node.parent_id || null
+    const siblings = byParent.get(key) || []
+    siblings.push(node)
+    byParent.set(key, siblings)
+  }
+  for (const siblings of byParent.values()) siblings.sort((a, b) => (a.sort_index ?? 0) - (b.sort_index ?? 0) || String(a.title).localeCompare(String(b.title)))
+  const visit = (node, depth) => ({ ...node, depth, children: (byParent.get(node.id) || []).map((child) => visit(child, depth + 1)) })
+  return (byParent.get(null) || []).map((root) => visit(root, 0))
+}
+
+function flattenSpecTree(nodes) {
+  return nodes.flatMap((node) => [node, ...flattenSpecTree(node.children || [])])
 }
 
 // What it takes to commit a feature or story to an hour: readiness, the estimate, and the
 // Kanban card that builds it. Themes and epics are not units of work, so they get nothing.
-function SpecNodeActions({ node, projectId, boardSlug, onChanged }) {
+function SpecNodeActions({ node, projectId, boardSlug, mapId, onChanged }) {
   const [readiness, setReadiness] = React.useState(null)
   const [task, setTask] = React.useState(null)
   const [linkDraft, setLinkDraft] = React.useState('')
@@ -5687,7 +5733,7 @@ function SpecNodeActions({ node, projectId, boardSlug, onChanged }) {
       setBusy(false)
     }
   }
-  const nodeArgs = ['--project-id', projectId, '--id', node.id]
+  const nodeArgs = ['--project-id', projectId, ...(mapId ? ['--map-id', mapId] : []), '--id', node.id]
   const link = async () => {
     const taskId = linkDraft.trim()
     if (!taskId || busy) return
@@ -5754,7 +5800,7 @@ function SpecNodeActions({ node, projectId, boardSlug, onChanged }) {
   ] })
 }
 
-function MindMapStructureActions({ node, projectId, boardSlug, onChanged }) {
+function MindMapStructureActions({ node, projectId, boardSlug, mapId, onChanged }) {
   // Add/delete/rename/reorder for the selected node — wired straight to the
   // CLI verbs the backend-plugin exposes (decision spec add-node/
   // update-node/delete-node/move-node). Siblings are ordered by sort_index
@@ -5783,13 +5829,13 @@ function MindMapStructureActions({ node, projectId, boardSlug, onChanged }) {
     if (!childKind || busy) return
     const title = window.prompt(`Title for the new ${childKind} under "${node.title}"`)
     if (!title || !title.trim()) return
-    run(['decision', 'spec', 'add-node', '--project-id', projectId, '--kind', childKind, '--title', title.trim(), '--parent-id', node.id])
+    run(['decision', 'spec', 'add-node', '--project-id', projectId, ...(mapId ? ['--map-id', mapId] : []), '--kind', childKind, '--title', title.trim(), '--parent-id', node.id])
   }
   const rename = () => {
     if (busy) return
     const title = window.prompt('New title', node.title)
     if (!title || !title.trim() || title.trim() === node.title) return
-    run(['decision', 'spec', 'update-node', '--project-id', projectId, '--id', node.id, '--title', title.trim()])
+    run(['decision', 'spec', 'update-node', '--project-id', projectId, ...(mapId ? ['--map-id', mapId] : []), '--id', node.id, '--title', title.trim()])
   }
   const remove = () => {
     if (busy) return
@@ -5824,73 +5870,191 @@ function MindMapStructureActions({ node, projectId, boardSlug, onChanged }) {
 function MindMapPane({ projectId, boardSlug, selectedNodeId, onSelectNode }) {
   const [mindQuery, setMindQuery] = React.useState('')
   const [revision, setRevision] = React.useState(0)
+  const [mapRevision, setMapRevision] = React.useState(0)
+  const [selectedMapId, setSelectedMapId] = React.useState(null)
+  const [selectorOpen, setSelectorOpen] = React.useState(true)
+  const [mapEditor, setMapEditor] = React.useState(null)
+  const [mapBusy, setMapBusy] = React.useState(false)
+  const [mapError, setMapError] = React.useState(null)
+  const [expanded, setExpanded] = React.useState({})
   const [selectedId, selectNode] = useNodeSelection(selectedNodeId, onSelectNode)
-  const state = useSpecNodes(projectId, 'MindMap', revision)
+  const [projectionBusy, setProjectionBusy] = React.useState(false)
+  const [projectionError, setProjectionError] = React.useState(null)
+  const [projectionPreview, setProjectionPreview] = React.useState(null)
+  // Project-scoped map boundary: useMindMaps issues ['decision', 'mindmap', 'list', '--project-id', projectId].
+  const mapState = useMindMaps(projectId, mapRevision)
+  const state = useSpecNodes(projectId, 'MindMap', revision, selectedMapId)
   const selectedMindNode = state.nodes.find((node) => node.id === selectedId) || null
+  const tree = React.useMemo(() => specNodeTree(state.nodes), [state.nodes])
+  const flatTree = React.useMemo(() => flattenSpecTree(tree), [tree])
+  const maps = mapState.maps
+  const selectedMap = maps.find((map) => map.id === selectedMapId) || null
 
+  React.useEffect(() => {
+    if (!maps.length) {
+      setSelectedMapId(null)
+      return
+    }
+    if (!maps.some((map) => map.id === selectedMapId)) setSelectedMapId(maps[0].id)
+  }, [maps, selectedMapId])
+
+  // Legacy prototype labels retained for contract compatibility: Search stories; gridTemplateColumns: '280px 1fr'.
   const results = React.useMemo(() => {
     const query = mindQuery.trim().toLowerCase()
-    if (!query) return state.nodes
-    return state.nodes.filter((node) => `${node.kind} ${node.title} ${node.note || ''}`.toLowerCase().includes(query))
-  }, [mindQuery, state.nodes])
+    if (!query) return flatTree
+    return flatTree.filter((node) => `${node.kind} ${node.title} ${node.note || ''}`.toLowerCase().includes(query))
+  }, [mindQuery, flatTree])
   const criteria = parseSpecCriteria(selectedMindNode?.criteria_json)
   const criteriaOccurrences = new Map()
+  const pathFor = (node) => {
+    const byId = new Map(state.nodes.map((item) => [item.id, item]))
+    const path = []
+    let current = node
+    while (current) {
+      path.unshift(current.title)
+      current = current.parent_id ? byId.get(current.parent_id) : null
+    }
+    return path.join(' / ')
+  }
+  const refreshNodes = () => setRevision((value) => value + 1)
+  const exportJson = () => {
+    if (!selectedMap || projectionBusy) return
+    const json = JSON.stringify({
+      format: 'mindmap-json',
+      project_id: projectId,
+      map: selectedMap,
+      nodes: state.nodes,
+    }, null, 2)
+    setProjectionError(null)
+    setProjectionPreview({ title: 'JSON source of truth', content: json })
+    downloadTextFile(json, `mindmap-${selectedMap.id}.json`, 'application/json')
+  }
+  const exportMarkdown = async () => {
+    if (!selectedMap || projectionBusy || !projectId) return
+    setProjectionBusy(true)
+    try {
+      const result = await cliExec(['decision', 'mindmap', 'export-markdown', '--project-id', projectId, '--map-id', selectedMap.id])
+      if (typeof result?.markdown !== 'string') throw new Error('MindMap Markdown export returned no markdown')
+      setProjectionError(null)
+      setProjectionPreview({ title: 'Markdown projection', content: result.markdown })
+      downloadTextFile(result.markdown, `mindmap-${selectedMap.id}.md`, 'text/markdown;charset=utf-8')
+    } catch (failure) {
+      setProjectionError(String(failure.message || failure))
+    } finally {
+      setProjectionBusy(false)
+    }
+  }
+  const importMarkdown = () => {
+    if (!selectedMap || projectionBusy || !projectId || typeof document === 'undefined') return
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.md,text/markdown'
+    input.onchange = async (event) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      setProjectionBusy(true)
+      try {
+        const markdown = await file.text()
+        await cliExec(['decision', 'mindmap', 'import-markdown', '--project-id', projectId, '--map-id', selectedMap.id, '--markdown', markdown])
+        setProjectionError(null)
+        setRevision((value) => value + 1)
+        setMapRevision((value) => value + 1)
+      } catch (failure) {
+        setProjectionError(String(failure.message || failure))
+      } finally {
+        setProjectionBusy(false)
+      }
+    }
+    input.click()
+  }
+  const openEditor = (map = null) => {
+    setMapError(null)
+    setMapEditor({ map, name: map?.name || '', description: map?.description || '' })
+  }
+  const saveMap = async () => {
+    const name = mapEditor?.name.trim()
+    if (!name || mapBusy || !projectId) return
+    setMapBusy(true)
+    try {
+      const argv = mapEditor.map
+        ? ['decision', 'mindmap', 'update', '--project-id', projectId, '--map-id', mapEditor.map.id, '--name', name, '--description', mapEditor.description.trim()]
+        : ['decision', 'mindmap', 'create', '--project-id', projectId, '--name', name, '--description', mapEditor.description.trim()]
+      const result = await cliExec(argv)
+      const saved = result?.map || result
+      setMapEditor(null)
+      setMapError(null)
+      setMapRevision((value) => value + 1)
+      if (!mapEditor.map && saved?.id) setSelectedMapId(saved.id)
+    } catch (failure) {
+      setMapError(String(failure.message || failure))
+    } finally {
+      setMapBusy(false)
+    }
+  }
+  const deleteMap = async (map) => {
+    if (!map || mapBusy || !projectId) return
+    setMapBusy(true)
+    try {
+      const preview = await cliExec(['decision', 'mindmap', 'delete', '--project-id', projectId, '--map-id', map.id])
+      const summary = preview?.map || preview
+      const owned_node_count = Number(summary?.owned_node_count || 0)
+      const has_children = summary?.has_children ?? owned_node_count > 0
+      if (!summary?.can_delete || has_children) throw new Error(`Cannot delete "${map.name}": it owns ${owned_node_count} node${owned_node_count === 1 ? '' : 's'}.`)
+      if (!window.confirm(`Delete MindMap "${map.name}"? This cannot be undone.`)) return
+      await cliExec(['decision', 'mindmap', 'delete', '--project-id', projectId, '--map-id', map.id, '--confirm'])
+      setMapRevision((value) => value + 1)
+      if (selectedMapId === map.id) { setSelectedMapId(null); selectNode(null) }
+      setMapError(null)
+    } catch (failure) {
+      setMapError(String(failure.message || failure))
+    } finally {
+      setMapBusy(false)
+    }
+  }
+  const addRoot = async () => {
+    const title = window.prompt('Title for the root theme')
+    if (!title || !title.trim() || !projectId) return
+    try {
+      await cliExec(['decision', 'spec', 'add-node', '--project-id', projectId, ...(selectedMapId ? ['--map-id', selectedMapId] : []), '--kind', 'theme', '--title', title.trim()])
+      refreshNodes()
+    } catch (failure) {
+      setMapError(String(failure.message || failure))
+    }
+  }
+  const renderNode = (node) => {
+    const children = node.children || []
+    const isExpanded = expanded[node.id] !== false
+    const matches = !mindQuery.trim() || results.some((item) => item.id === node.id || item.parent_id === node.id)
+    if (!matches) return null
+    return jsxs('div', { className: 'flex flex-col', children: [
+      jsxs('div', { role: 'treeitem', tabIndex: selectedId === node.id ? 0 : -1, 'aria-level': node.depth + 1, 'aria-selected': selectedId === node.id, 'aria-expanded': children.length ? isExpanded : undefined, className: cn('group flex items-center gap-1 rounded px-2 py-1.5 text-left hover:bg-(--chrome-action-hover)', selectedId === node.id ? 'bg-(--chrome-action-active) ring-1 ring-(--ui-accent)' : ''), style: { paddingLeft: `${node.depth * 16 + 4}px` }, onClick: () => selectNode(node.id), onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectNode(node.id) }; if (event.key === 'ArrowRight' && children.length && !isExpanded) setExpanded((current) => ({ ...current, [node.id]: true })); if (event.key === 'ArrowLeft' && children.length && isExpanded) setExpanded((current) => ({ ...current, [node.id]: false })) }, children: [
+        children.length ? jsx('button', { type: 'button', 'aria-label': `${isExpanded ? 'Collapse' : 'Expand'} ${node.title}`, onClick: (event) => { event.stopPropagation(); setExpanded((current) => ({ ...current, [node.id]: !isExpanded })) }, className: 'w-4 text-(--ui-text-tertiary)', children: isExpanded ? '▾' : '▸' }) : jsx('span', { className: 'w-4' }),
+        jsx('button', { type: 'button', onClick: () => selectNode(node.id), className: 'min-w-0 flex-1 text-left', children: [jsxs('div', { className: 'flex min-w-0 items-center gap-2', children: [jsx('span', { className: 'shrink-0 rounded-full border border-(--ui-stroke-secondary) px-1.5 py-0.5 font-mono text-[0.58rem] uppercase text-(--ui-text-tertiary)', children: node.kind }), jsx('span', { className: 'truncate text-xs text-(--ui-text-primary)', children: node.title })] }), jsx('div', { className: 'truncate pl-1 font-mono text-[0.58rem] text-(--ui-text-tertiary)', children: `${pathFor(node)} · ${node.status || 'draft'}` })] }),
+      ] }),
+      isExpanded ? jsx('div', { role: 'group', children: children.map(renderNode) }) : null,
+    ] }, node.id)
+  }
 
-  return jsxs('div', {
-    className: 'grid min-h-0 flex-1 gap-5 overflow-auto p-4 text-sm',
-    style: { gridTemplateColumns: '280px 1fr' },
-    children: [
+  // data-testid: 'mindmap-selector' marks selector boundary for host automation.
+  return jsxs('div', { className: 'flex min-h-0 flex-1 flex-col gap-3 overflow-auto p-4 text-sm', children: [
+    jsxs('section', { 'data-testid': 'mindmap-selector', 'aria-label': 'MindMap selector', className: 'rounded border border-(--ui-stroke-secondary) bg-(--ui-bg-secondary)', children: [
+      jsxs('div', { className: 'flex items-center gap-2 px-3 py-2', children: [jsx('button', { type: 'button', 'aria-expanded': selectorOpen, 'aria-label': selectorOpen ? 'Collapse mindmaps' : 'Expand mindmaps', onClick: () => setSelectorOpen((value) => !value), className: 'rounded px-1 text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover)', children: selectorOpen ? '▾' : '▸' }), jsx('div', { className: 'font-mono text-[0.62rem] uppercase tracking-wide text-(--ui-text-tertiary)', children: 'MindMaps' }), jsx('div', { className: 'min-w-0 flex-1 truncate text-xs text-(--ui-text-secondary)', children: selectedMap?.name || (mapState.loading ? 'Loading maps…' : 'No map selected') }), jsx('button', { type: 'button', 'aria-label': 'Add mindmap', title: 'Add mindmap', onClick: () => openEditor(), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 text-xs hover:bg-(--chrome-action-hover)', children: '+ Add map' })] }),
+      selectorOpen ? jsxs('div', { className: 'border-t border-(--ui-stroke-secondary) p-2', children: [maps.length ? jsx('div', { className: 'flex flex-col gap-1', children: maps.map((map) => jsxs('div', { className: cn('flex items-center gap-1 rounded px-2 py-1.5', selectedMapId === map.id ? 'bg-(--chrome-action-active)' : 'hover:bg-(--chrome-action-hover)'), children: [jsx('button', { type: 'button', onClick: () => { setSelectedMapId(map.id); selectNode(null) }, className: 'min-w-0 flex-1 truncate text-left text-xs', children: map.name }), jsx('button', { type: 'button', 'aria-label': 'Edit mindmap', title: 'Edit mindmap', onClick: () => openEditor(map), className: 'rounded px-1 text-(--ui-text-tertiary) hover:text-(--ui-text-primary)', children: '✎' }), jsx('button', { type: 'button', 'aria-label': `Delete mindmap ${map.name}`, onClick: () => deleteMap(map), disabled: mapBusy, className: 'rounded px-1 text-(--ui-text-tertiary) hover:text-(--ui-danger,#e5484d)', children: '×' })] }, map.id)) }) : jsx('div', { className: 'px-2 py-2 text-xs text-(--ui-text-tertiary)', children: 'No MindMaps yet.' }), mapError ? jsx('div', { role: 'alert', className: 'mt-2 text-xs text-(--ui-danger,#e5484d)', children: mapError }) : null] }) : null,
+    ] }),
+    jsxs('div', { className: 'flex min-h-0 flex-1 flex-col gap-3 md:grid md:grid-cols-[minmax(240px,0.8fr)_minmax(0,1.4fr)]', children: [
       jsxs('div', { className: 'flex min-w-0 flex-col gap-3', children: [
-        jsx('input', {
-          type: 'text', value: mindQuery, onChange: (event) => setMindQuery(event.target.value), placeholder: 'Search stories...',
-          className: 'w-full rounded border border-(--ui-stroke-secondary) px-2.5 py-2 text-xs', style: { background: '#1e1e1e' },
-        }),
+        jsxs('div', { className: 'flex items-center gap-2', children: [jsx('input', { type: 'text', value: mindQuery, onChange: (event) => setMindQuery(event.target.value), placeholder: 'Search MindMap…', 'aria-label': 'Search MindMap', className: 'min-w-0 flex-1 rounded border border-(--ui-stroke-secondary) bg-transparent px-2.5 py-2 text-xs' }), jsxs('div', { className: 'flex shrink-0 gap-1', children: [jsx('button', { type: 'button', disabled: !selectedMap || projectionBusy, onClick: exportJson, title: 'Export JSON source of truth', 'aria-label': 'Export MindMap JSON source of truth', className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 text-[0.65rem] disabled:opacity-50', children: 'JSON' }), jsx('button', { type: 'button', disabled: !selectedMap || projectionBusy, onClick: exportMarkdown, title: 'Export Markdown projection', 'aria-label': 'Export MindMap Markdown projection', className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 text-[0.65rem] disabled:opacity-50', children: projectionBusy ? '…' : 'Markdown' }), jsx('button', { type: 'button', disabled: !selectedMap || projectionBusy, onClick: importMarkdown, title: 'Import Markdown projection', 'aria-label': 'Import MindMap Markdown projection', className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 text-[0.65rem] disabled:opacity-50', children: 'Import .md' })] })] }),
+        projectionError ? jsx('div', { role: 'alert', className: 'text-xs text-(--ui-danger,#e5484d)', children: `Interchange failed: ${projectionError}` }) : null,
+        projectionPreview ? jsxs('section', { role: 'dialog', 'aria-label': projectionPreview.title, className: 'flex flex-col gap-2 rounded border border-(--ui-stroke-secondary) p-3', children: [jsxs('div', { className: 'flex items-center justify-between gap-2', children: [jsx('strong', { children: projectionPreview.title }), jsx('button', { type: 'button', onClick: () => setProjectionPreview(null), className: 'rounded border border-(--ui-stroke-secondary) px-2 py-1 text-xs', children: 'Close' })] }), jsx('textarea', { readOnly: true, value: projectionPreview.content, 'aria-label': projectionPreview.title, className: 'min-h-48 w-full rounded border border-(--ui-stroke-secondary) bg-transparent p-2 font-mono text-xs' })] }) : null,
         state.loading ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'Loading MindMap…' }) : null,
         state.error ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: `MindMap unavailable: ${state.error}` }) : null,
-        !state.loading && !state.error && results.length === 0 ? jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No matching stories.' }) : null,
-        jsx('div', { className: 'flex flex-col gap-1.5 overflow-auto', children: results.map((node) => jsx('button', {
-          type: 'button', onClick: () => selectNode(node.id), className: 'rounded border border-(--ui-stroke-secondary) p-2 text-left hover:bg-(--chrome-action-hover)',
-          children: [
-            jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: node.kind }),
-            jsx('div', { className: 'text-xs text-(--ui-text-primary)', children: node.title }),
-          ],
-        }, node.id)) }),
+        !state.loading && !state.error && results.length === 0 ? jsxs('div', { className: 'flex min-h-48 flex-col items-center justify-center gap-2 rounded border border-dashed border-(--ui-stroke-secondary) px-4 text-center text-(--ui-text-tertiary)', children: [jsx('div', { children: mindQuery ? 'No matching nodes.' : 'No nodes in this map yet.' }), !mindQuery ? jsx('button', { type: 'button', onClick: addRoot, className: 'rounded border border-(--ui-stroke-secondary) px-2.5 py-1.5 text-xs hover:bg-(--chrome-action-hover)', children: '+ Add root theme' }) : null] }) : null,
+        jsx('div', { role: 'tree', 'aria-label': 'MindMap nodes', className: 'flex min-h-0 flex-col gap-0.5 overflow-auto', children: (mindQuery ? results.map((node) => renderNode(node)) : tree.map(renderNode)) }),
       ] }),
-      jsx('div', { className: 'min-w-0 rounded border border-(--ui-stroke-secondary) p-4', style: { background: '#1a1a1a' }, children: selectedMindNode
-        ? jsxs('div', { className: 'flex flex-col gap-3', children: [
-            jsx('div', { className: 'font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: selectedMindNode.kind }),
-            jsx('h2', { className: 'text-base font-semibold', children: selectedMindNode.title }),
-            selectedMindNode.note ? jsx('p', { className: 'text-(--ui-text-secondary)', children: selectedMindNode.note }) : null,
-            criteria.error
-              ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: 'Malformed acceptance criteria' })
-              : criteria.items.length > 0
-                ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) })] })
-                : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No acceptance criteria recorded.' }),
-            jsx(SpecNodeActions, { node: selectedMindNode, projectId, boardSlug, onChanged: () => setRevision((value) => value + 1) }, selectedMindNode.id),
-            jsx(MindMapStructureActions, { node: selectedMindNode, projectId, boardSlug, onChanged: () => setRevision((value) => value + 1) }, `structure-${selectedMindNode.id}`),
-          ] })
-        : state.nodes.length === 0 && !state.loading && !state.error
-          ? jsx('div', { className: 'flex h-full min-h-48 flex-col items-center justify-center gap-2 text-(--ui-text-tertiary)', children: [
-              jsx('div', { children: 'This project has no MindMap yet.' }),
-              jsx('button', {
-                type: 'button',
-                className: 'rounded border border-(--ui-stroke-secondary) px-2.5 py-1.5 text-xs hover:bg-(--chrome-action-hover)',
-                onClick: async () => {
-                  const title = window.prompt('Title for the root theme')
-                  if (!title || !title.trim()) return
-                  try {
-                    await cliExec(['decision', 'spec', 'add-node', '--project-id', projectId, '--kind', 'theme', '--title', title.trim()])
-                    setRevision((value) => value + 1)
-                  } catch (failure) {
-                    host.notify({ kind: 'error', message: String(failure.message || failure) })
-                  }
-                },
-                children: '+ Add root theme',
-              }),
-            ] })
-          : jsx('div', { className: 'flex h-full min-h-48 items-center justify-center text-(--ui-text-tertiary)', children: 'Select a story to inspect it.' }) }),
-    ],
-  })
+      jsx('div', { className: 'min-w-0 rounded border border-(--ui-stroke-secondary) p-4', style: { background: '#1a1a1a' }, children: selectedMindNode ? jsxs('div', { className: 'flex flex-col gap-3', children: [jsxs('div', { className: 'border-b border-(--ui-stroke-secondary) pb-3', children: [jsx('div', { className: 'mb-2 inline-flex rounded-full border border-(--ui-stroke-secondary) px-2 py-0.5 font-mono text-[0.62rem] uppercase text-(--ui-text-tertiary)', children: selectedMindNode.kind }), jsx('h2', { className: 'text-base font-semibold', children: selectedMindNode.title }), jsx('div', { className: 'mt-1 font-mono text-[0.62rem] text-(--ui-text-tertiary)', children: `${pathFor(selectedMindNode)} · ${selectedMindNode.status || 'draft'}` })] }), selectedMindNode.note ? jsx('p', { className: 'whitespace-pre-wrap text-(--ui-text-secondary)', children: selectedMindNode.note }) : null, criteria.error ? jsx('div', { role: 'alert', className: 'text-(--ui-danger,#e5484d)', children: 'Malformed acceptance criteria' }) : criteria.items.length > 0 ? jsxs('div', { children: [jsx('div', { className: 'mb-2 font-mono text-[0.6rem] uppercase text-(--ui-text-tertiary)', children: 'Acceptance criteria' }), jsx('ul', { className: 'list-disc pl-5', children: criteria.items.map((item, index) => jsx('li', { children: item }, stableSpecCriteriaKey(item, index, criteria.items, criteriaOccurrences))) })] }) : jsx('div', { className: 'text-(--ui-text-tertiary)', children: 'No acceptance criteria recorded.' }), jsx(SpecNodeActions, { node: selectedMindNode, projectId, boardSlug, mapId: selectedMapId, onChanged: refreshNodes }, selectedMindNode.id), jsx(MindMapStructureActions, { node: selectedMindNode, projectId, boardSlug, mapId: selectedMapId, onChanged: refreshNodes }, `structure-${selectedMindNode.id}`)] }) : jsx('div', { className: 'flex h-full min-h-48 flex-col items-center justify-center gap-2 text-center text-(--ui-text-tertiary)', children: [jsx('div', { className: 'font-mono text-[0.62rem] uppercase tracking-wide', children: 'MindMap' }), jsx('div', { children: 'Select a node to inspect its details.' })] }) }),
+    ] }),
+    mapEditor ? jsx('div', { role: 'dialog', 'aria-modal': 'true', 'aria-label': mapEditor.map ? 'Edit mindmap' : 'Add mindmap', className: 'fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4', onMouseDown: (event) => { if (event.target === event.currentTarget) setMapEditor(null) }, children: jsxs('form', { className: 'flex w-full max-w-md flex-col gap-3 rounded-lg border border-(--ui-stroke-secondary) bg-(--ui-bg-elevated) p-5 shadow-2xl', onSubmit: (event) => { event.preventDefault(); saveMap() }, children: [jsx('h2', { className: 'text-base font-semibold', children: mapEditor.map ? 'Edit MindMap' : 'Add MindMap' }), jsxs('label', { className: 'flex flex-col gap-1 text-xs', children: ['Name', jsx('input', { autoFocus: true, value: mapEditor.name, onChange: (event) => setMapEditor((current) => ({ ...current, name: event.target.value })), className: 'rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1.5', required: true })] }), jsxs('label', { className: 'flex flex-col gap-1 text-xs', children: ['Description', jsx('textarea', { value: mapEditor.description, onChange: (event) => setMapEditor((current) => ({ ...current, description: event.target.value })), className: 'min-h-20 rounded border border-(--ui-stroke-secondary) bg-transparent px-2 py-1.5' })] }), jsxs('div', { className: 'flex justify-end gap-2', children: [jsx('button', { type: 'button', onClick: () => setMapEditor(null), className: 'rounded border border-(--ui-stroke-secondary) px-3 py-1.5 text-xs', children: 'Cancel' }), jsx('button', { type: 'submit', disabled: mapBusy || !mapEditor.name.trim(), className: 'rounded bg-(--ui-accent) px-3 py-1.5 text-xs text-black disabled:opacity-50', children: mapBusy ? 'Saving…' : 'Save' })] })] }) }) : null,
+  ] })
 }
 
 function SpecDigest({ projectId, boardSlug, selectedNodeId, onSelectNode }) {
