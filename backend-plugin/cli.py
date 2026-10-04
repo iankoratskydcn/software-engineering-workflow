@@ -359,43 +359,6 @@ def setup(p) -> None:
     v.add_argument("--parent-id", default=None, dest="parent_id")
     v.set_defaults(func=_cmd_spec_reparent_node)
 
-    node = verbs.add_parser("node", help="Manage mindmap hierarchy nodes")
-    node_verbs = node.add_subparsers(dest="node_verb", required=True)
-
-    v = node_verbs.add_parser("create", help="Create a hierarchy node")
-    v.add_argument("--project", required=True, dest="project_id")
-    v.add_argument("--parent", required=True, dest="parent_id",
-                   help="Parent node id, or 'none' for a root")
-    v.add_argument("--level", required=True, type=int)
-    v.add_argument("--title", required=True)
-    v.add_argument("--kanban-task", default=None, dest="kanban_task_id")
-    v.set_defaults(func=_cmd_node_create)
-
-    v = node_verbs.add_parser("list", help="List active child nodes")
-    v.add_argument("--project", required=True, dest="project_id")
-    v.add_argument("--parent", default=None, dest="parent_id")
-    v.set_defaults(func=_cmd_node_list)
-
-    v = node_verbs.add_parser("tree", help="Print the project hierarchy tree")
-    v.add_argument("--project", required=True, dest="project_id")
-    v.set_defaults(func=_cmd_node_tree)
-
-    v = node_verbs.add_parser("link-kanban", help="Link a hierarchy node to a Kanban task")
-    v.add_argument("node_id")
-    v.add_argument("task_id")
-    v.set_defaults(func=_cmd_node_link_kanban)
-
-    v = node_verbs.add_parser("update", help="Update a hierarchy node")
-    v.add_argument("node_id")
-    v.add_argument("--title")
-    v.add_argument("--sort-order", type=int, dest="sort_order")
-    v.add_argument("--kanban-task", default=None, dest="kanban_task_id")
-    v.set_defaults(func=_cmd_node_update)
-
-    v = node_verbs.add_parser("archive", help="Archive a hierarchy node and descendants")
-    v.add_argument("node_id")
-    v.set_defaults(func=_cmd_node_archive)
-
     flow = verbs.add_parser("flow", help="Manage project flowcharts")
     flow_verbs = flow.add_subparsers(dest="flow_verb", required=True)
     v = flow_verbs.add_parser("add")
@@ -814,47 +777,6 @@ def _cmd_mindmap_import_markdown(args) -> None:
     finally:
         if conn is not None:
             conn.close()
-
-
-def _cmd_node_create(args) -> None:
-    _run_node_command(
-        db.create_node, "node", project_id=args.project_id,
-        parent_id=None if args.parent_id.lower() == "none" else args.parent_id,
-        level=args.level, title=args.title, kanban_task_id=args.kanban_task_id,
-    )
-
-
-def _cmd_node_list(args) -> None:
-    _run_node_command(
-        db.list_nodes, "nodes", project_id=args.project_id, parent_id=args.parent_id,
-    )
-
-
-def _cmd_node_tree(args) -> None:
-    _run_node_command(db.get_subtree, "tree", project_id=args.project_id)
-
-
-def _cmd_node_link_kanban(args) -> None:
-    _run_node_command(
-        db.link_node_to_kanban, "node", node_id=args.node_id,
-        kanban_task_id=args.task_id,
-    )
-
-
-def _cmd_node_update(args) -> None:
-    fields = {}
-    if args.title is not None:
-        fields["title"] = args.title
-    if args.sort_order is not None:
-        fields["sort_order"] = args.sort_order
-    if args.kanban_task_id is not None:
-        fields["kanban_task_id"] = args.kanban_task_id or None
-    _run_node_command(db.update_node, "node", node_id=args.node_id, **fields)
-
-
-def _cmd_node_archive(args) -> None:
-    _run_node_command(db.archive_node, "node", node_id=args.node_id)
-
 
 def _cmd_flow_add(args) -> None:
     _run_node_command(db.create_flow, "flow", project_id=args.project_id, name=args.name)
