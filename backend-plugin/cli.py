@@ -251,6 +251,39 @@ def setup(p) -> None:
     v = verbs.add_parser("agent-metrics-snapshot", help="Emit the agent_metrics_snapshot.py JSON (heatmap/scatter/treemap/radar/sankey widgets)")
     v.set_defaults(func=_cmd_agent_metrics_snapshot)
 
+    mindmap = verbs.add_parser("mindmap", help="Manage named project MindMaps")
+    mindmap_verbs = mindmap.add_subparsers(dest="mindmap_verb", required=True)
+    v = mindmap_verbs.add_parser("create")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--name", required=True)
+    v.add_argument("--description", default="")
+    v.set_defaults(func=_cmd_mindmap_create)
+    v = mindmap_verbs.add_parser("list")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.set_defaults(func=_cmd_mindmap_list)
+    v = mindmap_verbs.add_parser("update")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", required=True, dest="map_id")
+    v.add_argument("--name")
+    v.add_argument("--description")
+    v.set_defaults(func=_cmd_mindmap_update)
+    v = mindmap_verbs.add_parser("delete")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", required=True, dest="map_id")
+    v.add_argument("--confirm", action="store_true")
+    v.set_defaults(func=_cmd_mindmap_delete)
+    v = mindmap_verbs.add_parser("export-markdown", help="Export a MindMap Markdown projection")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", required=True, dest="map_id")
+    v.set_defaults(func=_cmd_mindmap_export_markdown)
+    v = mindmap_verbs.add_parser("import-markdown", help="Import a MindMap Markdown projection")
+    v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", required=True, dest="map_id")
+    source = v.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file", dest="file")
+    source.add_argument("--markdown", dest="markdown")
+    v.set_defaults(func=_cmd_mindmap_import_markdown)
+
     spec = verbs.add_parser("spec", help="Spec Digest: manage specification tree nodes")
     spec_verbs = spec.add_subparsers(dest="spec_verb", required=True)
     v = spec_verbs.add_parser("add-node")
@@ -258,19 +291,24 @@ def setup(p) -> None:
     v.add_argument("--title", required=True)
     v.add_argument("--project-id", required=True, dest="project_id")
     v.add_argument("--parent-id", default=None, dest="parent_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.set_defaults(func=_cmd_spec_add_node)
     v = spec_verbs.add_parser("seed-demo", help="Create the idempotent canonical MindMap demo tree")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.set_defaults(func=_cmd_spec_seed_demo)
     v = spec_verbs.add_parser("tree")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.set_defaults(func=_cmd_spec_tree)
     v = spec_verbs.add_parser("list")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.add_argument("--kind", default=None)
     v.set_defaults(func=_cmd_spec_list)
     v = spec_verbs.add_parser("update-node")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.add_argument("--id", required=True)
     v.add_argument("--title", default=None)
     v.add_argument("--status", default=None, choices=["draft", "ready", "converted"])
@@ -281,22 +319,26 @@ def setup(p) -> None:
     v.set_defaults(func=_cmd_spec_update_node)
     v = spec_verbs.add_parser("set-criteria")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.add_argument("--id", required=True)
     v.add_argument("--criteria-json", required=True, dest="criteria_json")
     v.set_defaults(func=_cmd_spec_set_criteria)
     v = spec_verbs.add_parser("link-kanban", help="Link a node to a Kanban card; an empty --task-id unlinks")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.add_argument("--id", required=True)
     v.add_argument("--task-id", required=True, dest="task_id")
     v.set_defaults(func=_cmd_spec_link_kanban)
 
     v = spec_verbs.add_parser("check-ready", help="Definition of Ready for a node")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.add_argument("--id", required=True)
     v.set_defaults(func=_cmd_spec_check_ready)
 
     v = spec_verbs.add_parser("link-decision")
     v.add_argument("--project-id", required=True, dest="project_id")
+    v.add_argument("--map-id", default=None, dest="map_id")
     v.add_argument("--id", required=True)
     v.add_argument("--decision-id", required=True, dest="decision_id")
     v.set_defaults(func=_cmd_spec_link_decision)
@@ -689,6 +731,89 @@ def _cmd_tradeoff_set_side(args) -> None:
         db.set_prioritized_side, "tradeoff", project_id=args.project_id,
         tradeoff_id=args.tradeoff_id, side=args.side,
     )
+
+
+def _cmd_mindmap_create(args) -> None:
+    _run_node_command(
+        db.create_mindmap, "map", project_id=args.project_id,
+        name=args.name, description=args.description,
+    )
+
+
+def _cmd_mindmap_list(args) -> None:
+    _run_node_command(db.list_mindmaps, "maps", project_id=args.project_id)
+
+
+def _cmd_mindmap_update(args) -> None:
+    _run_node_command(
+        db.update_mindmap, "map", project_id=args.project_id, map_id=args.map_id,
+        name=args.name, description=args.description,
+    )
+
+
+def _cmd_mindmap_delete(args) -> None:
+    conn = None
+    try:
+        conn = db.connect()
+        summary = db.get_mindmap_delete_summary(
+            conn, project_id=args.project_id, map_id=args.map_id,
+        )
+        if not args.confirm:
+            _print({"ok": True, "map": summary, "deleted": False})
+            return
+        deleted = db.delete_mindmap(conn, project_id=args.project_id, map_id=args.map_id)
+        _print({"ok": True, "deleted": True, "map": {**summary, "id": summary["map_id"]}, **deleted})
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        raise SystemExit(exit_code)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _cmd_mindmap_export_markdown(args) -> None:
+    conn = None
+    try:
+        conn = db.connect()
+        markdown = db.export_mindmap_markdown(
+            conn, project_id=args.project_id, map_id=args.map_id,
+        )
+        _print({"ok": True, "markdown": markdown})
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        raise SystemExit(exit_code)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _cmd_mindmap_import_markdown(args) -> None:
+    conn = None
+    try:
+        if args.markdown is not None:
+            markdown = args.markdown
+        else:
+            try:
+                markdown = Path(args.file).read_text(encoding="utf-8")
+            except UnicodeError as exc:
+                raise ValueError("Markdown file must be valid UTF-8") from exc
+        conn = db.connect()
+        result = db.import_mindmap_markdown(
+            conn,
+            project_id=args.project_id,
+            map_id=args.map_id,
+            markdown=markdown,
+        )
+        _print({"ok": True, "result": result})
+    except Exception as exc:
+        envelope, exit_code = boundary_error(exc)
+        _print(envelope)
+        raise SystemExit(exit_code)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _cmd_node_create(args) -> None:

@@ -48,7 +48,8 @@ def _run(args, action):
 def _cmd_spec_add_node(args):
     def action(db, conn):
         node = db.create_spec_node(conn, project_id=args.project_id, kind=args.kind,
-                                   title=args.title, parent_id=args.parent_id)
+                                   title=args.title, parent_id=args.parent_id,
+                                   mindmap_id=args.map_id)
         _print({"ok": True, "node": node})
     _run(args, action)
 
@@ -102,16 +103,16 @@ _DEMO_MINDMAP = {
 }
 
 
-def _find_child(conn, project_id, parent_id, kind, title):
+def _find_child(conn, project_id, parent_id, kind, title, mindmap_id=None):
     return conn.execute(
-        "SELECT * FROM spec_nodes WHERE project_id = ? AND parent_id IS ? AND kind = ? AND title = ?",
-        (project_id, parent_id, kind, title),
+        "SELECT * FROM spec_nodes WHERE project_id = ? AND map_id IS ? AND parent_id IS ? AND kind = ? AND title = ?",
+        (project_id, mindmap_id, parent_id, kind, title),
     ).fetchone()
 
 
-def _seed_demo_node(db, conn, project_id, spec, parent_id=None, level=0):
+def _seed_demo_node(db, conn, project_id, spec, parent_id=None, level=0, mindmap_id=None):
     kind = "theme" if level == 0 else spec["kind"]
-    row = _find_child(conn, project_id, parent_id, kind, spec["title"])
+    row = _find_child(conn, project_id, parent_id, kind, spec["title"], mindmap_id)
     if row is None:
         criteria = spec.get("criteria")
         row = db.create_spec_node(
@@ -120,41 +121,44 @@ def _seed_demo_node(db, conn, project_id, spec, parent_id=None, level=0):
             kind=kind,
             title=spec["title"],
             parent_id=parent_id,
+            mindmap_id=mindmap_id,
             criteria_json=json.dumps(criteria) if criteria is not None else None,
         )
     node = dict(row) if not isinstance(row, dict) else row
     for child in spec.get("children", []):
-        _seed_demo_node(db, conn, project_id, child, node["id"], level + 1)
+        _seed_demo_node(db, conn, project_id, child, node["id"], level + 1, mindmap_id)
     return node
 
 
 def _cmd_spec_seed_demo(args):
     def action(db, conn):
         project_id = db._spec_project(args.project_id)
+        mindmap_id = db._spec_map(conn, project_id, args.map_id)
         existing = conn.execute(
-            "SELECT * FROM spec_nodes WHERE project_id = ? AND parent_id IS NULL",
-            (project_id,),
+            "SELECT * FROM spec_nodes WHERE project_id = ? AND map_id = ? AND parent_id IS NULL",
+            (project_id, mindmap_id),
         ).fetchall()
         if existing and not any(row["title"] == _DEMO_MINDMAP["title"] for row in existing):
             raise db.BoundaryError("conflict", "project already has a different mindmap root")
-        root = _seed_demo_node(db, conn, project_id, _DEMO_MINDMAP)
-        tree = db.get_spec_tree(conn, project_id=project_id)
+        root = _seed_demo_node(db, conn, project_id, _DEMO_MINDMAP, mindmap_id=mindmap_id)
+        tree = db.get_spec_tree(conn, project_id=project_id, mindmap_id=mindmap_id)
         _print({"ok": True, "created_or_reused_root": root["id"], "tree": tree})
     _run(args, action)
 
 
 def _cmd_spec_tree(args):
-    _run(args, lambda db, conn: _print({"ok": True, "tree": db.get_spec_tree(conn, project_id=args.project_id)}))
+    _run(args, lambda db, conn: _print({"ok": True, "tree": db.get_spec_tree(conn, project_id=args.project_id, mindmap_id=args.map_id)}))
 
 
 def _cmd_spec_list(args):
     def action(db, conn):
         project = db._spec_project(args.project_id)
+        mindmap_id = db._spec_map(conn, project, args.map_id)
         rows = conn.execute(
-            "SELECT id, project_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, kanban_task_id, estimate, sort_index, created_at, updated_at "
-            "FROM spec_nodes WHERE project_id = ?" + (" AND kind = ?" if args.kind else "") +
+            "SELECT id, project_id, map_id, kind, parent_id, level, title, status, note, criteria_json, decision_id, kanban_task_id, estimate, sort_index, created_at, updated_at "
+            "FROM spec_nodes WHERE project_id = ? AND map_id = ?" + (" AND kind = ?" if args.kind else "") +
             " ORDER BY kind, sort_index, created_at, id",
-            (project, args.kind) if args.kind else (project,),
+            (project, mindmap_id, args.kind) if args.kind else (project, mindmap_id,),
         ).fetchall()
         _print({"ok": True, "nodes": [dict(row) for row in rows]})
     _run(args, action)
@@ -165,7 +169,7 @@ def _cmd_spec_update_node(args):
         fields = {k: v for k, v in {"title": args.title, "status": args.status, "note": args.note, "metadata_json": args.metadata_json, "estimate": args.estimate}.items() if v is not None}
         if args.clear_estimate:
             fields["estimate"] = None
-        node = db.update_spec_node(conn, args.id, project_id=args.project_id, **fields)
+        node = db.update_spec_node(conn, args.id, project_id=args.project_id, mindmap_id=args.map_id, **fields)
         _print({"ok": True, "node": node})
     _run(args, action)
 
