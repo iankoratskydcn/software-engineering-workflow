@@ -1,0 +1,11 @@
+[
+{"text": "{}\n", "value": {}},
+{"text": "[]\n", "value": []},
+{"text": "{\n  \"a\": [],\n  \"b\": 1,\n  \"c\": {}\n}\n", "value": {"a": [], "b": 1, "c": {}}},
+{"text": "{\n  \"criteria\": [\n    \"one\",\n    \"two\"\n  ],\n  \"estimate\": 3,\n  \"id\": \"x\",\n  \"ok\": true,\n  \"task_ref\": null\n}\n", "value": {"criteria": ["one", "two"], "estimate": 3, "id": "x", "ok": true, "task_ref": null}},
+{"text": "{\n  \"emoji\": \"\\ud83d\\ude00\",\n  \"title\": \"caf\\u00e9 \\u2014 \\u65e5\\u672c\\u8a9e\"\n}\n", "value": {"emoji": "\ud83d\ude00", "title": "caf\u00e9 \u2014 \u65e5\u672c\u8a9e"}},
+{"text": "{\n  \"ctl\": \"tab\\tnl\\ncr\\r\\u0001\\u007f\",\n  \"quote\": \"say \\\"hi\\\"\\\\ back\",\n  \"slash\": \"a/b\"\n}\n", "value": {"ctl": "tab\tnl\ncr\r\u0001\u007f", "quote": "say \"hi\"\\ back", "slash": "a/b"}},
+{"text": "{\n  \"nested\": {\n    \"a\": null,\n    \"z\": [\n      {\n        \"a\": 1,\n        \"b\": 2\n      },\n      [\n        1,\n        [\n          2,\n          []\n        ]\n      ]\n    ]\n  }\n}\n", "value": {"nested": {"a": null, "z": [{"a": 1, "b": 2}, [1, [2, []]]]}}},
+{"text": "{\n  \"1\": 4,\n  \"Zebra\": 1,\n  \"_u\": 3,\n  \"apple\": 2\n}\n", "value": {"1": 4, "Zebra": 1, "_u": 3, "apple": 2}},
+{"text": "[\n  0,\n  -7,\n  123456789,\n  false,\n  null,\n  \"s\"\n]\n", "value": [0, -7, 123456789, false, null, "s"]}
+]

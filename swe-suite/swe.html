@@ -81,7 +81,79 @@ const SweCore = (() => {
     return { applies: true, ready: checks.every((c) => c.passed), checks };
   }
 
-  return { readiness, ESTIMATES, MAX_READY_ESTIMATE };
+  const KINDS = ['theme', 'epic', 'feature', 'story'];
+  const STATUSES = ['draft', 'ready', 'converted'];  // what an edit may set; files may hold others (e.g. "approved")
+  const DEFAULT_LIMITS = { text: 20000, criteria: 100 };
+  const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;  // an id becomes a filename, so no separators
+
+  /** Why a spec node file is invalid, or null. Does not check the filename, duplicates or parent. */
+  function validateNode(n, limits = DEFAULT_LIMITS) {
+    if (!n || typeof n !== 'object' || Array.isArray(n)) return 'not an object';
+    if (typeof n.id !== 'string' || !n.id) return 'missing id';
+    if (!ID_PATTERN.test(n.id) || n.id.length > 200) return 'invalid id';
+    if (!KINDS.includes(n.kind)) return `invalid kind ${JSON.stringify(n.kind)}`;
+    if (typeof n.title !== 'string' || !n.title.trim() || n.title.length > limits.text) return 'invalid title';
+    if (n.parent_id != null && typeof n.parent_id !== 'string') return 'invalid parent_id';
+    if (n.criteria != null && (!Array.isArray(n.criteria) || n.criteria.length > limits.criteria || !n.criteria.every((c) => typeof c === 'string' && c.length <= limits.text))) return 'criteria must be an array of strings';
+    if (n.estimate != null && !ESTIMATES.includes(n.estimate)) return `estimate must be one of ${ESTIMATES.join(', ')}`;
+    if (n.task_ref != null && (typeof n.task_ref !== 'string' || n.task_ref.length > 200)) return 'task_ref must be a short string';
+    return null;
+  }
+
+  /** JSON text exactly as Python's json.dumps(value, indent=2, sort_keys=True) + "\n": sorted keys,
+   *  non-ASCII escaped. (Keys sort by UTF-16 unit, Python by code point; they differ only for
+   *  astral-plane keys, which node files do not use.) Integers only: 1.0 would come back as 1. */
+  function canonicalJson(value) {
+    const str = (s) => JSON.stringify(s).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+    const walk = (v, pad) => {
+      if (Array.isArray(v)) {
+        if (!v.length) return '[]';
+        const inner = pad + '  ';
+        return '[\n' + v.map((x) => inner + walk(x, inner)).join(',\n') + '\n' + pad + ']';
+      }
+      if (v && typeof v === 'object') {
+        const keys = Object.keys(v).sort();
+        if (!keys.length) return '{}';
+        const inner = pad + '  ';
+        return '{\n' + keys.map((k) => inner + str(k) + ': ' + walk(v[k], inner)).join(',\n') + '\n' + pad + '}';
+      }
+      return typeof v === 'string' ? str(v) : JSON.stringify(v);
+    };
+    return walk(value, '') + '\n';
+  }
+
+  /** A filename-safe id from a title, unique among `taken` (a Set). */
+  function newNodeId(title, taken) {
+    const base = String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '') || 'node';
+    let id = base;
+    for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
+    return id;
+  }
+
+  /** Apply an edit {title, status, estimate, task_ref, criteria} (any subset; null clears estimate/task_ref)
+   *  to a node file's object. Returns a new object; throws Error with the reason when it is not allowed. */
+  function applyEdit(src, edit, limits = DEFAULT_LIMITS) {
+    const next = { ...src };
+    if ('title' in edit) next.title = String(edit.title).trim();
+    if ('criteria' in edit) next.criteria = edit.criteria.map((c) => String(c).trim()).filter(Boolean);
+    for (const key of ['estimate', 'task_ref']) {
+      if (!(key in edit)) continue;
+      if (edit[key] === null || edit[key] === '') delete next[key]; else next[key] = edit[key];
+    }
+    if ('status' in edit) {
+      if (edit.status !== src.status && !STATUSES.includes(edit.status)) throw new Error(`status must be one of ${STATUSES.join(', ')}`);
+      next.status = edit.status;
+    }
+    const bad = validateNode(next, limits);
+    if (bad) throw new Error(bad);
+    if (next.status === 'ready' && src.status !== 'ready') {
+      const r = readiness({ kind: next.kind, criteria_json: JSON.stringify(next.criteria || []), estimate: next.estimate ?? null });
+      if (!r.ready) throw new Error('not ready: ' + r.checks.filter((c) => !c.passed).map((c) => c.detail).join('; '));
+    }
+    return next;
+  }
+
+  return { readiness, validateNode, canonicalJson, newNodeId, applyEdit, KINDS, STATUSES, ESTIMATES, MAX_READY_ESTIMATE };
 })();
 // </core.js>
 // ---- constants -------------------------------------------------------------
@@ -89,16 +161,50 @@ const TABS = [
   ['mindmap', 'MindMap'], ['roadmap', 'Roadmap'], ['risk', 'Risk & Tradeoffs'], ['flow', 'Flowcharts'],
   ['arch', 'Architecture'], ['digest', 'Spec Digest'], ['scrum', 'Scrum Planning'],
 ];
-const KINDS = ['theme', 'epic', 'feature', 'story'];
+const KINDS = SweCore.KINDS;
 const KIND_COLOR = { theme: '#c084fc', epic: '#60a5fa', feature: '#34d399', story: '#fbbf24' };
 const SUITE_DIR = 'docs/swe';
 const LIMITS = { files: 5000, bytes: 1 << 20, nodes: 5000, text: 20000, criteria: 100 };
 
 // ---- storage: path -> async text. Same interface for both openers ----------
 // FsStorage via File System Access API; fallback via <input webkitdirectory>.
-// Spike is read-only; write path comes later behind the same interface.
-function storageFromFiles(entries) { // entries: Map<relPath, File>
-  return { read: async (p) => (entries.has(p) ? entries.get(p).text() : null), paths: () => [...entries.keys()], size: (p) => entries.get(p).size };
+// `io` ({read, write, remove}, optional) makes the storage writable. Without it (the webkitdirectory
+// fallback) the suite is read-only. `fresh` re-reads from disk, since a File taken at open time is a snapshot.
+function storageFromFiles(entries, io) { // entries: Map<relPath, File>
+  const snapshot = (text) => ({ size: new TextEncoder().encode(text).length, text: async () => text });
+  const storage = { read: async (p) => (entries.has(p) ? entries.get(p).text() : null), paths: () => [...entries.keys()], size: (p) => entries.get(p).size };
+  storage.fresh = io ? io.read : storage.read;
+  storage.freshPaths = io ? io.list : async () => storage.paths();
+  if (io) {
+    storage.writable = true;
+    storage.write = async (p, text) => { await io.write(p, text); entries.set(p, snapshot(text)); };
+    storage.remove = async (p) => { await io.remove(p); entries.delete(p); };
+  }
+  return storage;
+}
+// Writes through a directory handle: createWritable stages in a swap file and swaps on close, so a failed write leaves the old file.
+function fsIo(root) {
+  const split = (p) => { const a = p.split('/'); return [a.slice(0, -1), a[a.length - 1]]; };
+  const dirFor = async (parts, create) => { let d = root; for (const part of parts) d = await d.getDirectoryHandle(part, { create }); return d; };
+  return {
+    read: async (p) => {
+      const [dir, name] = split(p);
+      try { return await (await (await (await dirFor(dir, false)).getFileHandle(name)).getFile()).text(); }
+      catch (e) { if (e && e.name === 'NotFoundError') return null; throw e; }
+    },
+    write: async (p, text) => {
+      const [dir, name] = split(p);
+      const w = await (await (await dirFor(dir, true)).getFileHandle(name, { create: true })).createWritable();
+      await w.write(text); await w.close();
+    },
+    remove: async (p) => { const [dir, name] = split(p); await (await dirFor(dir, false)).removeEntry(name); },
+    list: async (prefix) => { // files directly inside the folder `prefix` (ending in '/'), as full paths
+      const parts = prefix.split('/').filter(Boolean), out = [];
+      try { for await (const [name, h] of (await dirFor(parts, false)).entries()) if (h.kind === 'file') out.push(prefix + name); }
+      catch (e) { if (!e || e.name !== 'NotFoundError') throw e; }
+      return out;
+    },
+  };
 }
 async function walkHandle(dir, prefix, out, depth = 0) {
   // Only descend toward docs/swe so a whole repo is never read.
@@ -123,10 +229,11 @@ async function loadSuite(storage) {
 
   const parse = async (p) => {
     if (storage.size(p) > LIMITS.bytes) throw new Error('file too large');
-    return JSON.parse(await storage.read(p));
+    const raw = await storage.read(p);
+    return { raw, value: JSON.parse(raw) };
   };
   let project = null;
-  try { project = await parse(base + 'project.json'); } catch (e) { errors.push(`project.json: ${e.message}`); }
+  try { project = (await parse(base + 'project.json')).value; } catch (e) { errors.push(`project.json: ${e.message}`); }
   if (project && project.schema_version !== 1) errors.push(`project.json: unsupported schema_version ${JSON.stringify(project.schema_version)}`);
 
   const specPaths = paths.filter((p) => p.startsWith(base + 'spec/') && p.endsWith('.json'));
@@ -134,22 +241,16 @@ async function loadSuite(storage) {
   const nodes = [];
   const seen = new Set();
   for (const p of specPaths.slice(0, LIMITS.nodes)) {
-    let n;
-    try { n = await parse(p); } catch (e) { errors.push(`${p}: ${e.message}`); continue; }
+    let n, raw;
+    try { ({ value: n, raw } = await parse(p)); } catch (e) { errors.push(`${p}: ${e.message}`); continue; }
     const bad = (m) => errors.push(`${p}: ${m}`);
-    if (!n || typeof n !== 'object' || Array.isArray(n)) { bad('not an object'); continue; }
-    if (typeof n.id !== 'string' || !n.id) { bad('missing id'); continue; }
+    const invalid = SweCore.validateNode(n, LIMITS);
+    if (invalid) { bad(invalid); continue; }
     if (p !== `${base}spec/${n.id}.json`) { bad('id does not match filename'); continue; }
     if (seen.has(n.id)) { bad('duplicate id'); continue; }
-    if (!KINDS.includes(n.kind)) { bad(`invalid kind ${JSON.stringify(n.kind)}`); continue; }
-    if (typeof n.title !== 'string' || !n.title || n.title.length > LIMITS.text) { bad('invalid title'); continue; }
-    if (n.parent_id != null && typeof n.parent_id !== 'string') { bad('invalid parent_id'); continue; }
-    if (n.criteria != null && (!Array.isArray(n.criteria) || n.criteria.length > LIMITS.criteria || !n.criteria.every((c) => typeof c === 'string' && c.length <= LIMITS.text))) { bad('criteria must be an array of strings'); continue; }
-    if (n.estimate != null && !SweCore.ESTIMATES.includes(n.estimate)) { bad(`estimate must be one of ${SweCore.ESTIMATES.join(', ')}`); continue; }
-    if (n.task_ref != null && (typeof n.task_ref !== 'string' || n.task_ref.length > 200)) { bad('task_ref must be a short string'); continue; }
     seen.add(n.id);
     const md = await storage.read(p.replace(/\.json$/, '.md'));
-    nodes.push({ ...n, criteria: n.criteria || [], description: md && md.length <= LIMITS.text ? md : null });
+    nodes.push(makeNode(n, p, raw, md && md.length <= LIMITS.text ? md : null, md));
   }
   // structural checks: parent exists, single root, no cycles
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -161,7 +262,11 @@ async function loadSuite(storage) {
     while (cur && cur.parent_id != null && hops++ <= nodes.length) cur = byId.get(cur.parent_id);
     if (hops > nodes.length) { errors.push(`${n.id}: parent cycle`); break; }
   }
-  return { errors, project, nodes };
+  return { errors, project, nodes, base };
+}
+// A loaded node: the file's fields plus defaults for display, and the untouched source object and text, which edits start from.
+function makeNode(src, path, raw, description, mdRaw = null) {
+  return { ...src, criteria: src.criteria || [], description, _src: src, _path: path, _raw: raw, _mdRaw: mdRaw };
 }
 
 // ---- tree helpers ----------------------------------------------------------
@@ -173,6 +278,52 @@ function childrenOf(nodes) {
 }
 function pathOf(n, byId) { const out = []; for (let c = n, i = 0; c && i < 20; c = byId.get(c.parent_id), i++) out.unshift(c.title); return out.join(' › '); }
 
+// ---- edits: validate (core), check the file is unchanged on disk, write, then update memory ----
+// Each action throws an Error whose message is shown to the person; nothing is half-applied.
+async function commitNode(storage, path, src, expectedRaw) {
+  const current = await storage.fresh(path);
+  if (current !== expectedRaw) throw new Error(`${path} changed on disk since it was opened; reopen the folder`);
+  const text = SweCore.canonicalJson(src);
+  await storage.write(path, text);
+  return text;
+}
+async function editNode(n, edit) {
+  const src = SweCore.applyEdit(n._src, edit, LIMITS);
+  const raw = await commitNode(state.storage, n._path, src, n._raw);
+  const next = makeNode(src, n._path, raw, n.description, n._mdRaw);
+  state.suite.nodes = state.suite.nodes.map((x) => (x.id === n.id ? next : x));
+  return next;
+}
+async function addChild(parent, title) {
+  const kind = KINDS[KINDS.indexOf(parent.kind) + 1];
+  if (!kind) throw new Error(`a ${parent.kind} cannot have children`);
+  const id = SweCore.newNodeId(title, new Set(state.suite.nodes.map((x) => x.id)));
+  const src = { id, kind, title: String(title).trim(), parent_id: parent.id, status: 'draft', criteria: [] };
+  const invalid = SweCore.validateNode(src, LIMITS);
+  if (invalid) throw new Error(invalid);
+  const path = `${state.suite.base}spec/${id}.json`;
+  if ((await state.storage.fresh(parent._path)) !== parent._raw) throw new Error(`${parent._path} changed on disk since it was opened; reopen the folder`);
+  const raw = await commitNode(state.storage, path, src, null);
+  const node = makeNode(src, path, raw, null);
+  state.suite.nodes = [...state.suite.nodes, node];
+  return node;
+}
+async function deleteNode(n) {
+  if (n.parent_id == null) throw new Error('the root cannot be deleted');
+  const storage = state.storage, md = n._path.replace(/\.json$/, '.md');
+  if ((await storage.fresh(n._path)) !== n._raw || (await storage.fresh(md)) !== n._mdRaw) throw new Error(`${n._path} (or its .md) changed on disk since it was opened; reopen the folder`);
+  // Children may have been added on disk since the folder was opened, so look at the files, not the loaded list.
+  for (const p of await storage.freshPaths(state.suite.base + 'spec/')) {
+    if (!p.endsWith('.json') || p === n._path) continue;
+    let other = null;
+    try { other = JSON.parse(await storage.fresh(p)); } catch { /* an unreadable file is reported on the next open */ }
+    if (other && other.parent_id === n.id) throw new Error('delete or move its children first');
+  }
+  await storage.remove(n._path);
+  if (n._mdRaw !== null) await storage.remove(md);
+  state.suite.nodes = state.suite.nodes.filter((x) => x.id !== n.id);
+}
+
 // ---- rendering (textContent only: file contents are untrusted) -------------
 function el(tag, props = {}, ...kids) {
   const e = document.createElement(tag);
@@ -182,7 +333,7 @@ function el(tag, props = {}, ...kids) {
   for (const k of kids.flat()) if (k != null) e.append(k);
   return e;
 }
-const state = { suite: null, tab: 'mindmap', query: '', selected: null };
+const state = { suite: null, storage: null, tab: 'mindmap', query: '', selected: null };
 function render() {
   const tabs = document.getElementById('tabs'); tabs.replaceChildren();
   for (const [key, label] of TABS) tabs.append(el('div', { class: 'tab' + (key === state.tab ? ' active' : ''), onclick: () => { state.tab = key; render(); } }, label));
@@ -211,7 +362,7 @@ function renderMindmap(s) {
   const n = byId.get(state.selected);
   const detail = el('div', { class: 'panel' });
   if (!n) detail.append(el('div', { class: 'muted' }, 'Select a node to see its details.'));
-  else detail.append(...nodeDetail(n, byId));
+  else detail.append(...nodeDetail(n, byId), ...(state.storage && state.storage.writable ? [editPanel(n)] : []));
   return el('div', { class: 'grid' }, left, detail);
 }
 function nodeDetail(n, byId) {
@@ -240,6 +391,40 @@ function nodeDetail(n, byId) {
   }
   return out;
 }
+function editPanel(n) {
+  const err = el('div', { class: 'err', role: 'alert' });
+  const run = (action, done) => async () => {
+    err.textContent = '';
+    try { await action(); done(); } catch (e) { err.textContent = String(e.message || e); }
+  };
+  const field = (label, input) => el('label', { style: 'display:flex;flex-direction:column;gap:2px;font-size:11px;color:#999' }, label, input);
+  const title = el('input', { type: 'text', 'data-field': 'title', value: n.title });
+  const statuses = [...new Set([...SweCore.STATUSES, n.status].filter(Boolean))];
+  const status = el('select', { 'data-field': 'status' }, statuses.map((v) => el('option', { value: v, ...(v === n.status ? { selected: '' } : {}) }, v)));
+  const estimate = el('select', { 'data-field': 'estimate' }, [el('option', { value: '' }, 'none'),
+    ...SweCore.ESTIMATES.map((v) => el('option', { value: String(v), ...(v === n.estimate ? { selected: '' } : {}) }, String(v)))]);
+  const taskRef = el('input', { type: 'text', 'data-field': 'task_ref', value: n.task_ref || '' });
+  const criteria = el('textarea', { 'data-field': 'criteria', rows: '5', style: 'width:100%;background:#1e1e1e;color:#e6e6e6;border:1px solid #444;border-radius:4px;padding:8px' });
+  criteria.value = n.criteria.join('\n');
+  const sized = n.kind === 'feature' || n.kind === 'story';
+  const save = el('button', { 'data-action': 'save', onclick: run(() => editNode(n, {
+    title: title.value, status: status.value, criteria: criteria.value.split('\n'),
+    ...(sized ? { estimate: estimate.value ? Number(estimate.value) : null } : {}), task_ref: taskRef.value.trim() || null,
+  }), render) }, 'Save');
+  const childTitle = el('input', { type: 'text', 'data-field': 'child-title', placeholder: 'New child title' });
+  const add = el('button', { 'data-action': 'add', onclick: run(async () => { state.selected = (await addChild(n, childTitle.value)).id; }, render) }, 'Add child');
+  let armed = false;
+  const del = el('button', { 'data-action': 'delete', onclick: run(async () => {
+    if (!armed) { armed = true; del.textContent = 'Confirm delete'; return; }
+    await deleteNode(n); state.selected = n.parent_id;
+  }, () => { if (armed && !state.suite.nodes.some((x) => x.id === n.id)) render(); }) }, 'Delete');
+  return el('div', { 'aria-label': 'Edit', style: 'border-top:1px solid #2c2c2c;margin-top:14px;padding-top:12px;display:flex;flex-direction:column;gap:8px' },
+    el('div', { class: 'muted mono' }, 'edit'),
+    field('Title', title), field('Status', status), sized ? field('Estimate (points)', estimate) : null,
+    field('Task reference', taskRef), field('Acceptance criteria (one per line)', criteria),
+    el('div', { style: 'display:flex;gap:8px' }, save, del),
+    KINDS.indexOf(n.kind) < KINDS.length - 1 ? el('div', { style: 'display:flex;gap:8px' }, childTitle, add) : null, err);
+}
 function renderDigest(s) {
   const kids = childrenOf(s.nodes);
   const root = el('div', { class: 'digest', style: 'max-width:820px' });
@@ -261,18 +446,21 @@ async function openWith(storage, label) {
   status.textContent = 'Loading…';
   try {
     state.suite = await loadSuite(storage);
+    state.storage = storage;
     state.selected = null;
-    status.textContent = `${label} · ${state.suite.nodes.length} spec nodes` + (state.suite.errors.length ? ` · ${state.suite.errors.length} problem(s)` : '');
+    status.textContent = `${label} · ${state.suite.nodes.length} spec nodes` + (storage.writable ? ' · editable' : ' · read-only') + (state.suite.errors.length ? ` · ${state.suite.errors.length} problem(s)` : '');
   } catch (e) { state.suite = { errors: [String(e.message || e)], project: null, nodes: [] }; status.textContent = 'Failed to load.'; }
   render();
 }
 document.getElementById('open').addEventListener('click', async () => {
   if (!window.showDirectoryPicker) { document.getElementById('fallback-input').click(); return; }
-  let dir;
+  let dir, writable = false;
   try { dir = await window.showDirectoryPicker({ mode: 'read' }); } catch { return; } // user cancelled
+  // Asked for separately, so declining write access still leaves the folder open read-only.
+  try { writable = typeof dir.requestPermission === 'function' && (await dir.requestPermission({ mode: 'readwrite' })) === 'granted'; } catch { writable = false; }
   const out = new Map();
   await walkHandle(dir, '', out);
-  await openWith(storageFromFiles(out), dir.name);
+  await openWith(storageFromFiles(out, writable ? fsIo(dir) : undefined), dir.name);
 });
 document.getElementById('fallback-input').addEventListener('change', async (e) => {
   const out = new Map();
