@@ -174,6 +174,7 @@ function storageFromFiles(entries, io) { // entries: Map<relPath, File>
   const snapshot = (text) => ({ size: new TextEncoder().encode(text).length, text: async () => text });
   const storage = { read: async (p) => (entries.has(p) ? entries.get(p).text() : null), paths: () => [...entries.keys()], size: (p) => entries.get(p).size };
   storage.fresh = io ? io.read : storage.read;
+  storage.freshPaths = io ? io.list : async () => storage.paths();
   if (io) {
     storage.writable = true;
     storage.write = async (p, text) => { await io.write(p, text); entries.set(p, snapshot(text)); };
@@ -197,6 +198,12 @@ function fsIo(root) {
       await w.write(text); await w.close();
     },
     remove: async (p) => { const [dir, name] = split(p); await (await dirFor(dir, false)).removeEntry(name); },
+    list: async (prefix) => { // files directly inside the folder `prefix` (ending in '/'), as full paths
+      const parts = prefix.split('/').filter(Boolean), out = [];
+      try { for await (const [name, h] of (await dirFor(parts, false)).entries()) if (h.kind === 'file') out.push(prefix + name); }
+      catch (e) { if (!e || e.name !== 'NotFoundError') throw e; }
+      return out;
+    },
   };
 }
 async function walkHandle(dir, prefix, out, depth = 0) {
@@ -243,7 +250,7 @@ async function loadSuite(storage) {
     if (seen.has(n.id)) { bad('duplicate id'); continue; }
     seen.add(n.id);
     const md = await storage.read(p.replace(/\.json$/, '.md'));
-    nodes.push(makeNode(n, p, raw, md && md.length <= LIMITS.text ? md : null));
+    nodes.push(makeNode(n, p, raw, md && md.length <= LIMITS.text ? md : null, md));
   }
   // structural checks: parent exists, single root, no cycles
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -258,8 +265,8 @@ async function loadSuite(storage) {
   return { errors, project, nodes, base };
 }
 // A loaded node: the file's fields plus defaults for display, and the untouched source object and text, which edits start from.
-function makeNode(src, path, raw, description) {
-  return { ...src, criteria: src.criteria || [], description, _src: src, _path: path, _raw: raw };
+function makeNode(src, path, raw, description, mdRaw = null) {
+  return { ...src, criteria: src.criteria || [], description, _src: src, _path: path, _raw: raw, _mdRaw: mdRaw };
 }
 
 // ---- tree helpers ----------------------------------------------------------
@@ -283,7 +290,7 @@ async function commitNode(storage, path, src, expectedRaw) {
 async function editNode(n, edit) {
   const src = SweCore.applyEdit(n._src, edit, LIMITS);
   const raw = await commitNode(state.storage, n._path, src, n._raw);
-  const next = makeNode(src, n._path, raw, n.description);
+  const next = makeNode(src, n._path, raw, n.description, n._mdRaw);
   state.suite.nodes = state.suite.nodes.map((x) => (x.id === n.id ? next : x));
   return next;
 }
@@ -295,6 +302,7 @@ async function addChild(parent, title) {
   const invalid = SweCore.validateNode(src, LIMITS);
   if (invalid) throw new Error(invalid);
   const path = `${state.suite.base}spec/${id}.json`;
+  if ((await state.storage.fresh(parent._path)) !== parent._raw) throw new Error(`${parent._path} changed on disk since it was opened; reopen the folder`);
   const raw = await commitNode(state.storage, path, src, null);
   const node = makeNode(src, path, raw, null);
   state.suite.nodes = [...state.suite.nodes, node];
@@ -302,11 +310,17 @@ async function addChild(parent, title) {
 }
 async function deleteNode(n) {
   if (n.parent_id == null) throw new Error('the root cannot be deleted');
-  if (state.suite.nodes.some((x) => x.parent_id === n.id)) throw new Error('delete or move its children first');
-  if ((await state.storage.fresh(n._path)) !== n._raw) throw new Error(`${n._path} changed on disk since it was opened; reopen the folder`);
-  await state.storage.remove(n._path);
-  const md = n._path.replace(/\.json$/, '.md');
-  if (state.storage.paths().includes(md)) await state.storage.remove(md);
+  const storage = state.storage, md = n._path.replace(/\.json$/, '.md');
+  if ((await storage.fresh(n._path)) !== n._raw || (await storage.fresh(md)) !== n._mdRaw) throw new Error(`${n._path} (or its .md) changed on disk since it was opened; reopen the folder`);
+  // Children may have been added on disk since the folder was opened, so look at the files, not the loaded list.
+  for (const p of await storage.freshPaths(state.suite.base + 'spec/')) {
+    if (!p.endsWith('.json') || p === n._path) continue;
+    let other = null;
+    try { other = JSON.parse(await storage.fresh(p)); } catch { /* an unreadable file is reported on the next open */ }
+    if (other && other.parent_id === n.id) throw new Error('delete or move its children first');
+  }
+  await storage.remove(n._path);
+  if (n._mdRaw !== null) await storage.remove(md);
   state.suite.nodes = state.suite.nodes.filter((x) => x.id !== n.id);
 }
 
@@ -440,13 +454,10 @@ async function openWith(storage, label) {
 }
 document.getElementById('open').addEventListener('click', async () => {
   if (!window.showDirectoryPicker) { document.getElementById('fallback-input').click(); return; }
-  let dir, writable = true;
-  try { dir = await window.showDirectoryPicker({ mode: 'readwrite' }); }
-  catch (e) {
-    if (e && e.name === 'AbortError') return; // user cancelled
-    writable = false;
-    try { dir = await window.showDirectoryPicker({ mode: 'read' }); } catch { return; }
-  }
+  let dir, writable = false;
+  try { dir = await window.showDirectoryPicker({ mode: 'read' }); } catch { return; } // user cancelled
+  // Asked for separately, so declining write access still leaves the folder open read-only.
+  try { writable = typeof dir.requestPermission === 'function' && (await dir.requestPermission({ mode: 'readwrite' })) === 'granted'; } catch { writable = false; }
   const out = new Map();
   await walkHandle(dir, '', out);
   await openWith(storageFromFiles(out, writable ? fsIo(dir) : undefined), dir.name);

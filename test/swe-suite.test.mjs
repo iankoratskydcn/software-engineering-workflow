@@ -136,6 +136,7 @@ function diskStorage(files) {
     size: (p) => disk[p].length,
     read: async (p) => disk[p] ?? null,
     fresh: async (p) => disk[p] ?? null,
+    freshPaths: async (prefix) => Object.keys(disk).filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes('/')),
     write: async (p, t) => { log.push(['write', p]); disk[p] = t },
     remove: async (p) => { log.push(['remove', p]); delete disk[p] },
   }
@@ -281,3 +282,66 @@ test('the directory-handle adapter reads, writes (creating folders), and removes
   await io.remove('docs/swe/spec/a.json')
   assert.equal(await io.read('docs/swe/spec/a.json'), null)
 })
+
+test('delete refuses when the .md changed on disk, or a child appeared on disk, since opening', async () => {
+  const md = await open(TREE({ 'docs/swe/spec/feat.md': 'notes' }))
+  md.state.selected = 'feat'
+  md.render()
+  md.disk['docs/swe/spec/feat.md'] = 'notes written elsewhere'
+  await press(md.doc, 'delete'); await press(md.doc, 'delete')
+  assert.match(md.doc.querySelector('[role="alert"]').textContent, /changed on disk/)
+  assert.deepEqual(md.log, [])
+
+  const kid = await open(TREE())
+  kid.state.selected = 'feat'
+  kid.render()
+  kid.disk['docs/swe/spec/late.json'] = node({ id: 'late', kind: 'story', title: 'Late', parent_id: 'feat' })
+  await press(kid.doc, 'delete'); await press(kid.doc, 'delete')
+  assert.match(kid.doc.querySelector('[role="alert"]').textContent, /children first/)
+  assert.deepEqual(kid.log, [])
+})
+
+test('add child refuses when the parent changed or was deleted on disk', async () => {
+  const t = await open(TREE())
+  t.state.selected = 'root'
+  t.render()
+  delete t.disk['docs/swe/spec/root.json']
+  field(t.doc, 'child-title').value = 'Orphan'
+  await press(t.doc, 'add')
+  assert.match(t.doc.querySelector('[role="alert"]').textContent, /changed on disk/)
+  assert.deepEqual(t.log, [])
+})
+
+function fakeFolder(files, permission) {
+  const handle = (path) => ({
+    kind: 'directory',
+    entries: async function* () {
+      const seen = new Set()
+      for (const f of Object.keys(files)) {
+        if (!f.startsWith(path)) continue
+        const rest = f.slice(path.length), name = rest.split('/')[0]
+        if (seen.has(name)) continue
+        seen.add(name)
+        yield rest.includes('/') ? [name, handle(path + name + '/')] : [name, { kind: 'file', getFile: async () => ({ size: files[f].length, text: async () => files[f] }) }]
+      }
+    },
+    getDirectoryHandle: async () => { throw new Error('not needed for opening') },
+    requestPermission: async () => permission,
+    name: 'repo',
+  })
+  return handle('')
+}
+
+for (const [permission, label, editable] of [['granted', 'editable', true], ['denied', 'read-only', false]]) {
+  test(`opening a folder asks for write access separately: ${permission} is ${label}`, async () => {
+    const { dom } = load()
+    const w = dom.window
+    w.showDirectoryPicker = async (opts) => { assert.equal(opts.mode, 'read'); return fakeFolder(TREE(), permission) }
+    w.document.getElementById('open').click()
+    for (let i = 0; i < 20 && !/editable|read-only/.test(w.document.getElementById('status').textContent); i++) await tick()
+    assert.match(w.document.getElementById('status').textContent, new RegExp(`2 spec nodes · ${label}`))
+    w.eval('state').selected = 'feat'
+    w.eval('render')()
+    assert.equal(!!w.document.querySelector('[data-action="save"]'), editable)
+  })
+}
