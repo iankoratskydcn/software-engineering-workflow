@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { JSDOM } from 'jsdom'
@@ -74,4 +74,210 @@ test('node detail shows readiness for features, and nothing for themes', async (
   assert.match(await text({ criteria: ['x'], estimate: 8 }), /8 points is too big/)
   assert.equal(await text({ criteria: ['x'], estimate: 3, task_ref: 'T-1' }), 'Ready to commit')
   assert.equal(await text({ kind: 'theme' }), null)
+})
+
+// ---- canonical JSON ---------------------------------------------------------
+
+test('canonicalJson matches every Python-generated vector', () => {
+  const vectors = JSON.parse(read('vectors/canonical_json.json'))
+  assert.ok(vectors.length >= 9)
+  for (const { value, text } of vectors) assert.equal(core.canonicalJson(value), text, JSON.stringify(value))
+})
+
+test('canonicalJson reproduces every committed spec file byte for byte', () => {
+  const dir = new URL('../docs/swe/spec/', import.meta.url)
+  const files = readdirSync(dir).filter((f) => f.endsWith('.json'))
+  assert.ok(files.length > 5)
+  for (const f of files) {
+    const text = readFileSync(new URL(f, dir), 'utf8')
+    assert.equal(core.canonicalJson(JSON.parse(text)), text, f)
+  }
+})
+
+// ---- pure edit rules --------------------------------------------------------
+
+const FEATURE = { id: 'a', kind: 'feature', title: 'A', parent_id: 'root', status: 'draft', criteria: ['x'] }
+
+test('applyEdit changes only what was asked, keeps unknown keys, and clears optional keys', () => {
+  const src = { ...FEATURE, estimate: 3, task_ref: 'T-1', decision: { type: 'choice' } }
+  const next = core.applyEdit(src, { title: '  New  ', criteria: ['a', ' ', ' b '], estimate: null, task_ref: '' })
+  assert.deepEqual(next, { ...FEATURE, title: 'New', criteria: ['a', 'b'], decision: { type: 'choice' } })
+  assert.equal(src.estimate, 3, 'the source object is not mutated')
+})
+
+test('applyEdit refuses invalid values and an unready node going to ready', () => {
+  assert.throws(() => core.applyEdit(FEATURE, { title: ' ' }), /invalid title/)
+  assert.throws(() => core.applyEdit(FEATURE, { estimate: 4 }), /estimate must be one of/)
+  assert.throws(() => core.applyEdit(FEATURE, { status: 'bogus' }), /status must be one of/)
+  assert.throws(() => core.applyEdit(FEATURE, { status: 'ready' }), /not ready: needs an estimate/)
+  assert.throws(() => core.applyEdit({ ...FEATURE, estimate: 8 }, { status: 'ready' }), /too big/)
+  assert.equal(core.applyEdit({ ...FEATURE, estimate: 3 }, { status: 'ready' }).status, 'ready')
+  assert.equal(core.applyEdit({ ...FEATURE, kind: 'epic' }, { status: 'ready' }).status, 'ready', 'epics are never gated')
+  assert.equal(core.applyEdit({ ...FEATURE, status: 'approved' }, { title: 'B' }).status, 'approved', 'an existing unusual status is kept')
+})
+
+test('ids are filename-safe and unique', () => {
+  assert.equal(core.newNodeId('Hello, World!!', new Set()), 'hello-world')
+  assert.equal(core.newNodeId('Hello, World!!', new Set(['hello-world', 'hello-world-2'])), 'hello-world-3')
+  assert.equal(core.newNodeId('日本語', new Set()), 'node')
+  assert.equal(core.validateNode({ ...FEATURE, id: '../evil' }), 'invalid id')
+  assert.equal(core.validateNode({ ...FEATURE, id: 'a/b' }), 'invalid id')
+})
+
+// ---- editing in the page ------------------------------------------------------
+
+/** In-memory writable storage with a log of what reached "disk". */
+function diskStorage(files) {
+  const disk = { ...files }
+  const log = []
+  const storage = {
+    writable: true,
+    paths: () => Object.keys(disk),
+    size: (p) => disk[p].length,
+    read: async (p) => disk[p] ?? null,
+    fresh: async (p) => disk[p] ?? null,
+    write: async (p, t) => { log.push(['write', p]); disk[p] = t },
+    remove: async (p) => { log.push(['remove', p]); delete disk[p] },
+  }
+  return { disk, log, storage }
+}
+const TREE = (extra = {}) => ({
+  'docs/swe/project.json': project,
+  'docs/swe/spec/root.json': node({ id: 'root', kind: 'theme', title: 'Root', criteria: [] }),
+  'docs/swe/spec/feat.json': node({ id: 'feat', kind: 'feature', title: 'Feat', parent_id: 'root', criteria: ['x'] }),
+  ...extra,
+})
+
+async function open(files) {
+  const { dom, loadSuite } = load()
+  const disk = diskStorage(files)
+  const w = dom.window
+  const state = w.eval('state')
+  state.suite = await loadSuite(disk.storage)
+  state.storage = disk.storage
+  return { w, state, ...disk, render: () => w.eval('render')(), doc: w.document }
+}
+const field = (doc, name) => doc.querySelector(`[data-field="${name}"]`)
+const act = (doc, name) => doc.querySelector(`[data-action="${name}"]`)
+const tick = () => new Promise((r) => setTimeout(r, 0))
+async function press(doc, name) { act(doc, name).click(); await tick(); await tick() }
+
+test('editing a node writes canonical JSON and keeps the other keys and the .md file', async () => {
+  const t = await open(TREE({ 'docs/swe/spec/feat.md': 'notes' }))
+  t.state.selected = 'feat'
+  t.render()
+  field(t.doc, 'estimate').value = '3'
+  field(t.doc, 'task_ref').value = 'JIRA-9'
+  field(t.doc, 'criteria').value = 'x\ny'
+  await press(t.doc, 'save')
+  assert.equal(t.doc.querySelector('[role="alert"]').textContent, '')
+  assert.deepEqual(t.log, [['write', 'docs/swe/spec/feat.json']])
+  assert.equal(t.disk['docs/swe/spec/feat.json'], core.canonicalJson({ ...JSON.parse(node({ id: 'feat', kind: 'feature', title: 'Feat', parent_id: 'root' })), criteria: ['x', 'y'], estimate: 3, task_ref: 'JIRA-9' }))
+  assert.equal(t.disk['docs/swe/spec/feat.md'], 'notes')
+  assert.match(t.doc.querySelector('[data-testid="readiness"]').textContent, /Ready to commit/)
+})
+
+test('a refused edit shows the reason and writes nothing', async () => {
+  const t = await open(TREE())
+  t.state.selected = 'feat'
+  t.render()
+  field(t.doc, 'status').value = 'ready'
+  await press(t.doc, 'save')
+  assert.match(t.doc.querySelector('[role="alert"]').textContent, /not ready: needs an estimate/)
+  assert.deepEqual(t.log, [])
+})
+
+test('a file changed on disk since it was opened is not overwritten', async () => {
+  const t = await open(TREE())
+  t.state.selected = 'feat'
+  t.render()
+  t.disk['docs/swe/spec/feat.json'] = node({ id: 'feat', kind: 'feature', title: 'Edited elsewhere', parent_id: 'root' })
+  field(t.doc, 'title').value = 'Mine'
+  await press(t.doc, 'save')
+  assert.match(t.doc.querySelector('[role="alert"]').textContent, /changed on disk/)
+  assert.deepEqual(t.log, [])
+})
+
+test('add child creates the next kind down with a safe unique id; a story gets no add control', async () => {
+  const t = await open(TREE())
+  t.state.selected = 'root'
+  t.render()
+  field(t.doc, 'child-title').value = 'Brand New Epic!'
+  await press(t.doc, 'add')
+  const path = 'docs/swe/spec/brand-new-epic.json'
+  assert.deepEqual(JSON.parse(t.disk[path]), { criteria: [], id: 'brand-new-epic', kind: 'epic', parent_id: 'root', status: 'draft', title: 'Brand New Epic!' })
+  assert.equal(t.state.selected, 'brand-new-epic')
+
+  const story = { ...JSON.parse(node({ id: 's', kind: 'story', title: 'S', parent_id: 'feat' })) }
+  const s = await open(TREE({ 'docs/swe/spec/s.json': JSON.stringify(story) }))
+  s.state.selected = 's'
+  s.render()
+  assert.equal(act(s.doc, 'add'), null)
+})
+
+test('delete needs a second click, refuses nodes with children and the root, and removes the .md too', async () => {
+  const t = await open(TREE({ 'docs/swe/spec/feat.md': 'notes' }))
+  t.state.selected = 'root'
+  t.render()
+  await press(t.doc, 'delete'); await press(t.doc, 'delete')
+  assert.match(t.doc.querySelector('[role="alert"]').textContent, /root cannot be deleted/)
+
+  t.state.selected = 'feat'
+  t.render()
+  await press(t.doc, 'delete')
+  assert.deepEqual(t.log, [], 'first click only arms it')
+  await press(t.doc, 'delete')
+  assert.deepEqual(t.log, [['remove', 'docs/swe/spec/feat.json'], ['remove', 'docs/swe/spec/feat.md']])
+  assert.equal(t.state.suite.nodes.length, 1)
+  assert.equal(t.state.selected, 'root')
+
+  const kids = await open(TREE())
+  kids.state.selected = 'root'
+  kids.render()
+  await press(kids.doc, 'delete'); await press(kids.doc, 'delete')
+  assert.match(kids.doc.querySelector('[role="alert"]').textContent, /root cannot be deleted/)
+})
+
+test('without write access there are no edit controls', async () => {
+  const { dom, loadSuite } = load()
+  const state = dom.window.eval('state')
+  state.suite = await loadSuite(storage(TREE()))
+  state.storage = storage(TREE())  // no `writable`
+  state.selected = 'feat'
+  dom.window.eval('render')()
+  assert.equal(dom.window.document.querySelector('[data-action="save"]'), null)
+})
+
+// ---- File System Access adapter ----------------------------------------------
+
+function fakeDirHandle() {
+  const tree = { files: new Map(), dirs: new Map() }
+  const mk = (node) => ({
+    getDirectoryHandle: async (name, { create } = {}) => {
+      if (!node.dirs.has(name)) { if (!create) throw Object.assign(new Error('nf'), { name: 'NotFoundError' }); node.dirs.set(name, { files: new Map(), dirs: new Map() }) }
+      return mk(node.dirs.get(name))
+    },
+    getFileHandle: async (name, { create } = {}) => {
+      if (!node.files.has(name)) { if (!create) throw Object.assign(new Error('nf'), { name: 'NotFoundError' }); node.files.set(name, '') }
+      return {
+        getFile: async () => ({ text: async () => node.files.get(name) }),
+        createWritable: async () => { let buf = ''; return { write: async (t) => { buf += t }, close: async () => { node.files.set(name, buf) } } },
+      }
+    },
+    removeEntry: async (name) => { if (!node.files.delete(name)) throw Object.assign(new Error('nf'), { name: 'NotFoundError' }) },
+  })
+  return { tree, handle: mk(tree) }
+}
+
+test('the directory-handle adapter reads, writes (creating folders), and removes by path', async () => {
+  const { dom } = load()
+  const fsIo = dom.window.eval('fsIo')
+  const { tree, handle } = fakeDirHandle()
+  const io = fsIo(handle)
+  assert.equal(await io.read('docs/swe/spec/a.json'), null)
+  await io.write('docs/swe/spec/a.json', 'hi')
+  assert.equal(tree.dirs.get('docs').dirs.get('swe').dirs.get('spec').files.get('a.json'), 'hi')
+  assert.equal(await io.read('docs/swe/spec/a.json'), 'hi')
+  await io.remove('docs/swe/spec/a.json')
+  assert.equal(await io.read('docs/swe/spec/a.json'), null)
 })
