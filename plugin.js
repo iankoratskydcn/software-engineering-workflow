@@ -3087,8 +3087,8 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
   const [edges, setEdges] = React.useState([]) // [{ item, blocked_by }] -- item is blocked by blocked_by
   const [paths, setPaths] = React.useState([]) // [{ d, key, isCycle }]
   const wrapRef = React.useRef(null)
-  const blockedByRefs = React.useRef({})
-  const workItemRefs = React.useRef({})
+  const blockedByRefs = React.useRef(new Map())
+  const workItemRefs = React.useRef(new Map())
 
   const idOf = (it, i) => (it && it.id !== undefined && it.id !== null ? safeText(it.id) : `item-${i}`)
   const labelOf = (id) => {
@@ -3101,12 +3101,15 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
   // recursion stack closes a cycle; that exact (blocked_by, item) pair is
   // the edge drawn red.
   const cycleKeys = React.useMemo(() => {
-    const adjacency = {}
-    edges.forEach((e) => { (adjacency[e.blocked_by] ||= []).push(e.item) })
+    const adjacency = new Map()
+    edges.forEach((e) => {
+      if (!adjacency.has(e.blocked_by)) adjacency.set(e.blocked_by, [])
+      adjacency.get(e.blocked_by).push(e.item)
+    })
     const visited = new Set(), stack = new Set(), keys = new Set()
     const dfs = (node) => {
       visited.add(node); stack.add(node)
-      for (const next of adjacency[node] || []) {
+      for (const next of adjacency.get(node) || []) {
         const key = `${node}→${next}`
         if (stack.has(next)) keys.add(key)
         else if (!visited.has(next)) dfs(next)
@@ -3121,8 +3124,8 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
     if (!wrapRef.current) return
     const wrapRect = wrapRef.current.getBoundingClientRect()
     const next = edges.map((e) => {
-      const a = workItemRefs.current[e.item]
-      const b = blockedByRefs.current[e.blocked_by]
+      const a = workItemRefs.current.get(e.item)
+      const b = blockedByRefs.current.get(e.blocked_by)
       if (!a || !b) return null
       const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect()
       const x1 = ar.left - wrapRect.left + ar.width / 2, y1 = ar.top - wrapRect.top + ar.height / 2
@@ -3130,7 +3133,16 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
       const mx = (x1 + x2) / 2
       // Drawn FROM the blocker (left) TO the item it blocks (right), so
       // the arrow reads left-to-right and the arrowhead lands on the item.
-      return { key: `${e.blocked_by}->${e.item}`, d: `M ${x2} ${y2} C ${mx} ${y2}, ${mx} ${y1}, ${x1} ${y1}`, isCycle: cycleKeys.has(`${e.blocked_by}→${e.item}`) }
+      // Endpoints are kept on the path object itself, not recovered by
+      // splitting the display key -- an item id containing "->" would
+      // make that split ambiguous.
+      return {
+        key: `${e.blocked_by}->${e.item}`,
+        item: e.item,
+        blockedBy: e.blocked_by,
+        d: `M ${x2} ${y2} C ${mx} ${y2}, ${mx} ${y1}, ${x1} ${y1}`,
+        isCycle: cycleKeys.has(`${e.blocked_by}→${e.item}`),
+      }
     }).filter(Boolean)
     setPaths(next)
   }, [edges, cycleKeys])
@@ -3196,10 +3208,7 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
                   stroke: 'transparent',
                   strokeWidth: 14,
                   style: { pointerEvents: 'stroke', cursor: 'pointer' },
-                  onClick: () => {
-                    const [blockedBy, item] = p.key.split('->')
-                    removeEdge(item, blockedBy)
-                  },
+                  onClick: () => removeEdge(p.item, p.blockedBy),
                 })
               ),
               ...paths.map((p) =>
@@ -3223,7 +3232,7 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
               return jsx('button', {
                 key: id,
                 type: 'button',
-                ref: (el) => { blockedByRefs.current[id] = el },
+                ref: (el) => { blockedByRefs.current.set(id, el) },
                 disabled: resolving || !selectedItem || isSelf,
                 onClick: () => toggleEdge(id),
                 className: 'rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors hover:bg-(--chrome-action-hover) disabled:opacity-50',
@@ -3240,7 +3249,7 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
               return jsx('button', {
                 key: id,
                 type: 'button',
-                ref: (el) => { workItemRefs.current[id] = el },
+                ref: (el) => { workItemRefs.current.set(id, el) },
                 disabled: resolving,
                 onClick: () => setSelectedItem((prev) => (prev === id ? null : id)),
                 className: 'rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors hover:bg-(--chrome-action-hover)',
