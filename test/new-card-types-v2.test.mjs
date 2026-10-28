@@ -64,4 +64,20 @@ for (const [cardType, fnName] of Object.entries(NEW_CARDS)) {
   )
 }
 
+// precedence_graph redesign: two columns (blocker first, work item second,
+// matching reading order and the left-to-right arrows), DFS cycle
+// detection disables Confirm and colors the closing edge red.
+{
+  const match = source.match(/function PrecedenceGraphCard\([\s\S]*?\n\}\n/)
+  assert.ok(match, 'PrecedenceGraphCard must be defined')
+  const body = match[0]
+  assert.match(body, /Blocked by|blocked by/, 'PrecedenceGraphCard must label the blocker column')
+  assert.match(body, /cycleKeys/, 'PrecedenceGraphCard must compute cycle edges')
+  assert.match(
+    body,
+    /disabled:\s*edges\.length === 0 \|\| cycleKeys\.size > 0/,
+    'PrecedenceGraphCard must disable Confirm while a cycle exists'
+  )
+}
+
 console.log('v2 card type definitions (binary_toggle/ranked_score/spotlight_pick/cluster_overlap/bipartite_assign/field_group/precedence_graph/rating_grid) structural test passed')

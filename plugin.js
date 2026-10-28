@@ -3076,16 +3076,19 @@ function FieldGroupCard({ decision, onResolve, resolving }) {
 function PrecedenceGraphCard({ decision, onResolve, resolving }) {
   // card_payload: { items: [{ id, label }] } -- directed edges within ONE
   // set ("which blocks which"), not a two-sided pairing like wire_match.
-  // Click a "from" item, then a "to" item to add a directed edge; edges
-  // list below with a remove control. No left/right SVG lines needed --
-  // there's no spatial two-column split for a single-set graph.
+  // Two columns: "Blocked by" (left) then "Work item" (right) -- blocker
+  // goes first so arrows draw left-to-right, matching reading order and
+  // "this finishes, then that can start." Click a work item on the right,
+  // then any number of blockers on the left to link them (one-to-many).
+  // A cycle (A blocks B blocks A, however long the chain) draws its
+  // closing edge red and disables Confirm until it's removed.
   const items = safeArray(decision.card_payload && decision.card_payload.items)
-  const [from, setFrom] = React.useState(null)
-  const [edges, setEdges] = React.useState([]) // [{ from, to }]
-
-  if (items.length < 2) {
-    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
-  }
+  const [selectedItem, setSelectedItem] = React.useState(null) // work item (right) picking its blockers
+  const [edges, setEdges] = React.useState([]) // [{ item, blocked_by }] -- item is blocked by blocked_by
+  const [paths, setPaths] = React.useState([]) // [{ d, key, isCycle }]
+  const wrapRef = React.useRef(null)
+  const blockedByRefs = React.useRef(new Map())
+  const workItemRefs = React.useRef(new Map())
 
   const idOf = (it, i) => (it && it.id !== undefined && it.id !== null ? safeText(it.id) : `item-${i}`)
   const labelOf = (id) => {
@@ -3093,63 +3096,178 @@ function PrecedenceGraphCard({ decision, onResolve, resolving }) {
     return i >= 0 ? safeText(items[i] && items[i].label, id) : id
   }
 
-  const addEdge = (to) => {
-    if (!from || from === to) return
-    setEdges((prev) => (prev.some((e) => e.from === from && e.to === to) ? prev : [...prev, { from, to }]))
-    setFrom(null)
+  // Standard DFS cycle detection over the "blocked_by must finish first"
+  // adjacency (blocked_by -> item). A back-edge into a node already on the
+  // recursion stack closes a cycle; that exact (blocked_by, item) pair is
+  // the edge drawn red.
+  const cycleKeys = React.useMemo(() => {
+    const adjacency = new Map()
+    edges.forEach((e) => {
+      if (!adjacency.has(e.blocked_by)) adjacency.set(e.blocked_by, [])
+      adjacency.get(e.blocked_by).push(e.item)
+    })
+    const visited = new Set(), stack = new Set(), keys = new Set()
+    const dfs = (node) => {
+      visited.add(node); stack.add(node)
+      for (const next of adjacency.get(node) || []) {
+        const key = `${node}→${next}`
+        if (stack.has(next)) keys.add(key)
+        else if (!visited.has(next)) dfs(next)
+      }
+      stack.delete(node)
+    }
+    items.forEach((it, i) => { const id = idOf(it, i); if (!visited.has(id)) dfs(id) })
+    return keys
+  }, [edges, items])
+
+  const recalc = React.useCallback(() => {
+    if (!wrapRef.current) return
+    const wrapRect = wrapRef.current.getBoundingClientRect()
+    const next = edges.map((e) => {
+      const a = workItemRefs.current.get(e.item)
+      const b = blockedByRefs.current.get(e.blocked_by)
+      if (!a || !b) return null
+      const ar = a.getBoundingClientRect(), br = b.getBoundingClientRect()
+      const x1 = ar.left - wrapRect.left + ar.width / 2, y1 = ar.top - wrapRect.top + ar.height / 2
+      const x2 = br.left - wrapRect.left + br.width / 2, y2 = br.top - wrapRect.top + br.height / 2
+      const mx = (x1 + x2) / 2
+      // Drawn FROM the blocker (left) TO the item it blocks (right), so
+      // the arrow reads left-to-right and the arrowhead lands on the item.
+      // Endpoints are kept on the path object itself, not recovered by
+      // splitting the display key -- an item id containing "->" would
+      // make that split ambiguous.
+      return {
+        key: `${e.blocked_by}->${e.item}`,
+        item: e.item,
+        blockedBy: e.blocked_by,
+        d: `M ${x2} ${y2} C ${mx} ${y2}, ${mx} ${y1}, ${x1} ${y1}`,
+        isCycle: cycleKeys.has(`${e.blocked_by}→${e.item}`),
+      }
+    }).filter(Boolean)
+    setPaths(next)
+  }, [edges, cycleKeys])
+
+  React.useEffect(() => {
+    recalc()
+    if (typeof window === 'undefined') return undefined
+    window.addEventListener('resize', recalc)
+    return () => window.removeEventListener('resize', recalc)
+  }, [recalc])
+
+  if (items.length < 2) {
+    return jsx(DefaultChoiceCard, { decision, onResolve, resolving })
   }
 
-  const removeEdge = (i) => setEdges((prev) => prev.filter((_, idx) => idx !== i))
+  const removeEdge = (item, blockedBy) =>
+    setEdges((prev) => prev.filter((e) => !(e.item === item && e.blocked_by === blockedBy)))
+
+  const toggleEdge = (blockedBy) => {
+    if (!selectedItem || selectedItem === blockedBy) return
+    setEdges((prev) => {
+      const existing = prev.find((e) => e.item === selectedItem && e.blocked_by === blockedBy)
+      return existing ? prev.filter((e) => e !== existing) : [...prev, { item: selectedItem, blocked_by: blockedBy }]
+    })
+  }
+
+  const cycleItemIds = new Set()
+  cycleKeys.forEach((k) => k.split('→').forEach((id) => cycleItemIds.add(id)))
 
   return jsxs('div', {
     className: 'flex flex-col gap-2',
     children: [
       jsx('div', {
         className: 'text-[0.7rem] text-(--ui-text-tertiary)',
-        children: from ? `Blocking: ${labelOf(from)} — click what it blocks.` : 'Click the item that blocks something first.',
+        children: selectedItem
+          ? `"${labelOf(selectedItem)}" is blocked by — click any number on the left (click it again to switch).`
+          : 'Click a work item on the right, then click what blocks it on the left.',
       }),
-      jsx('div', {
-        className: 'flex flex-wrap gap-1',
-        children: items.map((it, i) => {
-          const id = idOf(it, i)
-          return jsx('button', {
-            key: id,
-            type: 'button',
-            disabled: resolving,
-            onClick: () => (from ? addEdge(id) : setFrom(id)),
-            className: 'rounded-md px-2 py-1 text-[0.75rem] transition-colors hover:bg-(--chrome-action-hover)',
-            style: { border: `1px solid ${from === id ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
-            children: safeText(it && it.label, id),
-          })
-        }),
-      }),
-      edges.length > 0
-        ? jsx('div', {
-            className: 'flex flex-col gap-1',
-            children: edges.map((e, i) =>
-              jsxs('div', {
-                key: `${e.from}->${e.to}`,
-                className: 'flex items-center justify-between rounded-md px-2 py-1 text-[0.75rem]',
-                style: { border: '1px solid var(--ui-stroke-secondary)' },
+      jsxs('div', {
+        ref: wrapRef,
+        className: 'relative flex items-stretch justify-between gap-10',
+        children: [
+          jsx('svg', {
+            className: 'pointer-events-none absolute inset-0 h-full w-full overflow-visible',
+            children: [
+              jsx('defs', {
                 children: [
-                  jsx('span', { children: `${labelOf(e.from)} blocks ${labelOf(e.to)}` }),
-                  jsx('button', {
-                    type: 'button',
-                    disabled: resolving,
-                    onClick: () => removeEdge(i),
-                    className: 'text-(--ui-text-tertiary) hover:text-(--ui-accent)',
-                    children: '✕',
+                  jsx('marker', {
+                    id: 'pg-arrow', viewBox: '0 0 8 8', refX: 7, refY: 4, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse',
+                    children: jsx('path', { d: 'M0,0 L8,4 L0,8 z', style: { fill: 'var(--ui-text-tertiary)' } }),
+                  }),
+                  jsx('marker', {
+                    id: 'pg-arrow-cycle', viewBox: '0 0 8 8', refX: 7, refY: 4, markerWidth: 6, markerHeight: 6, orient: 'auto-start-reverse',
+                    children: jsx('path', { d: 'M0,0 L8,4 L0,8 z', style: { fill: 'var(--ui-danger, #e5484d)' } }),
                   }),
                 ],
+              }),
+              ...paths.map((p) =>
+                jsx('path', {
+                  key: `hit-${p.key}`,
+                  d: p.d,
+                  fill: 'none',
+                  stroke: 'transparent',
+                  strokeWidth: 14,
+                  style: { pointerEvents: 'stroke', cursor: 'pointer' },
+                  onClick: () => removeEdge(p.item, p.blockedBy),
+                })
+              ),
+              ...paths.map((p) =>
+                jsx('path', {
+                  key: p.key,
+                  d: p.d,
+                  fill: 'none',
+                  stroke: p.isCycle ? 'var(--ui-danger, #e5484d)' : 'var(--ui-text-tertiary)',
+                  strokeWidth: 1.8,
+                  markerEnd: p.isCycle ? 'url(#pg-arrow-cycle)' : 'url(#pg-arrow)',
+                })
+              ),
+            ],
+          }),
+          jsx('div', {
+            className: 'flex flex-1 flex-col gap-1.5',
+            children: items.map((it, i) => {
+              const id = idOf(it, i)
+              const linked = selectedItem && edges.some((e) => e.item === selectedItem && e.blocked_by === id)
+              const isSelf = selectedItem === id
+              return jsx('button', {
+                key: id,
+                type: 'button',
+                ref: (el) => { blockedByRefs.current.set(id, el) },
+                disabled: resolving || !selectedItem || isSelf,
+                onClick: () => toggleEdge(id),
+                className: 'rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors hover:bg-(--chrome-action-hover) disabled:opacity-50',
+                style: { border: `1px solid ${cycleItemIds.has(id) ? 'var(--ui-danger, #e5484d)' : linked ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
+                children: safeText(it && it.label, id),
               })
-            ),
-          })
+            }),
+          }),
+          jsx('div', {
+            className: 'flex flex-1 flex-col gap-1.5',
+            children: items.map((it, i) => {
+              const id = idOf(it, i)
+              const isSelected = selectedItem === id
+              return jsx('button', {
+                key: id,
+                type: 'button',
+                ref: (el) => { workItemRefs.current.set(id, el) },
+                disabled: resolving,
+                onClick: () => setSelectedItem((prev) => (prev === id ? null : id)),
+                className: 'rounded-md px-2.5 py-1.5 text-left text-[0.8rem] transition-colors hover:bg-(--chrome-action-hover)',
+                style: { border: `1px solid ${cycleItemIds.has(id) ? 'var(--ui-danger, #e5484d)' : isSelected ? 'var(--ui-accent)' : 'var(--ui-stroke-secondary)'}` },
+                children: safeText(it && it.label, id),
+              })
+            }),
+          }),
+        ],
+      }),
+      cycleKeys.size > 0
+        ? jsx('div', { className: 'text-[0.7rem]', style: { color: 'var(--ui-danger, #e5484d)' }, children: 'Cycle detected — remove the red edge(s) before confirming.' })
         : null,
       jsx(ConfirmButton, {
-        disabled: edges.length === 0,
+        disabled: edges.length === 0 || cycleKeys.size > 0,
         resolving,
         onClick: () => {
-          const summary = edges.map((e) => `${labelOf(e.from)}→${labelOf(e.to)}`).join(', ')
+          const summary = edges.map((e) => `${labelOf(e.blocked_by)}→${labelOf(e.item)}`).join(', ')
           onResolve(decision.id, summary, { edges })
         },
         children: 'Confirm dependencies',
