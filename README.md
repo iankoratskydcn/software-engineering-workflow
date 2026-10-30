@@ -47,3 +47,7 @@ Some frontend tests (`test/settings-gear.test.mjs`, `test/sidebar-order-swap.tes
 
 ## Rich decision cards
 See the `decision-hud-cards` skill for the card-type taxonomy, the `card_type`/`card_payload` schema, and the workflow for pushing/rendering rich decision cards instead of plain MCQ.
+
+## Architecture diagram
+
+The current repository architecture is documented as a versioned C4 model in `docs/architecture/workspace.dsl`. Open `docs/architecture/index.html` in a browser for interactive context, container, and desktop-plugin component views.

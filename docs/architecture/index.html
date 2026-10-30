@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Decision HUD / C4 Architecture</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" integrity="sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --canvas: #090d16;
+      --surface: #101722;
+      --surface-raised: #151e2c;
+      --surface-soft: #0d141f;
+      --border: #253247;
+      --border-strong: #34445d;
+      --ink: #eef4ff;
+      --muted: #8d9bb0;
+      --faint: #64748b;
+      --accent: #67e8f9;
+      --accent-strong: #22d3ee;
+      --violet: #a78bfa;
+      --green: #86efac;
+      --shadow: 0 22px 60px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 12% -10%, rgba(34, 211, 238, .08), transparent 34rem),
+        radial-gradient(circle at 90% 0%, rgba(167, 139, 250, .07), transparent 30rem),
+        var(--canvas);
+      color: var(--ink);
+      font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button { font: inherit; }
+    .shell { width: min(1480px, calc(100% - 40px)); margin: 0 auto; padding: 42px 0 56px; }
+    .topline { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 34px; }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+    .brand-mark { display: grid; width: 26px; height: 26px; place-items: center; border: 1px solid rgba(103, 232, 249, .42); border-radius: 8px; color: var(--accent); background: rgba(103, 232, 249, .08); font-size: 12px; }
+    .source { color: var(--faint); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 32px; align-items: end; margin-bottom: 26px; }
+    .eyebrow { margin: 0 0 10px; color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 780px; margin: 0; font-size: clamp(34px, 5vw, 62px); line-height: .98; letter-spacing: -.055em; font-weight: 700; }
+    .lede { max-width: 720px; margin: 18px 0 0; color: var(--muted); font-size: 16px; }
+    .hero-note { width: 250px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: rgba(16, 23, 34, .72); box-shadow: var(--shadow); }
+    .hero-note strong { display: block; margin-bottom: 5px; color: var(--green); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+    .hero-note span { color: var(--muted); font-size: 13px; }
+
+    .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 26px; }
+    .stat { padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: rgba(16, 23, 34, .58); }
+    .stat-value { display: block; margin-bottom: 2px; color: var(--ink); font-size: 19px; font-weight: 700; letter-spacing: -.03em; }
+    .stat-label { color: var(--muted); font-size: 12px; }
+
+    .workspace { overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: rgba(16, 23, 34, .78); box-shadow: var(--shadow); }
+    .workspace-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--border); background: rgba(21, 30, 44, .65); }
+    .workspace-title { color: var(--ink); font-size: 13px; font-weight: 700; }
+    .workspace-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 14px rgba(134, 239, 172, .7); }
+    .tabs { display: flex; gap: 4px; padding: 10px 12px 0; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
+    .tab { position: relative; border: 0; border-radius: 7px 7px 0 0; padding: 11px 14px; color: var(--muted); background: transparent; cursor: pointer; }
+    .tab:hover, .tab:focus-visible { color: var(--ink); background: rgba(255, 255, 255, .04); outline: none; }
+    .tab[aria-selected="true"] { color: var(--ink); background: var(--surface); }
+    .tab[aria-selected="true"]::after { position: absolute; right: 12px; bottom: -1px; left: 12px; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent); content: ""; }
+    .diagram { display: none; min-height: 560px; overflow: auto; padding: 22px; background: var(--surface); }
+    .diagram.active { display: block; }
+    .diagram svg { display: block; min-width: 920px; max-width: none; height: auto; margin: 0 auto; }
+
+    .below { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr); gap: 14px; margin-top: 14px; }
+    .panel { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: rgba(16, 23, 34, .72); }
+    .panel h2 { margin: 0 0 10px; color: var(--ink); font-size: 14px; letter-spacing: -.01em; }
+    .panel p { margin: 0; color: var(--muted); }
+    .panel ul { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+    .panel li { color: var(--muted); }
+    .panel li::before { display: inline-block; width: 18px; color: var(--accent); content: "↳"; }
+    code { color: #bae6fd; font: .92em ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .legend { display: grid; gap: 11px; margin-top: 14px; }
+    .legend-row { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 13px; }
+    .legend-chip { width: 12px; height: 12px; border-radius: 3px; }
+    .legend-chip.person { background: #2563eb; }
+    .legend-chip.system { background: #0f766e; }
+    .legend-chip.container { background: #1d4ed8; }
+    .legend-chip.external { background: #64748b; }
+    .error { margin: 18px; padding: 12px; border: 1px solid #7f1d1d; border-radius: 8px; color: #fecaca; background: #2a1015; white-space: pre-wrap; }
+    footer { display: flex; justify-content: space-between; gap: 16px; margin-top: 20px; color: var(--faint); font-size: 12px; }
+
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 24px, 1480px); padding-top: 24px; }
+      .topline, .hero { display: block; }
+      .source { margin-top: 12px; }
+      .hero-note { width: auto; margin-top: 20px; }
+      .stats { grid-template-columns: 1fr; }
+      .tabs { overflow-x: auto; }
+      .tab { flex: 0 0 auto; }
+      .diagram { min-height: 420px; padding: 10px; }
+      .below { grid-template-columns: 1fr; }
+      footer { display: block; }
+      footer span { display: block; margin-top: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topline">
+      <div class="brand"><span class="brand-mark">⌘</span> Architecture / C4</div>
+      <div class="source">docs/architecture/workspace.dsl</div>
+    </div>
+
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Decision HUD · repository map</p>
+        <h1>How the pieces fit together.</h1>
+        <p class="lede">A current-state architecture view of the Hermes desktop plugin, its companion decision surfaces, and the read-only telemetry path.</p>
+      </div>
+      <div class="hero-note"><strong>Current state</strong><span>Grounded in the repository as of the latest diagram update. No future components are shown as implemented.</span></div>
+    </header>
+
+    <section class="stats" aria-label="Diagram summary">
+      <div class="stat"><span class="stat-value">3</span><span class="stat-label">C4 views</span></div>
+      <div class="stat"><span class="stat-value">2</span><span class="stat-label">owned system boundaries</span></div>
+      <div class="stat"><span class="stat-value">5</span><span class="stat-label">primary evidence areas</span></div>
+    </section>
+
+    <section class="workspace" aria-label="Interactive C4 diagrams">
+      <div class="workspace-head"><span class="workspace-title">Architecture explorer</span><span class="workspace-status"><i class="dot"></i> rendered locally</span></div>
+      <div class="tabs" role="tablist" aria-label="C4 views">
+        <button class="tab" id="tab-context" role="tab" aria-selected="true" aria-controls="context" data-view="context">System context</button>
+        <button class="tab" id="tab-containers" role="tab" aria-selected="false" aria-controls="containers" data-view="containers">Containers</button>
+        <button class="tab" id="tab-components" role="tab" aria-selected="false" aria-controls="components" data-view="components">Plugin components</button>
+      </div>
+
+      <section id="context" class="diagram active" role="tabpanel" aria-labelledby="tab-context">
+        <pre class="mermaid">C4Context
+          title Decision HUD — System Context
+          Person(owner, "Owner", "Reviews decisions, projects, telemetry, and planning state")
+          Person(agent, "Hermes Agent / Sidecar", "Produces decisions and workflow data")
+          System_Boundary(hud, "Hermes Desktop") {
+            System(desktop, "Decision HUD", "Docked desktop pane for decisions, workflow views, and agent dashboard")
+          }
+          System_Ext(mcp, "Decision HUD MCP server", "Agents push decisions and workflow requests")
+          System_Ext(store, "Decision HUD plugin store", "SQLite-backed durable decision and workflow state")
+          System_Ext(telemetry, "Agent Dashboard telemetry service", "Authenticated read-only telemetry API")
+          System_Ext(core, "Hermes core services", "CLI, gateway, and runtime services")
+          Rel(owner, desktop, "Uses")
+          Rel(agent, mcp, "Pushes decisions")
+          Rel(mcp, store, "Writes")
+          Rel(desktop, store, "Reads and writes through CLI")
+          Rel(desktop, telemetry, "Reads dashboard data")
+          Rel(desktop, core, "Runs through host runtime")</pre>
+      </section>
+
+      <section id="containers" class="diagram" role="tabpanel" aria-labelledby="tab-containers">
+        <pre class="mermaid">C4Container
+          title Decision HUD — Containers
+          Person(owner, "Owner", "Reviews decisions and telemetry")
+          Person(agent, "Hermes Agent / Sidecar", "Produces decisions and workflow data")
+          System_Boundary(hud, "Hermes Desktop") {
+            Container(plugin, "Decision HUD desktop plugin", "JavaScript / React / Plugin SDK", "Docked pane with decision cards, project/workflow views, and dashboard UI")
+            Container(gateway, "Hermes CLI gateway", "Hermes JSON-RPC cli.exec", "Executes decision and kanban commands")
+            ContainerDb(store, "Decision HUD plugin store", "SQLite", "Durable decision queue and workflow settings")
+          }
+          System_Boundary(telemetry, "Agent Dashboard telemetry service") {
+            Container(api, "Agent Dashboard HTTP API", "Python stdlib HTTP / JSON", "Loopback-only authenticated dashboard, comparison, and history routes")
+            Container(readmodel, "Dashboard read model", "Python", "Builds snapshot and comparison/history projections")
+            ContainerDb(postgres, "Telemetry PostgreSQL", "PostgreSQL", "Durable telemetry snapshots")
+          }
+          System_Ext(mcp, "Decision HUD MCP server", "Agent-facing MCP surface")
+          System_Ext(core, "Hermes core services", "Existing Hermes runtime")
+          Rel(owner, plugin, "Uses")
+          Rel(agent, mcp, "Pushes decisions")
+          Rel(mcp, store, "Writes")
+          Rel(plugin, gateway, "Requests data", "cli.exec RPC")
+          Rel(gateway, store, "Reads/writes")
+          Rel(gateway, core, "Uses")
+          Rel(plugin, api, "Reads dashboard", "HTTP / loopback")
+          Rel(api, readmodel, "Queries")
+          Rel(readmodel, postgres, "Reads snapshots")</pre>
+      </section>
+
+      <section id="components" class="diagram" role="tabpanel" aria-labelledby="tab-components">
+        <pre class="mermaid">C4Component
+          title Decision HUD desktop plugin — Components
+          Container_Boundary(plugin, "Decision HUD desktop plugin") {
+            Component(queue, "Decision queue pane", "React component", "Displays pending decisions and submits owner choices")
+            Component(projects, "Project and board selectors", "React hooks/components", "Scopes decisions and workflow data")
+            Component(workflow, "Workflow visualization panes", "React components", "Renders roadmap, mindmap, flowchart, scrum, and risk views")
+            Component(dashboard, "Agent Dashboard pane", "React component", "Fetches and renders telemetry, comparison, and history data")
+            Component(cli, "CLI/RPC adapter", "JavaScript helper", "Calls host.request('cli.exec', ...) for Hermes commands")
+            Component(storage, "Browser state adapter", "localStorage", "Persists selected board and pane preferences")
+          }
+          Container_Ext(gateway, "Hermes CLI gateway", "cli.exec RPC", "Executes Hermes commands")
+          Container_Ext(api, "Agent Dashboard HTTP API", "HTTP / loopback", "Authenticated telemetry reads")
+          Rel(queue, cli, "Loads/submits decisions")
+          Rel(projects, cli, "Loads projects and boards")
+          Rel(workflow, cli, "Loads workflow data")
+          Rel(dashboard, api, "Fetches telemetry")
+          Rel(cli, gateway, "Requests")
+          Rel(projects, storage, "Reads/writes selection")
+          Rel(queue, storage, "Reads pane preferences")</pre>
+      </section>
+    </section>
+
+    <div class="below">
+      <section class="panel">
+        <h2>How to read this</h2>
+        <p>Start with context to see actors and system boundaries. Move to containers for runtime responsibilities, then inspect the desktop plugin's internal components.</p>
+        <ul>
+          <li>Solid relationships show current code-backed paths.</li>
+          <li>External systems are intentionally kept at boundary level.</li>
+          <li>The telemetry service is read-only from the desktop pane.</li>
+        </ul>
+      </section>
+      <section class="panel">
+        <h2>Diagram legend</h2>
+        <div class="legend">
+          <div class="legend-row"><span class="legend-chip person"></span>Person / actor</div>
+          <div class="legend-row"><span class="legend-chip system"></span>Owned software system</div>
+          <div class="legend-row"><span class="legend-chip container"></span>Container or runtime unit</div>
+          <div class="legend-row"><span class="legend-chip external"></span>External dependency</div>
+        </div>
+      </section>
+    </div>
+
+    <footer><span>Evidence: <code>plugin.js</code>, <code>backend-plugin/</code>, <code>backend/agent_telemetry/</code></span><span>Source of truth remains the Structurizr DSL.</span></footer>
+  </main>
+
+  <script>
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark', flowchart: { htmlLabels: true, useMaxWidth: false } });
+
+    const tabs = [...document.querySelectorAll('[role="tab"]')];
+    const panels = [...document.querySelectorAll('[role="tabpanel"]')];
+    const selectView = (button) => {
+      tabs.forEach((tab) => tab.setAttribute('aria-selected', String(tab === button)));
+      panels.forEach((panel) => panel.classList.toggle('active', panel.id === button.dataset.view));
+    };
+    tabs.forEach((button, index) => {
+      button.addEventListener('click', () => selectView(button));
+      button.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        tabs[next].focus();
+        selectView(tabs[next]);
+      });
+    });
+
+    mermaid.run().catch((error) => {
+      const message = document.createElement('div');
+      message.className = 'error';
+      message.textContent = `Diagram rendering failed: ${error}`;
+      document.querySelector('.workspace').append(message);
+    });
+  </script>
+</body>
+</html>
